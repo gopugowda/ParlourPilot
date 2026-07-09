@@ -31,6 +31,7 @@ export default function NewBillScreen() {
   const [cashAmt, setCashAmt] = useState('');
   const [qrAmt, setQrAmt] = useState('');
   const [isMember, setIsMember] = useState(false);
+  const [memberInfo, setMemberInfo] = useState<{ name: string; status: string; days_left: number | null } | null>(null);
   const [tipAmt, setTipAmt] = useState('');
   const [tipVia, setTipVia] = useState<'cash' | 'qr'>('cash');
   const [tipBeauticianId, setTipBeauticianId] = useState<string | undefined>();
@@ -52,6 +53,32 @@ export default function NewBillScreen() {
 
   useEffect(() => { loadData(); }, []);
   useFocusEffect(useCallback(() => { loadData(); }, []));
+
+  // Auto-detect member by phone
+  useEffect(() => {
+    const p = (customerPhone || '').trim();
+    if (p.length < 4) { setMemberInfo(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const res: any = await api(`/members/lookup?phone=${encodeURIComponent(p)}`);
+        if (cancelled) return;
+        if (res?.found && res.is_active_member) {
+          setMemberInfo({ name: res.member.name, status: res.member.status, days_left: res.member.days_left });
+          setIsMember(true);
+          if (!customerName && res.member.name) setCustomerName(res.member.name);
+        } else if (res?.found) {
+          // Found but expired/inactive
+          setMemberInfo({ name: res.member.name, status: res.member.status, days_left: res.member.days_left });
+        } else {
+          setMemberInfo(null);
+        }
+      } catch {
+        if (!cancelled) setMemberInfo(null);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [customerPhone]);
 
   const addItem = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -84,6 +111,7 @@ export default function NewBillScreen() {
     setPaymentMode('cash'); setCashAmt(''); setQrAmt('');
     setIsMember(false); setTipAmt(''); setTipVia('cash');
     setTipBeauticianId(undefined); setTipBeauticianName('');
+    setMemberInfo(null);
   };
 
   const onSubmit = async () => {
@@ -289,6 +317,22 @@ export default function NewBillScreen() {
                 thumbColor="#fff"
               />
             </View>
+            {memberInfo && memberInfo.status !== 'inactive' && (
+              <View style={[styles.memberDetectBanner, memberInfo.status === 'expired' && { backgroundColor: '#FDE7E7', borderColor: '#F2B5B5' }]}>
+                <Ionicons
+                  name={memberInfo.status === 'expired' ? 'alert-circle' : 'checkmark-circle'}
+                  size={16}
+                  color={memberInfo.status === 'expired' ? colors.error : colors.success}
+                />
+                <Text style={styles.memberDetectText}>
+                  {memberInfo.status === 'expired'
+                    ? `${memberInfo.name} — membership EXPIRED`
+                    : memberInfo.status === 'expiring_soon'
+                      ? `${memberInfo.name} — active (${memberInfo.days_left}d left)`
+                      : `${memberInfo.name} — active member`}
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Tip */}
@@ -542,6 +586,12 @@ const styles = StyleSheet.create({
   memberIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
   memberBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   memberBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
+  memberDetectBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#E9F1E7', borderWidth: 1, borderColor: '#C8DDC4',
+    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.sm, marginTop: spacing.sm,
+  },
+  memberDetectText: { flex: 1, fontSize: 12, color: colors.onSurface, fontWeight: '600' },
   tipViaChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   tipViaChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   tipViaText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },

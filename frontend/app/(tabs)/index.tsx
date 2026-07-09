@@ -99,6 +99,12 @@ export default function DashboardScreen() {
                     <Text style={styles.heroStatText}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
                   </View>
                 )}
+                {(summary?.today?.expenses || 0) > 0 && (
+                  <View style={styles.heroStatChip}>
+                    <Ionicons name="wallet-outline" size={14} color={colors.brandSecondary} />
+                    <Text style={styles.heroStatText}>Exp {fmtINR(summary?.today?.expenses || 0)}</Text>
+                  </View>
+                )}
               </View>
             </View>
           </SafeAreaView>
@@ -131,12 +137,15 @@ export default function DashboardScreen() {
           <Text style={styles.sectionTitle}>This Month</Text>
           <View style={styles.monthCard}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.monthLabel}>Total Revenue</Text>
+              <Text style={styles.monthLabel}>Revenue</Text>
               <Text style={styles.monthValue} testID="month-revenue">{fmtINR(summary?.month?.total || 0)}</Text>
-              <Text style={styles.monthSub}>{summary?.month?.count || 0} bills</Text>
+              <Text style={styles.monthSub}>{summary?.month?.count || 0} bills · Exp {fmtINR(summary?.month?.expenses || 0)}</Text>
             </View>
-            <View style={styles.monthIconWrap}>
-              <Ionicons name="trending-up" size={32} color={colors.success} />
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={styles.monthLabel}>Net Profit</Text>
+              <Text style={[styles.monthValue, { color: (summary?.month?.net || 0) >= 0 ? colors.success : colors.error, fontSize: 20 }]} testID="month-net">
+                {fmtINR(summary?.month?.net || 0)}
+              </Text>
             </View>
           </View>
         </View>

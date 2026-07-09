@@ -37,7 +37,9 @@ export default function DailyReportScreen() {
           <View style={styles.summary}>
             <Text style={styles.summaryLabel}>30-Day Revenue</Text>
             <Text style={styles.summaryVal}>{fmtINR(totalMonth)}</Text>
-            <Text style={styles.summarySub}>{rows.reduce((s, r) => s + r.count, 0)} bills</Text>
+            <Text style={styles.summarySub}>
+              {rows.reduce((s, r) => s + r.count, 0)} bills · Expenses {fmtINR(rows.reduce((s, r) => s + (r.expenses || 0), 0))} · Net {fmtINR(rows.reduce((s, r) => s + (r.net ?? (r.total - (r.expenses || 0))), 0))}
+            </Text>
           </View>
 
           {rows.length === 0 ? (
@@ -49,12 +51,22 @@ export default function DailyReportScreen() {
             <View key={r.date} style={styles.row} testID={`report-${r.date}`}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowDate}>{new Date(r.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', weekday: 'short' })}</Text>
-                <Text style={styles.rowMeta}>{r.count} bills · Cash {fmtINR(r.cash)} · QR {fmtINR(r.qr)}</Text>
+                <Text style={styles.rowMeta}>
+                  {r.count} bills · Cash {fmtINR(r.cash)} · QR {fmtINR(r.qr)}
+                  {(r.expenses || 0) > 0 ? ` · Exp ${fmtINR(r.expenses)}` : ''}
+                </Text>
                 <View style={styles.barTrack}>
                   <View style={[styles.barFill, { width: `${(r.total / maxTotal) * 100}%` }]} />
                 </View>
               </View>
-              <Text style={styles.rowTotal}>{fmtINR(r.total)}</Text>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.rowTotal}>{fmtINR(r.total)}</Text>
+                {(r.expenses || 0) > 0 && (
+                  <Text style={[styles.rowNet, { color: (r.net ?? 0) >= 0 ? colors.success : colors.error }]}>
+                    Net {fmtINR(r.net ?? (r.total - r.expenses))}
+                  </Text>
+                )}
+              </View>
             </View>
           ))}
         </ScrollView>
@@ -83,6 +95,7 @@ const styles = StyleSheet.create({
   rowDate: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
   rowMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   rowTotal: { fontSize: 15, fontWeight: '800', color: colors.brandPrimary },
+  rowNet: { fontSize: 11, fontWeight: '700', marginTop: 2 },
 
   barTrack: { height: 6, backgroundColor: colors.surfaceTertiary, borderRadius: 3, marginTop: 8, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: colors.brandPrimary, borderRadius: 3 },

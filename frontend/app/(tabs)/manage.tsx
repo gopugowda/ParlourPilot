@@ -15,6 +15,7 @@ export default function ManageScreen() {
       items: [
         { icon: 'pricetags-outline', label: 'Services', hint: 'Add, edit, remove services', route: '/manage/services' },
         { icon: 'people-outline', label: 'Beauticians', hint: 'Manage staff & barbers', route: '/manage/beauticians' },
+        { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto 10% off', route: '/manage/members' },
       ],
     },
     {
