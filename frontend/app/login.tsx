@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator, TouchableOpacity,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/src/context/AuthContext';
@@ -37,21 +37,20 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <LinearGradient colors={[colors.brandPrimary, colors.brandSecondary]} style={styles.hero}>
-        <View style={styles.brandRow}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="cut" size={26} color={colors.brandPrimary} />
-          </View>
-          <View>
-            <Text style={styles.brandName}>GLOW UP</Text>
-            <Text style={styles.brandSub}>Unisex Salon · Sullia</Text>
-          </View>
-        </View>
-        <Text style={styles.heroTitle}>Sign in to continue</Text>
-      </LinearGradient>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.surface }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={styles.hero}>
+        <Image
+          source={require('../assets/images/glow-logo-mark.png')}
+          style={styles.logoImg}
+          contentFit="contain"
+        />
+        <Text style={styles.brandName}>GLOW UP</Text>
+        <Text style={styles.brandSub}>UNISEX SALON · SULLIA</Text>
+      </View>
 
       <ScrollView style={styles.body} contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>Sign in to continue</Text>
+
         <View style={styles.field}>
           <Text style={styles.label}>Email</Text>
           <View style={styles.inputWrap}>
@@ -118,32 +117,34 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  hero: { paddingTop: spacing.xxxl + spacing.md, paddingBottom: spacing.xxl, paddingHorizontal: spacing.xl, gap: spacing.xl },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  logoCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', ...shadows.card },
-  brandName: { color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: 1 },
-  brandSub: { color: 'rgba(255,255,255,0.85)', fontSize: 13 },
-  heroTitle: { color: '#fff', fontSize: 24, fontWeight: '700' },
+  hero: {
+    paddingTop: spacing.xxxl + spacing.md, paddingBottom: spacing.xl, paddingHorizontal: spacing.xl,
+    alignItems: 'center', backgroundColor: colors.surfaceInverse,
+  },
+  logoImg: { width: 90, height: 100 },
+  brandName: { color: '#fff', fontSize: 26, fontWeight: '900', letterSpacing: 2, marginTop: spacing.md },
+  brandSub: { color: colors.brandSecondary, fontSize: 11, fontWeight: '700', letterSpacing: 2, marginTop: 4 },
   body: { flex: 1, backgroundColor: colors.surface },
+  title: { fontSize: 20, fontWeight: '800', color: colors.onSurface, marginBottom: spacing.sm },
   field: { gap: spacing.sm },
   label: { fontSize: 13, color: colors.onSurfaceTertiary, fontWeight: '600' },
   inputWrap: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.lg,
-    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
-    height: 52,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, height: 52,
   },
   input: { flex: 1, fontSize: 15, color: colors.onSurface },
   err: { color: colors.error, fontSize: 14 },
   btn: {
-    backgroundColor: colors.brandPrimary, height: 52, borderRadius: radius.md,
+    backgroundColor: colors.surfaceInverse, height: 52, borderRadius: radius.md,
     alignItems: 'center', justifyContent: 'center', ...shadows.card,
   },
-  btnText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: '700' },
+  btnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
   demoBox: {
     backgroundColor: colors.brandTertiary, padding: spacing.lg, borderRadius: radius.md, gap: spacing.sm,
+    borderWidth: 1, borderColor: colors.brandSecondary,
   },
-  demoTitle: { fontWeight: '700', color: colors.onBrandTertiary, marginBottom: spacing.xs },
+  demoTitle: { fontWeight: '800', color: colors.onBrandTertiary, marginBottom: spacing.xs, letterSpacing: 0.5 },
   demoChip: { backgroundColor: '#fff', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
   demoChipText: { color: colors.brandPrimary, fontWeight: '700' },
   demoHint: { fontSize: 12, color: colors.onSurfaceTertiary },

@@ -11,7 +11,7 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
-const HERO_IMG = 'https://images.pexels.com/photos/13068377/pexels-photo-13068377.jpeg';
+const LOGO = require('../../assets/images/glow-logo-mark.png');
 
 export default function DashboardScreen() {
   const { user, logout } = useAuth();
@@ -32,12 +32,19 @@ export default function DashboardScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  const actions = [
+  const isAdmin = user?.role === 'admin';
+  const adminActions = [
     { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
     { key: 'hist', label: 'History', icon: 'receipt', route: '/(tabs)/history', color: colors.success },
     { key: 'srv', label: 'Services', icon: 'pricetags', route: '/manage/services', color: colors.warning },
     { key: 'staff', label: 'Staff', icon: 'people', route: '/manage/beauticians', color: colors.info },
   ];
+  const staffActions = [
+    { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
+    { key: 'hist', label: "Today's Bills", icon: 'receipt', route: '/(tabs)/history', color: colors.success },
+    { key: 'report', label: 'Daily Report', icon: 'bar-chart', route: '/manage/report', color: colors.warning },
+  ];
+  const actions = isAdmin ? adminActions : staffActions;
 
   return (
     <View style={styles.root} testID="dashboard-screen">
@@ -47,16 +54,19 @@ export default function DashboardScreen() {
       >
         {/* Hero */}
         <View style={styles.heroWrap}>
-          <Image source={{ uri: HERO_IMG }} style={StyleSheet.absoluteFill} contentFit="cover" />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.surfaceInverse }]} />
           <LinearGradient
-            colors={['rgba(44,42,41,0.35)', 'rgba(44,42,41,0.92)']}
+            colors={['rgba(184,138,60,0.15)', 'rgba(26,26,26,0.95)']}
             style={StyleSheet.absoluteFill}
           />
           <SafeAreaView edges={['top']} style={styles.heroContent}>
             <View style={styles.heroTopRow}>
-              <View>
-                <Text style={styles.heroGreeting}>Hi, {user?.name?.split(' ')[0] || 'there'}</Text>
-                <Text style={styles.heroBrand}>GLOW UP UNISEX SALON</Text>
+              <View style={styles.heroBrand}>
+                <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
+                <View>
+                  <Text style={styles.heroBrandName}>GLOW UP</Text>
+                  <Text style={styles.heroBrandSub}>Hi, {user?.name?.split(' ')[0] || 'there'}</Text>
+                </View>
               </View>
               <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
                 <Ionicons name="log-out-outline" size={20} color="#fff" />
@@ -72,15 +82,15 @@ export default function DashboardScreen() {
               )}
               <View style={styles.heroStatsRow}>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="receipt-outline" size={14} color="#fff" />
+                  <Ionicons name="receipt-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{summary?.today?.count || 0} bills</Text>
                 </View>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="cash-outline" size={14} color="#fff" />
+                  <Ionicons name="cash-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.cash || 0)}</Text>
                 </View>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="qr-code-outline" size={14} color="#fff" />
+                  <Ionicons name="qr-code-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.qr || 0)}</Text>
                 </View>
               </View>
@@ -157,13 +167,15 @@ const styles = StyleSheet.create({
   heroWrap: { height: 280, overflow: 'hidden' },
   heroContent: { flex: 1, paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
-  heroGreeting: { color: 'rgba(255,255,255,0.85)', fontSize: 14 },
-  heroBrand: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 1, marginTop: 2 },
+  heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  heroLogo: { width: 44, height: 48 },
+  heroBrandName: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 1.5 },
+  heroBrandSub: { color: colors.brandSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  heroLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 13, letterSpacing: 0.5 },
-  heroValue: { color: '#fff', fontSize: 44, fontWeight: '800', marginTop: spacing.xs },
+  heroLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, letterSpacing: 1, fontWeight: '600' },
+  heroValue: { color: colors.brandSecondary, fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
   heroStatsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' },
-  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.18)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill },
+  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(228,192,112,0.15)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(228,192,112,0.3)' },
   heroStatText: { color: '#fff', fontSize: 12, fontWeight: '600' },
 
   section: { paddingHorizontal: spacing.xl, marginTop: spacing.xl },

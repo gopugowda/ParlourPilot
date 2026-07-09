@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
@@ -24,10 +25,12 @@ const chips = [
 
 export default function HistoryScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(isAdmin ? 'all' : 'today');
   const [search, setSearch] = useState('');
 
   const load = async () => {
@@ -64,7 +67,7 @@ export default function HistoryScreen() {
       <SafeAreaView edges={['top']} style={styles.header}>
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.headerTitle}>Bill History</Text>
+            <Text style={styles.headerTitle}>{isAdmin ? 'Bill History' : "Today's Bills"}</Text>
             <Text style={styles.headerSub}>{filtered.length} bills · {fmtINR(totalShown)}</Text>
           </View>
         </View>
@@ -81,6 +84,7 @@ export default function HistoryScreen() {
           />
         </View>
 
+        {isAdmin && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -101,6 +105,7 @@ export default function HistoryScreen() {
             );
           })}
         </ScrollView>
+        )}
       </SafeAreaView>
 
       <ScrollView

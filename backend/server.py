@@ -187,7 +187,7 @@ async def list_beauticians(user=Depends(get_current_user)):
 
 
 @api_router.post("/beauticians")
-async def create_beautician(body: BeauticianIn, user=Depends(get_current_user)):
+async def create_beautician(body: BeauticianIn, user=Depends(require_admin)):
     doc = {
         "id": str(uuid.uuid4()),
         "name": body.name,
@@ -201,7 +201,7 @@ async def create_beautician(body: BeauticianIn, user=Depends(get_current_user)):
 
 
 @api_router.put("/beauticians/{bid}")
-async def update_beautician(bid: str, body: BeauticianIn, user=Depends(get_current_user)):
+async def update_beautician(bid: str, body: BeauticianIn, user=Depends(require_admin)):
     result = await db.beauticians.find_one_and_update(
         {"id": bid},
         {"$set": {"name": body.name, "role": body.role, "phone": body.phone or "", "active": body.active}},
@@ -214,7 +214,7 @@ async def update_beautician(bid: str, body: BeauticianIn, user=Depends(get_curre
 
 
 @api_router.delete("/beauticians/{bid}")
-async def delete_beautician(bid: str, user=Depends(get_current_user)):
+async def delete_beautician(bid: str, user=Depends(require_admin)):
     result = await db.beauticians.delete_one({"id": bid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
@@ -229,7 +229,7 @@ async def list_services(user=Depends(get_current_user)):
 
 
 @api_router.post("/services")
-async def create_service(body: ServiceIn, user=Depends(get_current_user)):
+async def create_service(body: ServiceIn, user=Depends(require_admin)):
     doc = {
         "id": str(uuid.uuid4()),
         "name": body.name,
@@ -243,7 +243,7 @@ async def create_service(body: ServiceIn, user=Depends(get_current_user)):
 
 
 @api_router.put("/services/{sid}")
-async def update_service(sid: str, body: ServiceIn, user=Depends(get_current_user)):
+async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin)):
     result = await db.services.find_one_and_update(
         {"id": sid},
         {"$set": {"name": body.name, "price": float(body.price), "category": body.category, "active": body.active}},
@@ -256,7 +256,7 @@ async def update_service(sid: str, body: ServiceIn, user=Depends(get_current_use
 
 
 @api_router.delete("/services/{sid}")
-async def delete_service(sid: str, user=Depends(get_current_user)):
+async def delete_service(sid: str, user=Depends(require_admin)):
     result = await db.services.delete_one({"id": sid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
@@ -320,7 +320,11 @@ async def list_bills(
     user=Depends(get_current_user),
 ):
     query: dict = {}
-    if date:
+    # Staff can only see today's bills
+    if user.get("role") == "staff":
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        query["created_at"] = {"$gte": f"{today}T00:00:00", "$lt": f"{today}T23:59:59.999999+00:00"}
+    elif date:
         query["created_at"] = {"$gte": f"{date}T00:00:00", "$lt": f"{date}T23:59:59.999999+00:00"}
     if payment_mode and payment_mode != "all":
         query["payment_mode"] = payment_mode
@@ -333,6 +337,11 @@ async def get_bill(bid: str, user=Depends(get_current_user)):
     doc = await db.bills.find_one({"id": bid}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Bill not found")
+    # Staff can only view today's bills
+    if user.get("role") == "staff":
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if not doc["created_at"].startswith(today):
+            raise HTTPException(status_code=403, detail="Staff can only view today's bills")
     return doc
 
 

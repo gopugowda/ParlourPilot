@@ -9,7 +9,7 @@ export default function ManageScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
 
-  const groups = [
+  const groups = user?.role === 'admin' ? [
     {
       title: 'Salon Management',
       items: [
@@ -23,12 +23,19 @@ export default function ManageScreen() {
         { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
       ],
     },
-    ...(user?.role === 'admin' ? [{
+    {
       title: 'Admin',
       items: [
         { icon: 'person-add-outline', label: 'Users', hint: 'Add admin or staff logins', route: '/manage/users' },
       ],
-    }] : []),
+    },
+  ] : [
+    {
+      title: 'Analytics',
+      items: [
+        { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
+      ],
+    },
   ];
 
   return (

@@ -44,22 +44,22 @@ export default function BillDetailScreen() {
     return `
 <html><head><meta charset="utf-8"/>
 <style>
-body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;color:#2C2A29}
-.brand{color:#B46A55;font-size:22px;font-weight:800;letter-spacing:1px}
-.sub{color:#66625E;font-size:12px;margin-bottom:16px}
-.box{border:1px solid #E8E6E1;border-radius:12px;padding:14px;margin-top:14px}
-h3{margin:0 0 8px 0;font-size:13px;color:#66625E;text-transform:uppercase}
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;color:#1A1A1A}
+.brand{color:#B88A3C;font-size:24px;font-weight:900;letter-spacing:2px}
+.sub{color:#6B6862;font-size:12px;margin-bottom:16px;letter-spacing:1px}
+.box{border:1px solid #E8E5DA;border-radius:12px;padding:14px;margin-top:14px}
+h3{margin:0 0 8px 0;font-size:13px;color:#6B6862;text-transform:uppercase}
 table{width:100%;border-collapse:collapse;margin-top:8px}
-th,td{padding:8px 6px;border-bottom:1px solid #F0EFEB;font-size:13px;text-align:left}
-th{background:#F5F4F0;color:#66625E;font-size:11px;text-transform:uppercase}
+th,td{padding:8px 6px;border-bottom:1px solid #F0EDE3;font-size:13px;text-align:left}
+th{background:#FAF3E1;color:#8A6524;font-size:11px;text-transform:uppercase}
 .totals{margin-top:10px;font-size:14px}
 .totals .row{display:flex;justify-content:space-between;padding:4px 0}
-.grand{font-size:22px;font-weight:800;color:#B46A55}
-.footer{margin-top:24px;text-align:center;color:#66625E;font-size:11px}
-.pm{display:inline-block;background:#F9EBE8;color:#B46A55;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px}
+.grand{font-size:22px;font-weight:900;color:#B88A3C}
+.footer{margin-top:24px;text-align:center;color:#6B6862;font-size:11px}
+.pm{display:inline-block;background:#FAF3E1;color:#8A6524;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px}
 </style></head><body>
-<div class="brand">GLOW UP UNISEX SALON</div>
-<div class="sub">Sullia · Karnataka</div>
+<div class="brand">GLOW UP</div>
+<div class="sub">UNISEX SALON · SULLIA</div>
 
 <div class="box">
   <h3>Invoice</h3>

@@ -15,7 +15,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.emergent.saloninvoiceapp.djfiom"
@@ -33,7 +33,7 @@
           "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#FFFFFF"
         }
       ]
     ],
