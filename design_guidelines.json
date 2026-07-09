@@ -1,0 +1,158 @@
+{
+  "app_name": "GLOW UP UNISEX Salon Billing",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A premium, distraction-free POS experience that blends the warmth of a luxury salon with the operational speed of a native utility.",
+  "color": {
+    "surface": "#FDFCF9",
+    "onSurface": "#2C2A29",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#4A4744",
+    "surfaceTertiary": "#F5F4F0",
+    "onSurfaceTertiary": "#66625E",
+    "surfaceInverse": "#2C2A29",
+    "onSurfaceInverse": "#FDFCF9",
+    "brand": "#B46A55",
+    "brandPrimary": "#B46A55",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#D69888",
+    "onBrandSecondary": "#2C2A29",
+    "brandTertiary": "#F9EBE8",
+    "onBrandTertiary": "#B46A55",
+    "success": "#5E7A5A",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D18E42",
+    "onWarning": "#FFFFFF",
+    "error": "#BA5454",
+    "onError": "#FFFFFF",
+    "info": "#66625E",
+    "onInfo": "#FFFFFF",
+    "border": "#E8E6E1",
+    "borderStrong": "#D1CEC7",
+    "divider": "#F0EFEB"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical padding, consistent margins. Forms and POS items should be easily tappable (≥44pt height). Maintain strong visual separation between services and payment sections.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use glass on the bottom tab bar so scrollable POS content flows cleanly underneath.",
+      "Use glass for sticky header components (like the Total amount sticky bar on the New Bill screen)."
+    ],
+    "dont's": [
+      "Do not use blur on list items, standard cards, or form inputs. Keep the utility areas solid for maximum readability."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Dashboard",
+      "purpose": "A quick-glance hub for daily revenue and fast access to POS actions.",
+      "states": {
+        "loading": "Skeleton loaders for the revenue card and action buttons.",
+        "empty": "N/A - Dashboard will show 0 revenue if no bills exist.",
+        "error": "Failed to load dashboard data. Retry button."
+      },
+      "layout": "Hero section with a subtle photo background covered by a gradient scrim (displaying Today's Revenue prominently). Below hero, a 2-column grid for Quick Actions (New Bill, Services, Staff, Reports) using large hit areas."
+    },
+    {
+      "name": "New Bill (POS)",
+      "purpose": "A streamlined, single-invoice flow to add services, assign beauticians, and process payment.",
+      "states": {
+        "loading": "Spinner during payment submission.",
+        "empty": "N/A - Always shows an initial blank invoice state.",
+        "error": "Error modal if the bill fails to save."
+      },
+      "layout": "Scrollable form: 1. Add Service + Price + Beautician block (dynamic list). 2. Discount section (Input % or ₹). 3. Payment Mode segmented control (Cash, QR, Split). Fixed/Sticky CTA at the bottom: 'Total: ₹X. Process Payment'."
+    },
+    {
+      "name": "Bill History",
+      "purpose": "A searchable, filterable archive of past transactions.",
+      "states": {
+        "loading": "List skeleton.",
+        "empty": "Illustration of a receipt with 'No bills found for this date'.",
+        "error": "Failed to fetch history."
+      },
+      "layout": "Sticky header with Search bar and horizontal scrollable filter chips (Date, Cash, QR). Below, a list of card-style invoices showing total, beautician initials, and status."
+    },
+    {
+      "name": "Manage",
+      "purpose": "Settings and admin area to manage services, staff, and view deep reports.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "Illustration for 'No services/staff added yet'.",
+        "error": "Failed to load settings."
+      },
+      "layout": "List-based navigation grouped by 'Salon Management' (Services, Beauticians) and 'Analytics' (Daily/Monthly Reports). Each row uses an icon inside a brandTertiary tinted container."
+    }
+  ],
+  "images": {
+    "dashboard_hero": {
+      "url": "https://images.pexels.com/photos/13068377/pexels-photo-13068377.jpeg",
+      "alt": "Modern minimal salon interior"
+    },
+    "history_empty_state": {
+      "url": "https://images.unsplash.com/photo-1545941962-1b6654eb8072?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxyZWNlaXB0JTIwYmlsbGluZyUyMGZsYXRsYXl8ZW58MHx8fHwxNzgzNTc1NjU2fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Receipt flatlay"
+    },
+    "manage_services_header": {
+      "url": "https://images.pexels.com/photos/35013087/pexels-photo-35013087.jpeg",
+      "alt": "Salon tools arranged neatly"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette. Do NOT use indigo, blue, or purple anywhere. Use the provided Terracotta/Warm Sand palette to give the app a premium beauty salon feel.",
+    "Implement the 'New Bill' screen as a unified, single-invoice flow. Avoid forcing the user to jump between multiple tabs to add a service and select a beautician.",
+    "The primary Call to Action (e.g., 'Process Payment') on the New Bill screen MUST be sticky at the bottom, above the safe area, utilizing the iOS-native glass effect (or fallback) behind it.",
+    "For the Bill History, include visual filter chips (Cash, QR, Both) below the search bar to allow quick auditing.",
+    "Ensure the Dashboard hero image incorporates the required vertical gradient scrim pattern (transparent to surfaceInverse at the bottom) so the white 'Today's Revenue' text is fully readable.",
+    "Never use raw hex colors inline. Always map colors to the tokens provided.",
+    "Implement Phosphor icons uniformly. Do not mix weights. Keep all icons in 'regular' or 'fill' consistently across a screen.",
+    "Remember to include haptics on payment mode selection, adding a service, and pressing the primary 'Process Payment' CTA."
+  ],
+  "haptics": {
+    "button_press": "light",
+    "payment_process": "success",
+    "tab_change": "selection",
+    "filter_chip_toggle": "light",
+    "add_service_row": "medium"
+  }
+}
