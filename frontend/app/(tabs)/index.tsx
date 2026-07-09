@@ -119,7 +119,8 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Month summary */}
+        {/* Month summary — admin only */}
+        {isAdmin && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>This Month</Text>
           <View style={styles.monthCard}>
@@ -133,6 +134,7 @@ export default function DashboardScreen() {
             </View>
           </View>
         </View>
+        )}
 
         {/* Per beautician */}
         <View style={styles.section}>
