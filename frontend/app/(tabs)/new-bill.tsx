@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal,
-  ActivityIndicator, Pressable, KeyboardAvoidingView, Platform,
+  ActivityIndicator, Pressable, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,9 @@ import * as Haptics from 'expo-haptics';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+
+const MEMBER_PCT = 10;
+const MEMBER_MIN_PRICE = 100;
 
 type Service = { id: string; name: string; price: number; category: string };
 type Beautician = { id: string; name: string; role: string };
@@ -27,11 +30,16 @@ export default function NewBillScreen() {
   const [paymentMode, setPaymentMode] = useState<'cash' | 'qr' | 'split'>('cash');
   const [cashAmt, setCashAmt] = useState('');
   const [qrAmt, setQrAmt] = useState('');
+  const [isMember, setIsMember] = useState(false);
+  const [tipAmt, setTipAmt] = useState('');
+  const [tipVia, setTipVia] = useState<'cash' | 'qr'>('cash');
+  const [tipBeauticianId, setTipBeauticianId] = useState<string | undefined>();
+  const [tipBeauticianName, setTipBeauticianName] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Picker modals
-  const [pickerFor, setPickerFor] = useState<{ index: number; type: 'service' | 'beautician' } | null>(null);
+  // Picker modals — 'tip-beautician' picks the beautician who received the tip
+  const [pickerFor, setPickerFor] = useState<{ index: number; type: 'service' | 'beautician' } | { type: 'tip-beautician' } | null>(null);
   const [pickerSearch, setPickerSearch] = useState('');
 
   const loadData = async () => {
@@ -60,12 +68,22 @@ export default function NewBillScreen() {
   };
 
   const subtotal = items.reduce((s, it) => s + (Number(it.price) || 0), 0);
-  const discount = items.reduce((s, it) => s + (Number(it.price) || 0) * ((Number(it.discount_pct) || 0) / 100), 0);
-  const total = Math.max(0, subtotal - discount);
+  const discount = items.reduce((s, it) => {
+    const price = Number(it.price) || 0;
+    const manual = Number(it.discount_pct) || 0;
+    const member = isMember && price > MEMBER_MIN_PRICE ? MEMBER_PCT : 0;
+    const eff = Math.max(manual, member);
+    return s + price * (eff / 100);
+  }, 0);
+  const servicesNet = Math.max(0, subtotal - discount);
+  const tip = Math.max(0, Number(tipAmt) || 0);
+  const total = servicesNet + tip;
 
   const resetForm = () => {
     setItems([]); setCustomerName(''); setCustomerPhone('');
     setPaymentMode('cash'); setCashAmt(''); setQrAmt('');
+    setIsMember(false); setTipAmt(''); setTipVia('cash');
+    setTipBeauticianId(undefined); setTipBeauticianName('');
   };
 
   const onSubmit = async () => {
@@ -76,12 +94,13 @@ export default function NewBillScreen() {
       if (!it.beautician_name) { setErr('Assign beautician for all rows'); return; }
       if (!(Number(it.price) > 0)) { setErr('Price must be > 0'); return; }
     }
+    if (tip > 0 && !tipBeauticianName) { setErr('Choose beautician who received the tip'); return; }
     let cash = 0, qr = 0;
-    if (paymentMode === 'cash') cash = total;
-    else if (paymentMode === 'qr') qr = total;
+    if (paymentMode === 'cash') cash = servicesNet;
+    else if (paymentMode === 'qr') qr = servicesNet;
     else {
       cash = Number(cashAmt) || 0; qr = Number(qrAmt) || 0;
-      if (Math.abs(cash + qr - total) > 0.01) { setErr(`Split must total ${fmtINR(total)}`); return; }
+      if (Math.abs(cash + qr - servicesNet) > 0.01) { setErr(`Split for services must total ${fmtINR(servicesNet)}`); return; }
     }
     setSaving(true);
     try {
@@ -97,6 +116,11 @@ export default function NewBillScreen() {
           })),
           payment_mode: paymentMode,
           cash_amount: cash, qr_amount: qr,
+          is_member: isMember,
+          tip_amount: tip,
+          tip_via: tip > 0 ? tipVia : null,
+          tip_beautician_id: tip > 0 ? tipBeauticianId : null,
+          tip_beautician_name: tip > 0 ? tipBeauticianName : '',
         },
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -112,7 +136,9 @@ export default function NewBillScreen() {
 
   const pickerData = pickerFor?.type === 'service'
     ? services.filter(s => s.name.toLowerCase().includes(pickerSearch.toLowerCase()))
-    : beauticians.filter(b => b.name.toLowerCase().includes(pickerSearch.toLowerCase()));
+    : (pickerFor?.type === 'beautician' || pickerFor?.type === 'tip-beautician')
+      ? beauticians.filter(b => b.name.toLowerCase().includes(pickerSearch.toLowerCase()))
+      : [];
 
   return (
     <View style={styles.root} testID="new-bill-screen">
@@ -163,11 +189,24 @@ export default function NewBillScreen() {
             )}
 
             {items.map((it, i) => {
-              const lineTotal = (Number(it.price) || 0) * (1 - (Number(it.discount_pct) || 0) / 100);
+              const price = Number(it.price) || 0;
+              const manual = Number(it.discount_pct) || 0;
+              const memberPct = isMember && price > MEMBER_MIN_PRICE ? MEMBER_PCT : 0;
+              const effPct = Math.max(manual, memberPct);
+              const lineTotal = price * (1 - effPct / 100);
+              const memberActive = memberPct > 0 && memberPct >= manual;
               return (
                 <View key={i} style={styles.itemBlock} testID={`item-row-${i}`}>
                   <View style={styles.itemHeader}>
-                    <Text style={styles.itemNum}>#{i + 1}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.itemNum}>#{i + 1}</Text>
+                      {memberActive && (
+                        <View style={styles.memberBadge}>
+                          <Ionicons name="star" size={9} color="#fff" />
+                          <Text style={styles.memberBadgeText}>-{MEMBER_PCT}% Member</Text>
+                        </View>
+                      )}
+                    </View>
                     <TouchableOpacity testID={`item-remove-${i}`} onPress={() => removeItem(i)}>
                       <Ionicons name="trash-outline" size={18} color={colors.error} />
                     </TouchableOpacity>
@@ -232,9 +271,90 @@ export default function NewBillScreen() {
             })}
           </View>
 
+          {/* Membership */}
+          <View style={styles.card}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+              <View style={styles.memberIcon}>
+                <Ionicons name="star" size={16} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>Yearly Membership</Text>
+                <Text style={styles.hintText}>Flat 10% off on services above ₹100</Text>
+              </View>
+              <Switch
+                testID="member-switch"
+                value={isMember}
+                onValueChange={(v) => { Haptics.selectionAsync(); setIsMember(v); }}
+                trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }}
+                thumbColor="#fff"
+              />
+            </View>
+          </View>
+
+          {/* Tip */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Tip (optional)</Text>
+            <Text style={styles.hintText}>
+              Tip goes to the beautician. If paid via QR/UPI, cash from counter is given to beautician.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+              <View style={[styles.smallField, { flex: 1 }]}>
+                <Text style={styles.smallLabel}>Amount (₹)</Text>
+                <TextInput
+                  testID="tip-amount-input"
+                  value={tipAmt}
+                  onChangeText={(v) => setTipAmt(v.replace(/[^0-9.]/g, ''))}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.smallInput}
+                />
+              </View>
+              <View style={[styles.smallField, { flex: 1.4 }]}>
+                <Text style={styles.smallLabel}>Paid via</Text>
+                <View style={{ flexDirection: 'row', gap: 4, marginTop: 2 }}>
+                  {(['cash', 'qr'] as const).map(v => (
+                    <TouchableOpacity
+                      key={v}
+                      testID={`tip-via-${v}`}
+                      disabled={tip <= 0}
+                      onPress={() => { Haptics.selectionAsync(); setTipVia(v); }}
+                      style={[styles.tipViaChip, tipVia === v && styles.tipViaChipActive, tip <= 0 && { opacity: 0.5 }]}
+                    >
+                      <Ionicons name={v === 'cash' ? 'cash-outline' : 'qr-code-outline'} size={12} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
+                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : 'QR'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+            {tip > 0 && (
+              <TouchableOpacity
+                testID="tip-beautician-btn"
+                onPress={() => { setPickerSearch(''); setPickerFor({ type: 'tip-beautician' }); }}
+                style={styles.selectField}
+              >
+                <Ionicons name="person-outline" size={16} color={colors.onSurfaceTertiary} />
+                <Text style={[styles.selectText, !tipBeauticianName && styles.selectPlaceholder]} numberOfLines={1}>
+                  {tipBeauticianName || 'Which beautician gets the tip?'}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
+              </TouchableOpacity>
+            )}
+            {tip > 0 && tipVia === 'qr' && (
+              <View style={styles.tipNote}>
+                <Ionicons name="information-circle" size={14} color={colors.warning} />
+                <Text style={styles.tipNoteText}>
+                  Give {fmtINR(tip)} cash from counter to {tipBeauticianName || 'the beautician'}.
+                </Text>
+              </View>
+            )}
+          </View>
+
           {/* Payment */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Payment Mode</Text>
+            <Text style={styles.cardTitle}>Payment Mode (Services)</Text>
+            <Text style={styles.hintText}>How the customer paid for services: {fmtINR(servicesNet)}</Text>
             <View style={styles.segmentRow}>
               {[
                 { k: 'cash', label: 'Cash', icon: 'cash-outline' },
@@ -289,9 +409,12 @@ export default function NewBillScreen() {
         {/* Sticky footer */}
         <View style={styles.footer}>
           <View style={styles.footerLeft}>
-            <Text style={styles.footerLabel}>Total</Text>
+            <Text style={styles.footerLabel}>Total {tip > 0 ? '(incl. tip)' : ''}</Text>
             <Text style={styles.footerTotal} testID="bill-total">{fmtINR(total)}</Text>
-            {discount > 0 && <Text style={styles.footerDisc}>Saved {fmtINR(discount)}</Text>}
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: 2, flexWrap: 'wrap' }}>
+              {discount > 0 && <Text style={styles.footerHint}>Saved {fmtINR(discount)}</Text>}
+              {tip > 0 && <Text style={[styles.footerHint, { color: colors.brandPrimary }]}>Tip {fmtINR(tip)}</Text>}
+            </View>
           </View>
           <Pressable
             testID="process-payment-btn"
@@ -315,7 +438,9 @@ export default function NewBillScreen() {
           <Pressable style={styles.modalSheet} onPress={() => {}}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>
-              {pickerFor?.type === 'service' ? 'Select Service' : 'Select Beautician'}
+              {pickerFor?.type === 'service' ? 'Select Service'
+                : pickerFor?.type === 'tip-beautician' ? 'Beautician receiving Tip'
+                : 'Select Beautician'}
             </Text>
             <TextInput
               testID="picker-search"
@@ -334,10 +459,12 @@ export default function NewBillScreen() {
                   style={styles.pickerRow}
                   onPress={() => {
                     if (!pickerFor) return;
-                    if (pickerFor.type === 'service') {
+                    if (pickerFor.type === 'service' && 'index' in pickerFor) {
                       updateItem(pickerFor.index, { service_id: opt.id, service_name: opt.name, price: opt.price });
-                    } else {
+                    } else if (pickerFor.type === 'beautician' && 'index' in pickerFor) {
                       updateItem(pickerFor.index, { beautician_id: opt.id, beautician_name: opt.name });
+                    } else if (pickerFor.type === 'tip-beautician') {
+                      setTipBeauticianId(opt.id); setTipBeauticianName(opt.name);
                     }
                     Haptics.selectionAsync();
                     setPickerFor(null);
@@ -411,6 +538,18 @@ const styles = StyleSheet.create({
 
   err: { color: colors.error, fontSize: 13, textAlign: 'center', marginTop: spacing.sm },
 
+  hintText: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: -6 },
+  memberIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
+  memberBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
+  memberBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
+  tipViaChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  tipViaChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  tipViaText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
+  tipViaTextActive: { color: '#fff' },
+  tipNote: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#FDF6E7', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0DCA6' },
+  tipNoteText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary },
+  footerHint: { fontSize: 11, color: colors.success, fontWeight: '600' },
+
   footer: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
@@ -421,7 +560,6 @@ const styles = StyleSheet.create({
   footerLeft: { flex: 1 },
   footerLabel: { fontSize: 12, color: colors.onSurfaceTertiary },
   footerTotal: { fontSize: 26, fontWeight: '800', color: colors.onSurface },
-  footerDisc: { fontSize: 11, color: colors.success, marginTop: 2 },
   cta: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.xl, paddingVertical: 14,

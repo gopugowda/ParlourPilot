@@ -122,20 +122,42 @@ class BillCreate(BaseModel):
     payment_mode: Literal["cash", "qr", "split"]
     cash_amount: float = 0
     qr_amount: float = 0
+    is_member: bool = False
+    tip_amount: float = 0
+    tip_via: Optional[Literal["cash", "qr"]] = None
+    tip_beautician_id: Optional[str] = None
+    tip_beautician_name: Optional[str] = ""
     notes: Optional[str] = ""
 
 
 # ============ Helpers ============
-def compute_bill_totals(items: List[BillItem]):
+MEMBER_DISCOUNT_PCT = 10.0
+MEMBER_MIN_PRICE = 100.0
+
+
+def apply_member_discount(items: List[BillItem], is_member: bool) -> List[dict]:
+    """Return list of item dicts with effective_discount_pct + member_applied flag."""
+    out = []
+    for it in items:
+        base = it.model_dump()
+        member_pct = MEMBER_DISCOUNT_PCT if (is_member and it.price > MEMBER_MIN_PRICE) else 0.0
+        eff = max(float(it.discount_pct or 0), member_pct)
+        base["effective_discount_pct"] = round(eff, 2)
+        base["member_applied"] = member_pct > 0 and member_pct >= (it.discount_pct or 0)
+        out.append(base)
+    return out
+
+
+def compute_bill_totals(items_effective: List[dict]):
     subtotal = 0.0
     total_discount = 0.0
-    for it in items:
-        line_gross = it.price
-        line_disc = line_gross * (it.discount_pct or 0) / 100.0
+    for it in items_effective:
+        line_gross = it["price"]
+        line_disc = line_gross * (it.get("effective_discount_pct", 0) or 0) / 100.0
         subtotal += line_gross
         total_discount += line_disc
-    grand_total = round(subtotal - total_discount, 2)
-    return round(subtotal, 2), round(total_discount, 2), grand_total
+    services_net = round(subtotal - total_discount, 2)
+    return round(subtotal, 2), round(total_discount, 2), services_net
 
 
 # ============ Auth Routes ============
@@ -276,29 +298,43 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user)):
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one service required")
 
-    subtotal, discount, grand_total = compute_bill_totals(body.items)
+    items_eff = apply_member_discount(body.items, body.is_member)
+    subtotal, discount, services_net = compute_bill_totals(items_eff)
 
-    # Validate payment amounts
+    # Validate payment amounts (services only; tip handled separately)
     if body.payment_mode == "cash":
-        cash_amt = grand_total
-        qr_amt = 0
+        cash_amt = services_net
+        qr_amt = 0.0
     elif body.payment_mode == "qr":
-        cash_amt = 0
-        qr_amt = grand_total
+        cash_amt = 0.0
+        qr_amt = services_net
     else:  # split
         cash_amt = round(body.cash_amount, 2)
         qr_amt = round(body.qr_amount, 2)
-        if abs((cash_amt + qr_amt) - grand_total) > 0.01:
-            raise HTTPException(status_code=400, detail=f"Split amounts must total {grand_total}")
+        if abs((cash_amt + qr_amt) - services_net) > 0.01:
+            raise HTTPException(status_code=400, detail=f"Split amounts must total {services_net}")
+
+    tip_amount = round(max(0.0, float(body.tip_amount or 0)), 2)
+    tip_via = body.tip_via if tip_amount > 0 else None
+    if tip_amount > 0 and tip_via not in ("cash", "qr"):
+        raise HTTPException(status_code=400, detail="tip_via required when tip_amount > 0")
+
+    grand_total = round(services_net + tip_amount, 2)
 
     bill = {
         "id": str(uuid.uuid4()),
         "bill_no": await _next_bill_number(),
         "customer_name": body.customer_name or "Walk-in",
         "customer_phone": body.customer_phone or "",
-        "items": [it.model_dump() for it in body.items],
+        "items": items_eff,
         "subtotal": subtotal,
         "discount": discount,
+        "services_net": services_net,
+        "is_member": bool(body.is_member),
+        "tip_amount": tip_amount,
+        "tip_via": tip_via,
+        "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
+        "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount > 0 else "",
         "grand_total": grand_total,
         "payment_mode": body.payment_mode,
         "cash_amount": cash_amt,
@@ -361,39 +397,58 @@ async def reports_summary(user=Depends(get_current_user)):
 
     all_bills = await db.bills.find({}, {"_id": 0}).to_list(10000)
 
-    today_total = sum(b["grand_total"] for b in all_bills if b["created_at"].startswith(today))
-    today_count = sum(1 for b in all_bills if b["created_at"].startswith(today))
-    month_total = sum(b["grand_total"] for b in all_bills if b["created_at"].startswith(month))
-    month_count = sum(1 for b in all_bills if b["created_at"].startswith(month))
+    def revenue(b):
+        # Salon revenue excludes tips
+        return b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
 
-    today_cash = sum(b["cash_amount"] for b in all_bills if b["created_at"].startswith(today))
-    today_qr = sum(b["qr_amount"] for b in all_bills if b["created_at"].startswith(today))
+    today_bills = [b for b in all_bills if b["created_at"].startswith(today)]
+    month_bills = [b for b in all_bills if b["created_at"].startswith(month)]
 
-    # Per beautician (month)
+    today_total = sum(revenue(b) for b in today_bills)
+    today_count = len(today_bills)
+    month_total = sum(revenue(b) for b in month_bills)
+    month_count = len(month_bills)
+
+    # Cash counter net = services cash in - tip paid out to beautician when tip via QR
+    today_cash = sum(b.get("cash_amount", 0) for b in today_bills) \
+        - sum(b.get("tip_amount", 0) for b in today_bills if b.get("tip_via") == "qr")
+    today_qr = sum(b.get("qr_amount", 0) for b in today_bills) \
+        + sum(b.get("tip_amount", 0) for b in today_bills if b.get("tip_via") == "qr")
+    today_tips = sum(b.get("tip_amount", 0) for b in today_bills)
+
+    # Per beautician (month) — services revenue distribution
     per_beautician: dict = {}
-    for b in all_bills:
-        if not b["created_at"].startswith(month):
-            continue
-        # Distribute grand_total proportionally across items by (price*(1-disc%))
+    for b in month_bills:
         line_totals = []
         for it in b["items"]:
-            lt = it["price"] * (1 - it.get("discount_pct", 0) / 100.0)
+            eff = it.get("effective_discount_pct", it.get("discount_pct", 0)) or 0
+            lt = it["price"] * (1 - eff / 100.0)
             line_totals.append(lt)
         gross = sum(line_totals) or 1
+        rev = revenue(b)
         for it, lt in zip(b["items"], line_totals):
             name = it["beautician_name"] or "Unassigned"
-            share = (lt / gross) * b["grand_total"]
-            per_beautician.setdefault(name, {"name": name, "amount": 0.0, "bills": 0})
+            share = (lt / gross) * rev
+            per_beautician.setdefault(name, {"name": name, "amount": 0.0, "bills": 0, "tips": 0.0})
             per_beautician[name]["amount"] += share
             per_beautician[name]["bills"] += 1
+        # Tips attributed to the tip beautician
+        if b.get("tip_amount", 0) > 0 and b.get("tip_beautician_name"):
+            n = b["tip_beautician_name"]
+            per_beautician.setdefault(n, {"name": n, "amount": 0.0, "bills": 0, "tips": 0.0})
+            per_beautician[n]["tips"] += b["tip_amount"]
 
     per_beautician_list = sorted(
-        [{"name": v["name"], "amount": round(v["amount"], 2), "bills": v["bills"]} for v in per_beautician.values()],
-        key=lambda x: x["amount"], reverse=True
+        [{"name": v["name"], "amount": round(v["amount"], 2), "bills": v["bills"], "tips": round(v["tips"], 2)} for v in per_beautician.values()],
+        key=lambda x: x["amount"] + x["tips"], reverse=True
     )
 
     return {
-        "today": {"total": round(today_total, 2), "count": today_count, "cash": round(today_cash, 2), "qr": round(today_qr, 2)},
+        "today": {
+            "total": round(today_total, 2), "count": today_count,
+            "cash": round(today_cash, 2), "qr": round(today_qr, 2),
+            "tips": round(today_tips, 2),
+        },
         "month": {"total": round(month_total, 2), "count": month_count},
         "per_beautician_month": per_beautician_list,
     }
@@ -405,16 +460,21 @@ async def reports_daily(days: int = 30, user=Depends(get_current_user)):
     by_day: dict = {}
     for b in all_bills:
         day = b["created_at"][:10]
-        by_day.setdefault(day, {"date": day, "total": 0.0, "count": 0, "cash": 0.0, "qr": 0.0})
-        by_day[day]["total"] += b["grand_total"]
+        by_day.setdefault(day, {"date": day, "total": 0.0, "count": 0, "cash": 0.0, "qr": 0.0, "tips": 0.0})
+        rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
+        by_day[day]["total"] += rev
         by_day[day]["count"] += 1
-        by_day[day]["cash"] += b["cash_amount"]
-        by_day[day]["qr"] += b["qr_amount"]
+        tip_via = b.get("tip_via")
+        tip = b.get("tip_amount", 0)
+        by_day[day]["cash"] += b.get("cash_amount", 0) - (tip if tip_via == "qr" else 0)
+        by_day[day]["qr"] += b.get("qr_amount", 0) + (tip if tip_via == "qr" else 0)
+        by_day[day]["tips"] += tip
     rows = sorted(by_day.values(), key=lambda x: x["date"], reverse=True)[:days]
     for r in rows:
         r["total"] = round(r["total"], 2)
         r["cash"] = round(r["cash"], 2)
         r["qr"] = round(r["qr"], 2)
+        r["tips"] = round(r["tips"], 2)
     return rows
 
 

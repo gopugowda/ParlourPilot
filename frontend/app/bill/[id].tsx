@@ -29,17 +29,30 @@ export default function BillDetailScreen() {
   const buildHtml = () => {
     if (!bill) return '';
     const rows = bill.items.map((it: any, i: number) => {
-      const lineTotal = (it.price * (1 - (it.discount_pct || 0) / 100)).toFixed(2);
+      const eff = it.effective_discount_pct ?? it.discount_pct ?? 0;
+      const lineTotal = (it.price * (1 - eff / 100)).toFixed(2);
+      const discStr = eff > 0 ? `${eff}%${it.member_applied ? ' ★' : ''}` : '0%';
       return `<tr>
         <td>${i + 1}</td>
         <td>${it.service_name}<br/><small style="color:#888">by ${it.beautician_name}</small></td>
         <td style="text-align:right">₹${it.price.toFixed(2)}</td>
-        <td style="text-align:right">${it.discount_pct || 0}%</td>
+        <td style="text-align:right">${discStr}</td>
         <td style="text-align:right"><b>₹${lineTotal}</b></td>
       </tr>`;
     }).join('');
 
     const dt = new Date(bill.created_at).toLocaleString('en-IN');
+    const memberBadge = bill.is_member ? `<div style="display:inline-block;background:#B88A3C;color:#fff;padding:4px 10px;border-radius:999px;font-weight:700;font-size:11px;margin-left:8px">★ MEMBER</div>` : '';
+    const tipBlock = (bill.tip_amount || 0) > 0 ? `
+      <div class="box">
+        <h3>Tip</h3>
+        <div class="row" style="display:flex;justify-content:space-between">
+          <span>Tip to ${bill.tip_beautician_name || 'beautician'} (${(bill.tip_via || '').toUpperCase()})</span>
+          <span><b>₹${bill.tip_amount.toFixed(2)}</b></span>
+        </div>
+      </div>
+    ` : '';
+    const servicesNet = bill.services_net ?? (bill.grand_total - (bill.tip_amount || 0));
 
     return `
 <html><head><meta charset="utf-8"/>
@@ -64,7 +77,7 @@ th{background:#FAF3E1;color:#8A6524;font-size:11px;text-transform:uppercase}
 <div class="box">
   <h3>Invoice</h3>
   <div style="display:flex;justify-content:space-between">
-    <div><b>Bill #${bill.bill_no}</b><br/><small>${dt}</small></div>
+    <div><b>Bill #${bill.bill_no}</b>${memberBadge}<br/><small>${dt}</small></div>
     <div style="text-align:right"><b>${bill.customer_name}</b><br/><small>${bill.customer_phone || ''}</small></div>
   </div>
 </div>
@@ -76,10 +89,14 @@ th{background:#FAF3E1;color:#8A6524;font-size:11px;text-transform:uppercase}
   </table>
 </div>
 
+${tipBlock}
+
 <div class="box">
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>₹${bill.subtotal.toFixed(2)}</span></div>
     <div class="row"><span>Discount</span><span>- ₹${bill.discount.toFixed(2)}</span></div>
+    <div class="row"><span>Services Net</span><span>₹${servicesNet.toFixed(2)}</span></div>
+    ${(bill.tip_amount || 0) > 0 ? `<div class="row"><span>Tip</span><span>+ ₹${bill.tip_amount.toFixed(2)}</span></div>` : ''}
     <div class="row"><span><b>Grand Total</b></span><span class="grand">₹${bill.grand_total.toFixed(2)}</span></div>
   </div>
   <div style="margin-top:12px">
@@ -148,15 +165,29 @@ th{background:#FAF3E1;color:#8A6524;font-size:11px;text-transform:uppercase}
 
         {/* Items */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Services ({bill.items.length})</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.cardTitle}>Services ({bill.items.length})</Text>
+            {bill.is_member && (
+              <View style={styles.memberBadge}>
+                <Ionicons name="star" size={10} color="#fff" />
+                <Text style={styles.memberBadgeText}>MEMBER · 10% off</Text>
+              </View>
+            )}
+          </View>
           {bill.items.map((it: any, i: number) => {
-            const lineTotal = it.price * (1 - (it.discount_pct || 0) / 100);
+            const eff = it.effective_discount_pct ?? it.discount_pct ?? 0;
+            const lineTotal = it.price * (1 - eff / 100);
             return (
               <View key={i} style={styles.itemRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{it.service_name}</Text>
                   <Text style={styles.itemBy}>by {it.beautician_name}</Text>
-                  {it.discount_pct > 0 && <Text style={styles.itemDisc}>-{it.discount_pct}% off · {fmtINR(it.price)}</Text>}
+                  {eff > 0 && (
+                    <Text style={styles.itemDisc}>
+                      -{eff}% off · {fmtINR(it.price)}
+                      {it.member_applied ? ' · Member' : ''}
+                    </Text>
+                  )}
                 </View>
                 <Text style={styles.itemAmt}>{fmtINR(lineTotal)}</Text>
               </View>
@@ -164,10 +195,36 @@ th{background:#FAF3E1;color:#8A6524;font-size:11px;text-transform:uppercase}
           })}
         </View>
 
+        {/* Tip */}
+        {(bill.tip_amount || 0) > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Tip</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+              <View style={styles.tipIcon}>
+                <Ionicons name="heart" size={18} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.itemName}>{bill.tip_beautician_name || 'Beautician'}</Text>
+                <Text style={styles.itemBy}>Paid via {String(bill.tip_via || '').toUpperCase()}</Text>
+                {bill.tip_via === 'qr' && (
+                  <Text style={[styles.itemDisc, { color: colors.warning }]}>
+                    Give {fmtINR(bill.tip_amount)} cash from counter
+                  </Text>
+                )}
+              </View>
+              <Text style={styles.itemAmt}>{fmtINR(bill.tip_amount)}</Text>
+            </View>
+          </View>
+        )}
+
         {/* Totals */}
         <View style={styles.card}>
           <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalVal}>{fmtINR(bill.subtotal)}</Text></View>
           <View style={styles.totalRow}><Text style={styles.totalLabel}>Discount</Text><Text style={[styles.totalVal, { color: colors.success }]}>- {fmtINR(bill.discount)}</Text></View>
+          <View style={styles.totalRow}><Text style={styles.totalLabel}>Services Net</Text><Text style={styles.totalVal}>{fmtINR(bill.services_net ?? (bill.grand_total - (bill.tip_amount || 0)))}</Text></View>
+          {(bill.tip_amount || 0) > 0 && (
+            <View style={styles.totalRow}><Text style={styles.totalLabel}>Tip</Text><Text style={[styles.totalVal, { color: colors.brandPrimary }]}>+ {fmtINR(bill.tip_amount)}</Text></View>
+          )}
           <View style={[styles.totalRow, { marginTop: 6, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider }]}>
             <Text style={styles.grandLabel}>Grand Total</Text>
             <Text style={styles.grandVal}>{fmtINR(bill.grand_total)}</Text>
@@ -227,6 +284,10 @@ const styles = StyleSheet.create({
   itemBy: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   itemDisc: { fontSize: 11, color: colors.warning, marginTop: 2 },
   itemAmt: { fontSize: 15, fontWeight: '700', color: colors.brandPrimary },
+
+  memberBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
+  memberBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  tipIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
 
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   totalLabel: { fontSize: 13, color: colors.onSurfaceSecondary },

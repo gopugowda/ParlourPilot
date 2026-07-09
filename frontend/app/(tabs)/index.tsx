@@ -93,6 +93,12 @@ export default function DashboardScreen() {
                   <Ionicons name="qr-code-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.qr || 0)}</Text>
                 </View>
+                {(summary?.today?.tips || 0) > 0 && (
+                  <View style={styles.heroStatChip}>
+                    <Ionicons name="heart-outline" size={14} color={colors.brandSecondary} />
+                    <Text style={styles.heroStatText}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
+                  </View>
+                )}
               </View>
             </View>
           </SafeAreaView>
@@ -152,7 +158,9 @@ export default function DashboardScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.perfName}>{b.name}</Text>
-                  <Text style={styles.perfBills}>{b.bills} services</Text>
+                  <Text style={styles.perfBills}>
+                    {b.bills} services{(b.tips || 0) > 0 ? ` · ${fmtINR(b.tips)} tips` : ''}
+                  </Text>
                 </View>
                 <Text style={styles.perfAmount}>{fmtINR(b.amount)}</Text>
               </View>
