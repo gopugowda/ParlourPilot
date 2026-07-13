@@ -150,6 +150,26 @@ class ExpenseIn(BaseModel):
     notes: Optional[str] = ""
 
 
+STOCK_UNITS = ["piece", "ml", "g", "kg", "L", "pack", "bottle"]
+
+
+class StockItemIn(BaseModel):
+    name: str
+    unit: str = "piece"
+    current_qty: float = 0
+    min_qty: float = 0
+    unit_cost: float = 0
+    notes: Optional[str] = ""
+
+
+class StockMovementIn(BaseModel):
+    item_id: str
+    type: Literal["purchase", "use", "adjust"]
+    qty: float
+    unit_cost: Optional[float] = None  # only for purchase
+    notes: Optional[str] = ""
+
+
 # ============ Helpers ============
 MEMBER_DISCOUNT_PCT = 10.0
 MEMBER_MIN_PRICE = 100.0
