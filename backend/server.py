@@ -170,6 +170,14 @@ class StockMovementIn(BaseModel):
     notes: Optional[str] = ""
 
 
+class CashClosingIn(BaseModel):
+    date: Optional[str] = None  # YYYY-MM-DD; defaults today
+    opening_balance: float = 0
+    cash_expenses: float = 0
+    actual_closing: float = 0
+    notes: Optional[str] = ""
+
+
 # ============ Helpers ============
 MEMBER_DISCOUNT_PCT = 10.0
 MEMBER_MIN_PRICE = 100.0
@@ -611,6 +619,237 @@ async def delete_expense(eid: str, user=Depends(require_admin)):
     return {"ok": True}
 
 
+# ============ Stock / Inventory ============
+@api_router.get("/stock/units")
+async def stock_units(user=Depends(get_current_user)):
+    return STOCK_UNITS
+
+
+@api_router.get("/stock")
+async def list_stock(user=Depends(get_current_user)):
+    docs = await db.stock_items.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+    for d in docs:
+        d["low_stock"] = d.get("current_qty", 0) <= d.get("min_qty", 0)
+    return docs
+
+
+@api_router.get("/stock/low")
+async def list_low_stock(user=Depends(get_current_user)):
+    docs = await db.stock_items.find({}, {"_id": 0}).to_list(500)
+    return [d for d in docs if d.get("current_qty", 0) <= d.get("min_qty", 0)]
+
+
+@api_router.post("/stock")
+async def create_stock(body: StockItemIn, user=Depends(require_admin)):
+    if await db.stock_items.find_one({"name": body.name.strip()}):
+        raise HTTPException(status_code=400, detail="Item with this name already exists")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "unit": body.unit if body.unit in STOCK_UNITS else "piece",
+        "current_qty": round(float(body.current_qty or 0), 2),
+        "min_qty": round(float(body.min_qty or 0), 2),
+        "unit_cost": round(float(body.unit_cost or 0), 2),
+        "notes": body.notes or "",
+        "created_at": now_iso(),
+    }
+    await db.stock_items.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.put("/stock/{sid}")
+async def update_stock(sid: str, body: StockItemIn, user=Depends(require_admin)):
+    result = await db.stock_items.find_one_and_update(
+        {"id": sid},
+        {"$set": {
+            "name": body.name.strip(),
+            "unit": body.unit if body.unit in STOCK_UNITS else "piece",
+            "current_qty": round(float(body.current_qty or 0), 2),
+            "min_qty": round(float(body.min_qty or 0), 2),
+            "unit_cost": round(float(body.unit_cost or 0), 2),
+            "notes": body.notes or "",
+        }},
+        return_document=True, projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Not found")
+    return result
+
+
+@api_router.delete("/stock/{sid}")
+async def delete_stock(sid: str, user=Depends(require_admin)):
+    result = await db.stock_items.delete_one({"id": sid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.stock_movements.delete_many({"item_id": sid})
+    return {"ok": True}
+
+
+@api_router.post("/stock/movement")
+async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_user)):
+    item = await db.stock_items.find_one({"id": body.item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Stock item not found")
+    if not (body.qty and body.qty > 0):
+        raise HTTPException(status_code=400, detail="Qty must be > 0")
+
+    if body.type == "purchase":
+        new_qty = round(item["current_qty"] + body.qty, 2)
+        unit_cost = round(float(body.unit_cost or item.get("unit_cost", 0) or 0), 2)
+        total_cost = round(body.qty * unit_cost, 2)
+    elif body.type == "use":
+        new_qty = round(item["current_qty"] - body.qty, 2)
+        unit_cost = 0
+        total_cost = 0
+    else:  # adjust — set qty to body.qty absolute
+        new_qty = round(float(body.qty), 2)
+        unit_cost = 0
+        total_cost = 0
+
+    update = {"current_qty": new_qty}
+    if body.type == "purchase" and unit_cost > 0:
+        update["unit_cost"] = unit_cost
+    await db.stock_items.update_one({"id": body.item_id}, {"$set": update})
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    mv = {
+        "id": str(uuid.uuid4()),
+        "item_id": body.item_id,
+        "item_name": item["name"],
+        "unit": item["unit"],
+        "type": body.type,
+        "qty": round(float(body.qty), 2),
+        "unit_cost": unit_cost,
+        "total_cost": total_cost,
+        "resulting_qty": new_qty,
+        "notes": body.notes or "",
+        "date": today,
+        "created_by": user["id"],
+        "created_by_name": user["name"],
+        "created_at": now_iso(),
+    }
+    await db.stock_movements.insert_one(mv)
+
+    # Auto-create Material expense on purchase
+    expense_created = None
+    if body.type == "purchase" and total_cost > 0:
+        exp = {
+            "id": str(uuid.uuid4()),
+            "category": "Material",
+            "description": f"{item['name']} x{body.qty}{item['unit']}",
+            "amount": total_cost,
+            "date": today,
+            "notes": f"Auto from stock purchase",
+            "created_by": user["id"],
+            "created_by_name": user["name"],
+            "created_at": now_iso(),
+            "stock_movement_id": mv["id"],
+        }
+        await db.expenses.insert_one(exp)
+        expense_created = {k: v for k, v in exp.items() if k != "_id"}
+
+    return {"movement": {k: v for k, v in mv.items() if k != "_id"}, "expense": expense_created, "new_qty": new_qty}
+
+
+@api_router.get("/stock/{sid}/movements")
+async def list_movements(sid: str, limit: int = 50, user=Depends(get_current_user)):
+    docs = await db.stock_movements.find({"item_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
+
+
+
+# ============ Cash Closing ============
+async def _compute_day_totals(d: str):
+    """Compute totals for a given date (UTC yyyy-mm-dd)."""
+    bills = await db.bills.find(
+        {"created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}},
+        {"_id": 0},
+    ).to_list(3000)
+    services_net = sum(b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0)) for b in bills)
+    tip_total = sum(b.get("tip_amount", 0) for b in bills)
+    tip_qr = sum(b.get("tip_amount", 0) for b in bills if b.get("tip_via") == "qr")
+    cash_sales = sum(b.get("cash_amount", 0) for b in bills) - tip_qr
+    upi_sales = sum(b.get("qr_amount", 0) for b in bills) + tip_qr
+    exps = await db.expenses.find({"date": d}, {"_id": 0}).to_list(500)
+    total_expenses = sum(e["amount"] for e in exps)
+    return {
+        "bills_count": len(bills),
+        "total_revenue": round(services_net, 2),
+        "cash_sales": round(cash_sales, 2),
+        "upi_sales": round(upi_sales, 2),
+        "tips": round(tip_total, 2),
+        "total_expenses": round(total_expenses, 2),
+    }
+
+
+@api_router.get("/cash-closing/summary")
+async def cash_closing_summary(date: Optional[str] = None, user=Depends(get_current_user)):
+    d = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    totals = await _compute_day_totals(d)
+
+    # Suggested opening = previous day's actual closing
+    prev = await db.cash_closings.find_one({"date": {"$lt": d}}, sort=[("date", -1)], projection={"_id": 0})
+    suggested_opening = prev["actual_closing"] if prev else 0
+
+    existing = await db.cash_closings.find_one({"date": d}, projection={"_id": 0})
+
+    return {
+        "date": d,
+        **totals,
+        "suggested_opening": round(suggested_opening, 2),
+        "existing_closing": existing,
+    }
+
+
+@api_router.post("/cash-closing")
+async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user)):
+    d = body.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    totals = await _compute_day_totals(d)
+
+    opening = round(float(body.opening_balance or 0), 2)
+    cash_exp = round(float(body.cash_expenses or 0), 2)
+    actual = round(float(body.actual_closing or 0), 2)
+    expected = round(opening + totals["cash_sales"] - cash_exp, 2)
+    difference = round(actual - expected, 2)
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": d,
+        "opening_balance": opening,
+        "cash_sales": totals["cash_sales"],
+        "upi_sales": totals["upi_sales"],
+        "total_revenue": totals["total_revenue"],
+        "total_expenses": totals["total_expenses"],
+        "cash_expenses": cash_exp,
+        "tips": totals["tips"],
+        "bills_count": totals["bills_count"],
+        "expected_closing": expected,
+        "actual_closing": actual,
+        "difference": difference,
+        "notes": body.notes or "",
+        "submitted_by": user["id"],
+        "submitted_by_name": user["name"],
+        "submitted_at": now_iso(),
+    }
+    # One closing per date — upsert
+    await db.cash_closings.replace_one({"date": d}, doc, upsert=True)
+    return doc
+
+
+@api_router.get("/cash-closing")
+async def list_cash_closings(limit: int = 30, user=Depends(get_current_user)):
+    docs = await db.cash_closings.find({}, {"_id": 0}).sort("date", -1).to_list(limit)
+    return docs
+
+
+@api_router.delete("/cash-closing/{cid}")
+async def delete_cash_closing(cid: str, user=Depends(require_admin)):
+    result = await db.cash_closings.delete_one({"id": cid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
+
 # ============ Reports ============
 @api_router.get("/reports/summary")
 async def reports_summary(user=Depends(get_current_user)):
@@ -675,6 +914,13 @@ async def reports_summary(user=Depends(get_current_user)):
             continue
         exp_by_cat_today[e["category"]] = exp_by_cat_today.get(e["category"], 0) + e["amount"]
 
+    # Low stock alert
+    stock_docs = await db.stock_items.find({}, {"_id": 0}).to_list(500)
+    low_stock = [
+        {"id": s["id"], "name": s["name"], "current_qty": s.get("current_qty", 0), "min_qty": s.get("min_qty", 0), "unit": s.get("unit", "piece")}
+        for s in stock_docs if s.get("current_qty", 0) <= s.get("min_qty", 0)
+    ]
+
     return {
         "today": {
             "total": round(today_total, 2), "count": today_count,
@@ -692,6 +938,7 @@ async def reports_summary(user=Depends(get_current_user)):
             "net": round(month_total - month_exp, 2),
         },
         "per_beautician_month": per_beautician_list,
+        "low_stock": low_stock,
     }
 
 

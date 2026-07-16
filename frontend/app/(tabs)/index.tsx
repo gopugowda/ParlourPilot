@@ -54,54 +54,57 @@ export default function DashboardScreen() {
       >
         {/* Hero */}
         <View style={styles.heroWrap}>
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.surfaceInverse }]} />
           <LinearGradient
-            colors={['rgba(184,138,60,0.15)', 'rgba(26,26,26,0.95)']}
+            colors={['#FAF3E1', '#E4C070', '#D4AC55']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
           <SafeAreaView edges={['top']} style={styles.heroContent}>
             <View style={styles.heroTopRow}>
               <View style={styles.heroBrand}>
-                <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
+                <View style={styles.heroLogoWrap}>
+                  <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
+                </View>
                 <View>
                   <Text style={styles.heroBrandName}>GLOW UP</Text>
                   <Text style={styles.heroBrandSub}>Hi, {user?.name?.split(' ')[0] || 'there'}</Text>
                 </View>
               </View>
               <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
-                <Ionicons name="log-out-outline" size={20} color="#fff" />
+                <Ionicons name="log-out-outline" size={20} color={colors.onSurface} />
               </TouchableOpacity>
             </View>
 
             <View style={{ marginTop: spacing.xxl }}>
               <Text style={styles.heroLabel}>{"Today's Revenue"}</Text>
               {loading ? (
-                <ActivityIndicator color="#fff" style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
+                <ActivityIndicator color={colors.onSurface} style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
               ) : (
                 <Text style={styles.heroValue} testID="today-revenue">{fmtINR(summary?.today?.total || 0)}</Text>
               )}
               <View style={styles.heroStatsRow}>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="receipt-outline" size={14} color={colors.brandSecondary} />
+                  <Ionicons name="receipt-outline" size={14} color={colors.onSurface} />
                   <Text style={styles.heroStatText}>{summary?.today?.count || 0} bills</Text>
                 </View>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="cash-outline" size={14} color={colors.brandSecondary} />
+                  <Ionicons name="cash-outline" size={14} color={colors.onSurface} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.cash || 0)}</Text>
                 </View>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="qr-code-outline" size={14} color={colors.brandSecondary} />
+                  <Ionicons name="qr-code-outline" size={14} color={colors.onSurface} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.qr || 0)}</Text>
                 </View>
                 {(summary?.today?.tips || 0) > 0 && (
                   <View style={styles.heroStatChip}>
-                    <Ionicons name="heart-outline" size={14} color={colors.brandSecondary} />
+                    <Ionicons name="heart-outline" size={14} color={colors.onSurface} />
                     <Text style={styles.heroStatText}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
                   </View>
                 )}
                 {(summary?.today?.expenses || 0) > 0 && (
                   <View style={styles.heroStatChip}>
-                    <Ionicons name="wallet-outline" size={14} color={colors.brandSecondary} />
+                    <Ionicons name="wallet-outline" size={14} color={colors.onSurface} />
                     <Text style={styles.heroStatText}>Exp {fmtINR(summary?.today?.expenses || 0)}</Text>
                   </View>
                 )}
@@ -109,6 +112,30 @@ export default function DashboardScreen() {
             </View>
           </SafeAreaView>
         </View>
+
+        {/* Low stock alert */}
+        {(summary?.low_stock || []).length > 0 && (
+          <View style={styles.section}>
+            <TouchableOpacity
+              testID="low-stock-alert"
+              style={styles.lowStockCard}
+              onPress={() => router.push('/manage/stock' as any)}
+              activeOpacity={0.85}
+            >
+              <View style={styles.lowStockIcon}>
+                <Ionicons name="alert-circle" size={22} color={colors.warning} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lowStockTitle}>{summary.low_stock.length} item(s) low on stock</Text>
+                <Text style={styles.lowStockSub} numberOfLines={1}>
+                  {summary.low_stock.map((s: any) => s.name).slice(0, 3).join(', ')}
+                  {summary.low_stock.length > 3 ? '...' : ''}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Quick actions */}
         <View style={styles.section}>
@@ -187,15 +214,16 @@ const styles = StyleSheet.create({
   heroContent: { flex: 1, paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
   heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  heroLogoWrap: { width: 52, height: 56, borderRadius: 12, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', ...shadows.card },
   heroLogo: { width: 44, height: 48 },
-  heroBrandName: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 1.5 },
-  heroBrandSub: { color: colors.brandSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
-  logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  heroLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, letterSpacing: 1, fontWeight: '600' },
-  heroValue: { color: colors.brandSecondary, fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
+  heroBrandName: { color: colors.onSurface, fontSize: 20, fontWeight: '900', letterSpacing: 1.5 },
+  heroBrandSub: { color: colors.onSurfaceSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
+  logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(26,26,26,0.1)' },
+  heroLabel: { color: 'rgba(26,26,26,0.65)', fontSize: 12, letterSpacing: 1, fontWeight: '700' },
+  heroValue: { color: colors.onSurface, fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
   heroStatsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' },
-  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(228,192,112,0.15)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(228,192,112,0.3)' },
-  heroStatText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.7)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(26,26,26,0.08)' },
+  heroStatText: { color: colors.onSurface, fontSize: 12, fontWeight: '700' },
 
   section: { paddingHorizontal: spacing.xl, marginTop: spacing.xl },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: colors.onSurface, marginBottom: spacing.md },
@@ -229,4 +257,13 @@ const styles = StyleSheet.create({
 
   emptyBox: { backgroundColor: colors.surfaceSecondary, padding: spacing.xl, borderRadius: radius.md, alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderColor: colors.border },
   emptyText: { color: colors.onSurfaceTertiary, fontSize: 13 },
+
+  lowStockCard: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    backgroundColor: '#FDF3E4', borderWidth: 1, borderColor: '#F0DCA6',
+    padding: spacing.md, borderRadius: radius.md, ...shadows.card,
+  },
+  lowStockIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(209,142,66,0.15)', alignItems: 'center', justifyContent: 'center' },
+  lowStockTitle: { fontSize: 14, fontWeight: '700', color: colors.warning },
+  lowStockSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
 });

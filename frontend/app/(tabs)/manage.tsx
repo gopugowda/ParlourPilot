@@ -16,11 +16,13 @@ export default function ManageScreen() {
         { icon: 'pricetags-outline', label: 'Services', hint: 'Add, edit, remove services', route: '/manage/services' },
         { icon: 'people-outline', label: 'Beauticians', hint: 'Manage staff & barbers', route: '/manage/beauticians' },
         { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto 10% off', route: '/manage/members' },
+        { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock' },
       ],
     },
     {
-      title: 'Analytics',
+      title: 'Daily Operations',
       items: [
+        { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
         { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
       ],
     },
@@ -32,9 +34,11 @@ export default function ManageScreen() {
     },
   ] : [
     {
-      title: 'Analytics',
+      title: 'Daily Operations',
       items: [
+        { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
         { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
+        { icon: 'cube-outline', label: 'Stock', hint: 'View inventory · record usage', route: '/manage/stock' },
       ],
     },
   ];
