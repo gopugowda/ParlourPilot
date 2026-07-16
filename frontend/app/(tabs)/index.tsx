@@ -55,7 +55,7 @@ export default function DashboardScreen() {
         {/* Hero */}
         <View style={styles.heroWrap}>
           <LinearGradient
-            colors={['#FAF3E1', '#E4C070', '#D4AC55']}
+            colors={['#1A1A1A', '#2C2416', '#3B2E17']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
@@ -70,39 +70,39 @@ export default function DashboardScreen() {
                 </View>
               </View>
               <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
-                <Ionicons name="log-out-outline" size={20} color={colors.onSurface} />
+                <Ionicons name="log-out-outline" size={20} color="#fff" />
               </TouchableOpacity>
             </View>
 
             <View style={{ marginTop: spacing.xxl }}>
               <Text style={styles.heroLabel}>{"Today's Revenue"}</Text>
               {loading ? (
-                <ActivityIndicator color={colors.onSurface} style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
+                <ActivityIndicator color="#fff" style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
               ) : (
                 <Text style={styles.heroValue} testID="today-revenue">{fmtINR(summary?.today?.total || 0)}</Text>
               )}
               <View style={styles.heroStatsRow}>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="receipt-outline" size={14} color={colors.onSurface} />
+                  <Ionicons name="receipt-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{summary?.today?.count || 0} bills</Text>
                 </View>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="cash-outline" size={14} color={colors.onSurface} />
+                  <Ionicons name="cash-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.cash || 0)}</Text>
                 </View>
                 <View style={styles.heroStatChip}>
-                  <Ionicons name="qr-code-outline" size={14} color={colors.onSurface} />
+                  <Ionicons name="qr-code-outline" size={14} color={colors.brandSecondary} />
                   <Text style={styles.heroStatText}>{fmtINR(summary?.today?.qr || 0)}</Text>
                 </View>
                 {(summary?.today?.tips || 0) > 0 && (
                   <View style={styles.heroStatChip}>
-                    <Ionicons name="heart-outline" size={14} color={colors.onSurface} />
+                    <Ionicons name="heart-outline" size={14} color={colors.brandSecondary} />
                     <Text style={styles.heroStatText}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
                   </View>
                 )}
                 {(summary?.today?.expenses || 0) > 0 && (
                   <View style={styles.heroStatChip}>
-                    <Ionicons name="wallet-outline" size={14} color={colors.onSurface} />
+                    <Ionicons name="wallet-outline" size={14} color={colors.brandSecondary} />
                     <Text style={styles.heroStatText}>Exp {fmtINR(summary?.today?.expenses || 0)}</Text>
                   </View>
                 )}
@@ -239,14 +239,14 @@ const styles = StyleSheet.create({
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
   heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   heroLogo: { width: 56, height: 60 },
-  heroBrandName: { color: colors.onSurface, fontSize: 20, fontWeight: '900', letterSpacing: 1.5 },
-  heroBrandSub: { color: colors.onSurfaceSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
-  logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(26,26,26,0.1)' },
-  heroLabel: { color: 'rgba(26,26,26,0.65)', fontSize: 12, letterSpacing: 1, fontWeight: '700' },
-  heroValue: { color: colors.onSurface, fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
+  heroBrandName: { color: '#fff', fontSize: 20, fontWeight: '900', letterSpacing: 1.5 },
+  heroBrandSub: { color: colors.brandSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
+  logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  heroLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 12, letterSpacing: 1, fontWeight: '700' },
+  heroValue: { color: colors.brandSecondary, fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
   heroStatsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' },
-  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.7)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(26,26,26,0.08)' },
-  heroStatText: { color: colors.onSurface, fontSize: 12, fontWeight: '700' },
+  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(228,192,112,0.15)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(228,192,112,0.3)' },
+  heroStatText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   section: { paddingHorizontal: spacing.xl, marginTop: spacing.xl },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: colors.onSurface, marginBottom: spacing.md },
