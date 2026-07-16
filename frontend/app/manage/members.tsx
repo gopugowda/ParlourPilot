@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, Switch, KeyboardAvoidingView, Platform,
+  Modal, Pressable, Switch, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
@@ -19,9 +19,11 @@ type Member = {
 
 export default function MembersScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ filter?: string }>();
   const [list, setList] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'expiring'>((params?.filter === 'expiring' ? 'expiring' : 'all'));
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
@@ -71,10 +73,26 @@ export default function MembersScreen() {
   };
 
   const filtered = list.filter(m => {
+    if (filter === 'expiring' && !(m.status === 'expiring_soon' || m.status === 'expired')) return false;
     const s = search.toLowerCase();
     if (!s) return true;
     return m.name.toLowerCase().includes(s) || m.phone.includes(s);
   });
+
+  const expiringCount = list.filter(m => m.status === 'expiring_soon' || m.status === 'expired').length;
+
+  const sendWhatsApp = async (m: Member) => {
+    let phone = (m.phone || '').replace(/[^0-9]/g, '');
+    if (phone.length === 10) phone = '91' + phone; // India default
+    const msg = m.status === 'expired'
+      ? `Hi ${m.name}, your GLOW UP SALON yearly membership expired on ${m.expires_at}. Renew today to keep enjoying 10% off on all services above ₹100. Reply YES to renew. - GLOW UP UNISEX SALON, Sullia`
+      : `Hi ${m.name}, your GLOW UP SALON yearly membership expires on ${m.expires_at} (${m.days_left} days left). Renew now to continue enjoying 10% off on all services above ₹100. - GLOW UP UNISEX SALON, Sullia`;
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    try {
+      await Linking.openURL(url);
+      Haptics.selectionAsync();
+    } catch {}
+  };
 
   const statusInfo = (m: Member) => {
     if (m.status === 'expired') return { color: colors.error, text: 'Expired', bg: '#FDE7E7' };
@@ -110,6 +128,22 @@ export default function MembersScreen() {
         />
       </View>
 
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow} style={{ flexGrow: 0 }}>
+        {[{ k: 'all', label: `All (${list.length})` }, { k: 'expiring', label: `Expiring (${expiringCount})` }].map(c => {
+          const active = filter === c.k;
+          return (
+            <TouchableOpacity
+              key={c.k}
+              testID={`mfilter-${c.k}`}
+              onPress={() => { Haptics.selectionAsync(); setFilter(c.k as any); }}
+              style={[styles.chip, active && styles.chipActive]}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
           {filtered.length === 0 && (
@@ -125,25 +159,35 @@ export default function MembersScreen() {
           )}
           {filtered.map(m => {
             const s = statusInfo(m);
+            const showWa = m.status === 'expiring_soon' || m.status === 'expired';
             return (
-              <TouchableOpacity
-                key={m.id}
-                testID={`member-row-${m.id}`}
-                style={styles.row}
-                onPress={() => openEdit(m)}
-                activeOpacity={0.85}
-              >
-                <View style={styles.avatar}>
-                  <Ionicons name="star" size={16} color={colors.brandPrimary} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{m.name}</Text>
-                  <Text style={styles.meta}>{m.phone} · expires {m.expires_at || '—'}</Text>
-                </View>
-                <View style={[styles.statusPill, { backgroundColor: s.bg }]}>
-                  <Text style={[styles.statusText, { color: s.color }]}>{s.text}</Text>
-                </View>
-              </TouchableOpacity>
+              <View key={m.id} style={styles.row} testID={`member-row-${m.id}`}>
+                <TouchableOpacity
+                  onPress={() => openEdit(m)}
+                  activeOpacity={0.85}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 }}
+                >
+                  <View style={styles.avatar}>
+                    <Ionicons name="star" size={16} color={colors.brandPrimary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.name}>{m.name}</Text>
+                    <Text style={styles.meta}>{m.phone} · expires {m.expires_at || '—'}</Text>
+                  </View>
+                  <View style={[styles.statusPill, { backgroundColor: s.bg }]}>
+                    <Text style={[styles.statusText, { color: s.color }]}>{s.text}</Text>
+                  </View>
+                </TouchableOpacity>
+                {showWa && (
+                  <TouchableOpacity
+                    testID={`wa-${m.id}`}
+                    onPress={() => sendWhatsApp(m)}
+                    style={styles.waBtn}
+                  >
+                    <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </View>
             );
           })}
         </ScrollView>
@@ -215,6 +259,13 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
   statusText: { fontSize: 11, fontWeight: '800' },
+  waBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center', marginLeft: spacing.sm },
+
+  chipRow: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  chip: { flexShrink: 0, paddingHorizontal: spacing.md, height: 34, borderRadius: radius.pill, justifyContent: 'center', backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
+  chipTextActive: { color: '#fff' },
 
   empty: { alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xxxl },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, marginTop: spacing.md },

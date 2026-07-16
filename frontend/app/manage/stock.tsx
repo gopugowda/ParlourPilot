@@ -164,7 +164,7 @@ export default function StockScreen() {
 
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl }}>
-          {list.length > 0 && (
+          {list.length > 0 && isAdmin && (
             <View style={styles.valueCard}>
               <Text style={styles.valueLabel}>Inventory Value</Text>
               <Text style={styles.valueVal}>{fmtINR(inventoryValue)}</Text>
@@ -203,7 +203,7 @@ export default function StockScreen() {
                           <Text style={styles.lowPillText}>Low (min {it.min_qty})</Text>
                         </View>
                       )}
-                      {it.unit_cost > 0 && <Text style={styles.itemMeta}>· {fmtINR(it.unit_cost)}/{it.unit}</Text>}
+                      {isAdmin && it.unit_cost > 0 && <Text style={styles.itemMeta}>· {fmtINR(it.unit_cost)}/{it.unit}</Text>}
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -211,9 +211,11 @@ export default function StockScreen() {
                   <TouchableOpacity testID={`use-${it.id}`} style={styles.actionBtn} onPress={() => openMovement(it, 'use')}>
                     <Ionicons name="remove" size={16} color={colors.error} />
                   </TouchableOpacity>
-                  <TouchableOpacity testID={`buy-${it.id}`} style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => openMovement(it, 'purchase')}>
-                    <Ionicons name="add" size={16} color="#fff" />
-                  </TouchableOpacity>
+                  {isAdmin && (
+                    <TouchableOpacity testID={`buy-${it.id}`} style={[styles.actionBtn, { backgroundColor: colors.brandPrimary }]} onPress={() => openMovement(it, 'purchase')}>
+                      <Ionicons name="add" size={16} color="#fff" />
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             ))

@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xxxl + spacing.md, paddingBottom: spacing.xl, paddingHorizontal: spacing.xl,
     alignItems: 'center', backgroundColor: colors.surfaceInverse,
   },
-  logoImg: { width: 90, height: 100 },
+  logoImg: { width: 110, height: 120 },
   brandName: { color: '#fff', fontSize: 26, fontWeight: '900', letterSpacing: 2, marginTop: spacing.md },
   brandSub: { color: colors.brandSecondary, fontSize: 11, fontWeight: '700', letterSpacing: 2, marginTop: 4 },
   body: { flex: 1, backgroundColor: colors.surface },

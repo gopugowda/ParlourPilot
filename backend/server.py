@@ -921,6 +921,20 @@ async def reports_summary(user=Depends(get_current_user)):
         for s in stock_docs if s.get("current_qty", 0) <= s.get("min_qty", 0)
     ]
 
+    # Expiring members alert (only if admin)
+    expiring_members = []
+    if user.get("role") == "admin":
+        mem_docs = await db.members.find({"active": True}, {"_id": 0}).to_list(1000)
+        for m in mem_docs:
+            m2 = _member_status(m)
+            if m2["status"] in ("expiring_soon", "expired"):
+                expiring_members.append({
+                    "id": m2["id"], "name": m2["name"], "phone": m2["phone"],
+                    "status": m2["status"], "days_left": m2.get("days_left"),
+                    "expires_at": m2.get("expires_at"),
+                })
+        expiring_members.sort(key=lambda x: x.get("days_left") if x.get("days_left") is not None else 9999)
+
     return {
         "today": {
             "total": round(today_total, 2), "count": today_count,
@@ -939,11 +953,15 @@ async def reports_summary(user=Depends(get_current_user)):
         },
         "per_beautician_month": per_beautician_list,
         "low_stock": low_stock,
+        "expiring_members": expiring_members,
     }
 
 
 @api_router.get("/reports/daily")
 async def reports_daily(days: int = 30, user=Depends(get_current_user)):
+    # Staff can only see last 2 days
+    if user.get("role") == "staff":
+        days = min(days, 2)
     all_bills = await db.bills.find({}, {"_id": 0}).to_list(20000)
     all_exp = await db.expenses.find({}, {"_id": 0}).to_list(20000)
     by_day: dict = {}
@@ -971,6 +989,127 @@ async def reports_daily(days: int = 30, user=Depends(get_current_user)):
         r["expenses"] = round(r["expenses"], 2)
         r["net"] = round(r["total"] - r["expenses"], 2)
     return rows
+
+
+@api_router.get("/reports/range")
+async def reports_range(
+    preset: Optional[str] = None,  # today|yesterday|week|month|last_month|custom
+    from_date: Optional[str] = None,  # YYYY-MM-DD
+    to_date: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Aggregated report for a date range. Staff limited to last 2 days."""
+    today = datetime.now(timezone.utc).date()
+
+    if preset == "today":
+        d_from = d_to = today
+    elif preset == "yesterday":
+        d_from = d_to = today - timedelta(days=1)
+    elif preset == "week":
+        d_from = today - timedelta(days=6)
+        d_to = today
+    elif preset == "month":
+        d_from = today.replace(day=1)
+        d_to = today
+    elif preset == "last_month":
+        first_this = today.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        d_from = last_prev.replace(day=1)
+        d_to = last_prev
+    else:  # custom
+        try:
+            d_from = datetime.strptime(from_date, "%Y-%m-%d").date() if from_date else today
+            d_to = datetime.strptime(to_date, "%Y-%m-%d").date() if to_date else today
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date format (use YYYY-MM-DD)")
+
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+
+    # Staff clamp: only allow last 2 days
+    if user.get("role") == "staff":
+        earliest = today - timedelta(days=1)  # today + yesterday
+        if d_from < earliest:
+            d_from = earliest
+        if d_to < earliest:
+            d_to = earliest
+
+    from_str = d_from.strftime("%Y-%m-%d")
+    to_str = d_to.strftime("%Y-%m-%d")
+
+    # Fetch bills in range
+    bills = await db.bills.find(
+        {"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}},
+        {"_id": 0},
+    ).to_list(20000)
+    exps = await db.expenses.find(
+        {"date": {"$gte": from_str, "$lte": to_str}},
+        {"_id": 0},
+    ).to_list(20000)
+
+    # Aggregate per day
+    by_day: dict = {}
+    cur = d_from
+    while cur <= d_to:
+        by_day[cur.strftime("%Y-%m-%d")] = {"date": cur.strftime("%Y-%m-%d"), "total": 0.0, "count": 0, "cash": 0.0, "qr": 0.0, "tips": 0.0, "expenses": 0.0}
+        cur = cur + timedelta(days=1)
+
+    for b in bills:
+        day = b["created_at"][:10]
+        if day not in by_day:
+            continue
+        rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
+        by_day[day]["total"] += rev
+        by_day[day]["count"] += 1
+        tip_via = b.get("tip_via")
+        tip = b.get("tip_amount", 0)
+        by_day[day]["cash"] += b.get("cash_amount", 0) - (tip if tip_via == "qr" else 0)
+        by_day[day]["qr"] += b.get("qr_amount", 0) + (tip if tip_via == "qr" else 0)
+        by_day[day]["tips"] += tip
+    for e in exps:
+        if e["date"] in by_day:
+            by_day[e["date"]]["expenses"] += e["amount"]
+
+    rows = sorted(by_day.values(), key=lambda x: x["date"], reverse=True)
+    for r in rows:
+        r["total"] = round(r["total"], 2)
+        r["cash"] = round(r["cash"], 2)
+        r["qr"] = round(r["qr"], 2)
+        r["tips"] = round(r["tips"], 2)
+        r["expenses"] = round(r["expenses"], 2)
+        r["net"] = round(r["total"] - r["expenses"], 2)
+
+    totals = {
+        "total": round(sum(r["total"] for r in rows), 2),
+        "count": sum(r["count"] for r in rows),
+        "cash": round(sum(r["cash"] for r in rows), 2),
+        "qr": round(sum(r["qr"] for r in rows), 2),
+        "tips": round(sum(r["tips"] for r in rows), 2),
+        "expenses": round(sum(r["expenses"] for r in rows), 2),
+        "net": round(sum(r["net"] for r in rows), 2),
+    }
+
+    return {
+        "from": from_str,
+        "to": to_str,
+        "days": len(rows),
+        "totals": totals,
+        "rows": rows,
+    }
+
+
+@api_router.get("/members/expiring")
+async def members_expiring(days: int = 30, user=Depends(require_admin)):
+    """Members expiring within the next `days` days (or already expired)."""
+    docs = await db.members.find({"active": True}, {"_id": 0}).to_list(1000)
+    result = []
+    for m in docs:
+        m2 = _member_status(m)
+        if m2["status"] in ("expiring_soon", "expired"):
+            result.append(m2)
+    result.sort(key=lambda x: x.get("days_left") if x.get("days_left") is not None else 9999)
+    return result
+
 
 
 # ============ Seed ============

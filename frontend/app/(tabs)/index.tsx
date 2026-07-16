@@ -63,9 +63,7 @@ export default function DashboardScreen() {
           <SafeAreaView edges={['top']} style={styles.heroContent}>
             <View style={styles.heroTopRow}>
               <View style={styles.heroBrand}>
-                <View style={styles.heroLogoWrap}>
-                  <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
-                </View>
+                <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
                 <View>
                   <Text style={styles.heroBrandName}>GLOW UP</Text>
                   <Text style={styles.heroBrandSub}>Hi, {user?.name?.split(' ')[0] || 'there'}</Text>
@@ -112,6 +110,32 @@ export default function DashboardScreen() {
             </View>
           </SafeAreaView>
         </View>
+
+        {/* Expiring members alert — admin only */}
+        {isAdmin && (summary?.expiring_members || []).length > 0 && (
+          <View style={styles.section}>
+            <TouchableOpacity
+              testID="expiring-members-alert"
+              style={styles.expMemCard}
+              onPress={() => router.push('/manage/members?filter=expiring' as any)}
+              activeOpacity={0.85}
+            >
+              <View style={styles.expMemIcon}>
+                <Ionicons name="star" size={22} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.expMemTitle}>
+                  {summary.expiring_members.length} member{summary.expiring_members.length > 1 ? 's' : ''} expiring / expired
+                </Text>
+                <Text style={styles.expMemSub} numberOfLines={1}>
+                  {summary.expiring_members.slice(0, 3).map((m: any) => `${m.name}${m.days_left != null && m.days_left >= 0 ? ` (${m.days_left}d)` : ' (expired)'}`).join(', ')}
+                  {summary.expiring_members.length > 3 ? '...' : ''}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.brandPrimary} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Low stock alert */}
         {(summary?.low_stock || []).length > 0 && (
@@ -214,8 +238,7 @@ const styles = StyleSheet.create({
   heroContent: { flex: 1, paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
   heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  heroLogoWrap: { width: 52, height: 56, borderRadius: 12, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', ...shadows.card },
-  heroLogo: { width: 44, height: 48 },
+  heroLogo: { width: 56, height: 60 },
   heroBrandName: { color: colors.onSurface, fontSize: 20, fontWeight: '900', letterSpacing: 1.5 },
   heroBrandSub: { color: colors.onSurfaceSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(26,26,26,0.1)' },
@@ -266,4 +289,13 @@ const styles = StyleSheet.create({
   lowStockIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(209,142,66,0.15)', alignItems: 'center', justifyContent: 'center' },
   lowStockTitle: { fontSize: 14, fontWeight: '700', color: colors.warning },
   lowStockSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
+
+  expMemCard: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary,
+    padding: spacing.md, borderRadius: radius.md, ...shadows.card,
+  },
+  expMemIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(184,138,60,0.15)', alignItems: 'center', justifyContent: 'center' },
+  expMemTitle: { fontSize: 14, fontWeight: '700', color: colors.brandPrimary },
+  expMemSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
 });
