@@ -74,7 +74,7 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={{ marginTop: spacing.xxl }}>
+            <View style={{ marginTop: spacing.xl }}>
               <Text style={styles.heroLabel}>{"Today's Revenue"}</Text>
               {loading ? (
                 <ActivityIndicator color="#fff" style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
@@ -234,8 +234,8 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  heroWrap: { height: 280, overflow: 'hidden' },
-  heroContent: { flex: 1, paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
+  heroWrap: { minHeight: 260, overflow: 'hidden', position: 'relative' },
+  heroContent: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
   heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   heroLogo: { width: 56, height: 60 },

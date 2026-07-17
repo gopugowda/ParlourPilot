@@ -87,6 +87,25 @@ class UserCreate(BaseModel):
     role: Literal["admin", "staff"] = "staff"
 
 
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    role: Optional[Literal["admin", "staff"]] = None
+
+
+class PasswordReset(BaseModel):
+    new_password: str
+
+
+class ForgotPasswordReq(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordReq(BaseModel):
+    token: str
+    new_password: str
+
+
 class LoginReq(BaseModel):
     email: EmailStr
     password: str
@@ -247,6 +266,111 @@ async def me(user=Depends(get_current_user)):
 async def list_users(user=Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
     return users
+
+
+@api_router.put("/auth/users/{uid}")
+async def update_user(uid: str, body: UserUpdate, user=Depends(require_admin)):
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    updates: dict = {}
+    if body.name is not None: updates["name"] = body.name.strip()
+    if body.email is not None:
+        email_lower = body.email.lower()
+        existing = await db.users.find_one({"email": email_lower, "id": {"$ne": uid}})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+        updates["email"] = email_lower
+    if body.role is not None:
+        # Prevent demoting the last admin
+        if target["role"] == "admin" and body.role != "admin":
+            admin_count = await db.users.count_documents({"role": "admin"})
+            if admin_count <= 1:
+                raise HTTPException(status_code=400, detail="Cannot demote the last admin")
+        updates["role"] = body.role
+    if not updates:
+        return {k: v for k, v in target.items() if k != "password_hash"}
+    result = await db.users.find_one_and_update(
+        {"id": uid}, {"$set": updates},
+        return_document=True, projection={"_id": 0, "password_hash": 0},
+    )
+    return result
+
+
+@api_router.delete("/auth/users/{uid}")
+async def delete_user(uid: str, user=Depends(require_admin)):
+    if uid == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    target = await db.users.find_one({"id": uid})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["role"] == "admin":
+        admin_count = await db.users.count_documents({"role": "admin"})
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last admin")
+    await db.users.delete_one({"id": uid})
+    return {"ok": True}
+
+
+@api_router.post("/auth/users/{uid}/reset-password")
+async def admin_reset_password(uid: str, body: PasswordReset, user=Depends(require_admin)):
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    target = await db.users.find_one({"id": uid})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"id": uid}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    return {"ok": True}
+
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordReq):
+    """Generate a password reset token. Returns token directly (no email service configured)."""
+    email = body.email.lower()
+    target = await db.users.find_one({"email": email})
+    if not target:
+        # Return generic ok to avoid email enumeration, but include no token
+        return {"ok": True, "email_sent": False, "message": "If the email exists, a reset link is available."}
+    token = str(uuid.uuid4()).replace("-", "")
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    await db.password_resets.insert_one({
+        "token": token,
+        "user_id": target["id"],
+        "email": email,
+        "expires_at": expires,
+        "used": False,
+        "created_at": now_iso(),
+    })
+    # In production this would be emailed. For now returned inline so user can copy-paste.
+    return {
+        "ok": True,
+        "email_sent": False,
+        "reset_token": token,
+        "expires_at": expires,
+        "message": "Email not configured. Use the token below to reset your password within 1 hour.",
+    }
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password(body: ResetPasswordReq):
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    doc = await db.password_resets.find_one({"token": body.token})
+    if not doc:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+    if doc.get("used"):
+        raise HTTPException(status_code=400, detail="Token already used")
+    try:
+        exp = datetime.fromisoformat(doc["expires_at"])
+        if datetime.now(timezone.utc) > exp:
+            raise HTTPException(status_code=400, detail="Reset token expired")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    await db.users.update_one({"id": doc["user_id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    await db.password_resets.update_one({"token": body.token}, {"$set": {"used": True, "used_at": now_iso()}})
+    return {"ok": True}
 
 
 # ============ Beauticians ============
