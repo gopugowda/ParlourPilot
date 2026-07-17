@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator, TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -38,7 +39,7 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.surface }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.hero}>
+      <SafeAreaView edges={['top']} style={styles.hero}>
         <Image
           source={require('../assets/images/glow-logo-mark.png')}
           style={styles.logoImg}
@@ -46,9 +47,9 @@ export default function LoginScreen() {
         />
         <Text style={styles.brandName}>GLOW UP</Text>
         <Text style={styles.brandSub}>UNISEX SALON · SULLIA</Text>
-      </View>
+      </SafeAreaView>
 
-      <ScrollView style={styles.body} contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={styles.body} contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Sign in to continue</Text>
 
         <View style={styles.field}>
@@ -118,7 +119,7 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   hero: {
-    paddingTop: spacing.xxxl + spacing.md, paddingBottom: spacing.xl, paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl, paddingBottom: spacing.xl, paddingHorizontal: spacing.xl,
     alignItems: 'center', backgroundColor: colors.surfaceInverse,
   },
   logoImg: { width: 110, height: 120 },

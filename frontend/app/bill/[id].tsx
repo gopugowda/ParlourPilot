@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Print from 'expo-print';
@@ -13,6 +13,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 export default function BillDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [bill, setBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -233,7 +234,7 @@ ${tipBlock}
       </ScrollView>
 
       {/* Sticky footer with actions */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
         <TouchableOpacity testID="new-bill-again" style={styles.footerSecondary} onPress={() => router.replace('/(tabs)/new-bill' as any)}>
           <Ionicons name="add-circle-outline" size={18} color={colors.brandPrimary} />
           <Text style={styles.footerSecondaryText}>New Bill</Text>
@@ -298,7 +299,7 @@ const styles = StyleSheet.create({
   footer: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
-    padding: spacing.lg, paddingBottom: Platform.OS === 'ios' ? spacing.xl + 8 : spacing.lg,
+    padding: spacing.lg,
     flexDirection: 'row', gap: spacing.md, ...shadows.strong,
   },
   footerSecondary: {

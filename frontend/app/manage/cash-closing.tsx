@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
   KeyboardAvoidingView, Platform, Share,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -14,6 +14,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 export default function CashClosingScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const today = new Date().toISOString().slice(0, 10);
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -251,7 +252,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
         </ScrollView>
 
         {/* Sticky footer */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
           <TouchableOpacity
             testID="share-report-btn"
             onPress={shareReport}
@@ -325,7 +326,7 @@ const styles = StyleSheet.create({
   footer: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
-    padding: spacing.lg, paddingBottom: Platform.OS === 'ios' ? spacing.xl + 8 : spacing.lg,
+    padding: spacing.lg,
     flexDirection: 'row', gap: spacing.md, ...shadows.strong,
   },
   footerSecondary: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary },

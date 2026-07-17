@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal,
   ActivityIndicator, Pressable, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -22,6 +22,7 @@ type Item = {
 
 export default function NewBillScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [services, setServices] = useState<Service[]>([]);
   const [beauticians, setBeauticians] = useState<Beautician[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -451,7 +452,7 @@ export default function NewBillScreen() {
         </ScrollView>
 
         {/* Sticky footer */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
           <View style={styles.footerLeft}>
             <Text style={styles.footerLabel}>Total {tip > 0 ? '(incl. tip)' : ''}</Text>
             <Text style={styles.footerTotal} testID="bill-total">{fmtINR(total)}</Text>
@@ -604,7 +605,6 @@ const styles = StyleSheet.create({
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
     padding: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    paddingBottom: Platform.OS === 'ios' ? spacing.xl + 8 : spacing.lg,
     ...shadows.strong,
   },
   footerLeft: { flex: 1 },
