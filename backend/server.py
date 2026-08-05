@@ -1323,26 +1323,34 @@ async def seed_data():
 
     # Admin
     if not await db.users.find_one({"email": "admin@glowup.com"}):
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()),
-            "name": "Salon Admin",
-            "email": "admin@glowup.com",
-            "password_hash": hash_password("admin123"),
-            "role": "admin",
-            "created_at": now_iso(),
-        })
-        created["users"] += 1
+        admin_password = os.environ.get("ADMIN_SEED_PASSWORD")
+        if admin_password:
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "name": "Salon Admin",
+                "email": "admin@glowup.com",
+                "password_hash": hash_password(admin_password),
+                "role": "admin",
+                "created_at": now_iso(),
+            })
+            created["users"] += 1
+        else:
+            logger.warning("ADMIN_SEED_PASSWORD env var not set; skipping admin seed")
 
     if not await db.users.find_one({"email": "staff@glowup.com"}):
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()),
-            "name": "Front Desk",
-            "email": "staff@glowup.com",
-            "password_hash": hash_password("staff123"),
-            "role": "staff",
-            "created_at": now_iso(),
-        })
-        created["users"] += 1
+        staff_password = os.environ.get("STAFF_SEED_PASSWORD")
+        if staff_password:
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "name": "Front Desk",
+                "email": "staff@glowup.com",
+                "password_hash": hash_password(staff_password),
+                "role": "staff",
+                "created_at": now_iso(),
+            })
+            created["users"] += 1
+        else:
+            logger.warning("STAFF_SEED_PASSWORD env var not set; skipping staff seed")
 
     beauticians = [
         {"name": "Ravi Kumar", "role": "Barber"},
