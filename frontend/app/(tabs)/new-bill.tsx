@@ -6,7 +6,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
@@ -18,11 +18,14 @@ type Beautician = { id: string; name: string; role: string };
 type Item = {
   service_id?: string; service_name: string; price: number;
   discount_pct: number; beautician_id?: string; beautician_name: string;
+  tip_amount?: number; tip_via?: 'cash' | 'qr';
 };
 
 export default function NewBillScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ edit?: string }>();
+  const editBillId = params?.edit as string | undefined;
   const [services, setServices] = useState<Service[]>([]);
   const [beauticians, setBeauticians] = useState<Beautician[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -54,6 +57,28 @@ export default function NewBillScreen() {
 
   useEffect(() => { loadData(); }, []);
   useFocusEffect(useCallback(() => { loadData(); }, []));
+
+  // Load existing bill for edit mode
+  useEffect(() => {
+    if (!editBillId) return;
+    (async () => {
+      try {
+        const b: any = await api(`/bills/${editBillId}`);
+        setItems((b.items || []).map((it: any) => ({
+          service_id: it.service_id, service_name: it.service_name,
+          price: it.price, discount_pct: it.discount_pct || 0,
+          beautician_id: it.beautician_id, beautician_name: it.beautician_name,
+          tip_amount: it.tip_amount || 0, tip_via: it.tip_via || 'cash',
+        })));
+        setCustomerName(b.customer_name || ''); setCustomerPhone(b.customer_phone || '');
+        setIsMember(!!b.is_member);
+        setPaymentMode(b.payment_mode); setCashAmt(String(b.cash_amount || '')); setQrAmt(String(b.qr_amount || ''));
+        setTipAmt(b.tip_amount ? String(b.tip_amount - (b.items || []).reduce((s: number, it: any) => s + (it.tip_amount || 0), 0)) : '');
+        setTipVia(b.tip_via || 'cash');
+        setTipBeauticianId(b.tip_beautician_id); setTipBeauticianName(b.tip_beautician_name || '');
+      } catch {}
+    })();
+  }, [editBillId]);
 
   // Auto-detect member by phone
   useEffect(() => {
@@ -104,7 +129,8 @@ export default function NewBillScreen() {
     return s + price * (eff / 100);
   }, 0);
   const servicesNet = Math.max(0, subtotal - discount);
-  const tip = Math.max(0, Number(tipAmt) || 0);
+  const lineTipTotal = items.reduce((s, it) => s + (Number(it.tip_amount) || 0), 0);
+  const tip = Math.max(0, Number(tipAmt) || 0) + lineTipTotal;
   const total = servicesNet + tip;
 
   const resetForm = () => {
@@ -123,7 +149,7 @@ export default function NewBillScreen() {
       if (!it.beautician_name) { setErr('Assign beautician for all rows'); return; }
       if (!(Number(it.price) > 0)) { setErr('Price must be > 0'); return; }
     }
-    if (tip > 0 && !tipBeauticianName) { setErr('Choose beautician who received the tip'); return; }
+    if (Math.max(0, Number(tipAmt) || 0) > 0 && !tipBeauticianName) { setErr('Choose beautician who received the tip'); return; }
     let cash = 0, qr = 0;
     if (paymentMode === 'cash') cash = servicesNet;
     else if (paymentMode === 'qr') qr = servicesNet;
@@ -133,28 +159,30 @@ export default function NewBillScreen() {
     }
     setSaving(true);
     try {
-      const bill: any = await api('/bills', {
-        method: 'POST',
-        body: {
-          customer_name: customerName || 'Walk-in',
-          customer_phone: customerPhone,
-          items: items.map(it => ({
-            service_id: it.service_id, service_name: it.service_name,
-            price: Number(it.price), discount_pct: Number(it.discount_pct) || 0,
-            beautician_id: it.beautician_id, beautician_name: it.beautician_name,
-          })),
-          payment_mode: paymentMode,
-          cash_amount: cash, qr_amount: qr,
-          is_member: isMember,
-          tip_amount: tip,
-          tip_via: tip > 0 ? tipVia : null,
-          tip_beautician_id: tip > 0 ? tipBeauticianId : null,
-          tip_beautician_name: tip > 0 ? tipBeauticianName : '',
-        },
-      });
+      const payload = {
+        customer_name: customerName || 'Walk-in',
+        customer_phone: customerPhone,
+        items: items.map(it => ({
+          service_id: it.service_id, service_name: it.service_name,
+          price: Number(it.price), discount_pct: Number(it.discount_pct) || 0,
+          beautician_id: it.beautician_id, beautician_name: it.beautician_name,
+          tip_amount: Number(it.tip_amount) || 0,
+          tip_via: (Number(it.tip_amount) || 0) > 0 ? (it.tip_via || 'cash') : null,
+        })),
+        payment_mode: paymentMode,
+        cash_amount: cash, qr_amount: qr,
+        is_member: isMember,
+        tip_amount: Math.max(0, Number(tipAmt) || 0),
+        tip_via: (Number(tipAmt) || 0) > 0 ? tipVia : null,
+        tip_beautician_id: (Number(tipAmt) || 0) > 0 ? tipBeauticianId : null,
+        tip_beautician_name: (Number(tipAmt) || 0) > 0 ? tipBeauticianName : '',
+      };
+      const bill: any = editBillId
+        ? await api(`/bills/${editBillId}`, { method: 'PUT', body: payload })
+        : await api('/bills', { method: 'POST', body: payload });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       resetForm();
-      router.push(`/bill/${bill.id}` as any);
+      router.replace(`/bill/${bill.id}` as any);
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setErr(e.message || 'Failed to save bill');
@@ -295,6 +323,47 @@ export default function NewBillScreen() {
                       <Text style={[styles.smallInput, { color: colors.brandPrimary, fontWeight: '700' }]}>{fmtINR(lineTotal)}</Text>
                     </View>
                   </View>
+
+                  {/* Per-line tip */}
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-end' }}>
+                    <View style={[styles.smallField, { flex: 1 }]}>
+                      <Text style={styles.smallLabel}>Tip (₹) — to {it.beautician_name || 'beautician'}</Text>
+                      <TextInput
+                        testID={`item-tip-${i}`}
+                        value={it.tip_amount ? String(it.tip_amount) : ''}
+                        onChangeText={(v) => updateItem(i, { tip_amount: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={colors.onSurfaceTertiary}
+                        style={styles.smallInput}
+                      />
+                    </View>
+                    {(Number(it.tip_amount) || 0) > 0 && (
+                      <View style={[styles.smallField, { flex: 1 }]}>
+                        <Text style={styles.smallLabel}>Tip via</Text>
+                        <View style={{ flexDirection: 'row', gap: 4, marginTop: 2 }}>
+                          {(['cash', 'qr'] as const).map(v => (
+                            <TouchableOpacity
+                              key={v}
+                              testID={`item-tipvia-${i}-${v}`}
+                              onPress={() => { Haptics.selectionAsync(); updateItem(i, { tip_via: v }); }}
+                              style={[styles.tipViaChip, (it.tip_via || 'cash') === v && styles.tipViaChipActive]}
+                            >
+                              <Text style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}>{v.toUpperCase()}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                  {(Number(it.tip_amount) || 0) > 0 && it.tip_via === 'qr' && (
+                    <View style={styles.tipNote}>
+                      <Ionicons name="information-circle" size={12} color={colors.warning} />
+                      <Text style={styles.tipNoteText}>
+                        Give {fmtINR(Number(it.tip_amount) || 0)} cash from counter to {it.beautician_name}.
+                      </Text>
+                    </View>
+                  )}
                 </View>
               );
             })}

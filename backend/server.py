@@ -473,6 +473,11 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user)):
     items_eff = apply_member_discount(body.items, body.is_member)
     subtotal, discount, services_net = compute_bill_totals(items_eff)
 
+    # Aggregate per-line tips from items (each item can carry tip_amount + tip_via)
+    line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
+    line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
+    line_tip_cash = line_tip_total - line_tip_qr
+
     # Validate payment amounts (services only; tip handled separately)
     if body.payment_mode == "cash":
         cash_amt = services_net
@@ -491,7 +496,12 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user)):
     if tip_amount > 0 and tip_via not in ("cash", "qr"):
         raise HTTPException(status_code=400, detail="tip_via required when tip_amount > 0")
 
-    grand_total = round(services_net + tip_amount, 2)
+    # Combine bill-level tip with per-line tips (per-line takes precedence via items)
+    total_tip_amount = round(tip_amount + line_tip_total, 2)
+    total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
+    total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
+
+    grand_total = round(services_net + total_tip_amount, 2)
 
     bill = {
         "id": str(uuid.uuid4()),
@@ -503,10 +513,12 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user)):
         "discount": discount,
         "services_net": services_net,
         "is_member": bool(body.is_member),
-        "tip_amount": tip_amount,
+        "tip_amount": total_tip_amount,
         "tip_via": tip_via,
         "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
         "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount > 0 else "",
+        "tip_cash_total": total_tip_cash,
+        "tip_qr_total": total_tip_qr,
         "grand_total": grand_total,
         "payment_mode": body.payment_mode,
         "cash_amount": cash_amt,
@@ -538,6 +550,67 @@ async def list_bills(
         query["payment_mode"] = payment_mode
     docs = await db.bills.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
+
+
+@api_router.put("/bills/{bid}")
+async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin)):
+    """Admin-only edit for an existing processed bill. Preserves bill_no & created_at."""
+    existing = await db.bills.find_one({"id": bid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    if not body.items:
+        raise HTTPException(status_code=400, detail="At least one service required")
+
+    items_eff = apply_member_discount(body.items, body.is_member)
+    subtotal, discount, services_net = compute_bill_totals(items_eff)
+
+    line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
+    line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
+
+    if body.payment_mode == "cash":
+        cash_amt = services_net; qr_amt = 0.0
+    elif body.payment_mode == "qr":
+        cash_amt = 0.0; qr_amt = services_net
+    else:
+        cash_amt = round(body.cash_amount, 2); qr_amt = round(body.qr_amount, 2)
+        if abs((cash_amt + qr_amt) - services_net) > 0.01:
+            raise HTTPException(status_code=400, detail=f"Split amounts must total {services_net}")
+
+    tip_amount = round(max(0.0, float(body.tip_amount or 0)), 2)
+    tip_via = body.tip_via if tip_amount > 0 else None
+    total_tip_amount = round(tip_amount + line_tip_total, 2)
+    total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
+    total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
+    grand_total = round(services_net + total_tip_amount, 2)
+
+    update = {
+        "customer_name": body.customer_name or existing.get("customer_name", "Walk-in"),
+        "customer_phone": body.customer_phone or "",
+        "items": items_eff,
+        "subtotal": subtotal,
+        "discount": discount,
+        "services_net": services_net,
+        "is_member": bool(body.is_member),
+        "tip_amount": total_tip_amount,
+        "tip_via": tip_via,
+        "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
+        "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount > 0 else "",
+        "tip_cash_total": total_tip_cash,
+        "tip_qr_total": total_tip_qr,
+        "grand_total": grand_total,
+        "payment_mode": body.payment_mode,
+        "cash_amount": cash_amt,
+        "qr_amount": qr_amt,
+        "notes": body.notes or "",
+        "edited_by": user["id"],
+        "edited_by_name": user["name"],
+        "edited_at": now_iso(),
+    }
+    result = await db.bills.find_one_and_update(
+        {"id": bid}, {"$set": update},
+        return_document=True, projection={"_id": 0},
+    )
+    return result
 
 
 @api_router.get("/bills/{bid}")
@@ -891,7 +964,7 @@ async def _compute_day_totals(d: str):
     ).to_list(3000)
     services_net = sum(b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0)) for b in bills)
     tip_total = sum(b.get("tip_amount", 0) for b in bills)
-    tip_qr = sum(b.get("tip_amount", 0) for b in bills if b.get("tip_via") == "qr")
+    tip_qr = sum(b.get("tip_qr_total", b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0) for b in bills)
     cash_sales = sum(b.get("cash_amount", 0) for b in bills) - tip_qr
     upi_sales = sum(b.get("qr_amount", 0) for b in bills) + tip_qr
     exps = await db.expenses.find({"date": d}, {"_id": 0}).to_list(500)
@@ -994,11 +1067,15 @@ async def reports_summary(user=Depends(get_current_user)):
     month_total = sum(revenue(b) for b in month_bills)
     month_count = len(month_bills)
 
-    # Cash counter net = services cash in - tip paid out to beautician when tip via QR
+    # Cash counter net = services cash in - tips paid out to beauticians via QR
+    def tip_qr_of(b):
+        # Prefer aggregate field, fallback to bill-level tip_via
+        if "tip_qr_total" in b: return b.get("tip_qr_total", 0)
+        return b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0
     today_cash = sum(b.get("cash_amount", 0) for b in today_bills) \
-        - sum(b.get("tip_amount", 0) for b in today_bills if b.get("tip_via") == "qr")
+        - sum(tip_qr_of(b) for b in today_bills)
     today_qr = sum(b.get("qr_amount", 0) for b in today_bills) \
-        + sum(b.get("tip_amount", 0) for b in today_bills if b.get("tip_via") == "qr")
+        + sum(tip_qr_of(b) for b in today_bills)
     today_tips = sum(b.get("tip_amount", 0) for b in today_bills)
 
     # Per beautician (month) — services revenue distribution
@@ -1095,10 +1172,10 @@ async def reports_daily(days: int = 30, user=Depends(get_current_user)):
         rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
         by_day[day]["total"] += rev
         by_day[day]["count"] += 1
-        tip_via = b.get("tip_via")
+        tip_qr = b.get("tip_qr_total", b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0)
         tip = b.get("tip_amount", 0)
-        by_day[day]["cash"] += b.get("cash_amount", 0) - (tip if tip_via == "qr" else 0)
-        by_day[day]["qr"] += b.get("qr_amount", 0) + (tip if tip_via == "qr" else 0)
+        by_day[day]["cash"] += b.get("cash_amount", 0) - tip_qr
+        by_day[day]["qr"] += b.get("qr_amount", 0) + tip_qr
         by_day[day]["tips"] += tip
     for e in all_exp:
         day = e["date"]

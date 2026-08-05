@@ -116,26 +116,26 @@ export default function UsersScreen() {
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{u.name.split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.rowName}>{u.name}</Text>
+              <View style={styles.rowMain}>
+                <View style={styles.rowNameLine}>
+                  <Text style={styles.rowName} numberOfLines={1}>{u.name}</Text>
+                  <View style={[styles.rolePill, { backgroundColor: u.role === 'admin' ? colors.brandPrimary : colors.info }]}>
+                    <Text style={styles.roleText}>{u.role.toUpperCase()}</Text>
+                  </View>
                   {u.id === me?.id && <Text style={styles.youTag}>YOU</Text>}
                 </View>
-                <Text style={styles.rowMeta}>{u.email}</Text>
+                <Text style={styles.rowMeta} numberOfLines={1}>{u.email}</Text>
               </View>
-              <View style={[styles.rolePill, { backgroundColor: u.role === 'admin' ? colors.brandPrimary : colors.info }]}>
-                <Text style={styles.roleText}>{u.role.toUpperCase()}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 4, marginLeft: spacing.sm }}>
+              <View style={styles.rowActions}>
                 <TouchableOpacity testID={`u-edit-${u.id}`} style={styles.actionBtn} onPress={() => openEdit(u)}>
-                  <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
+                  <Ionicons name="pencil" size={13} color={colors.brandPrimary} />
                 </TouchableOpacity>
                 <TouchableOpacity testID={`u-pwd-${u.id}`} style={styles.actionBtn} onPress={() => { setPwdOpen(u); setNewPwd(''); setPwdErr(null); setPwdMsg(null); }}>
-                  <Ionicons name="key-outline" size={14} color={colors.brandPrimary} />
+                  <Ionicons name="key-outline" size={13} color={colors.brandPrimary} />
                 </TouchableOpacity>
                 {u.id !== me?.id && (
                   <TouchableOpacity testID={`u-del-${u.id}`} style={[styles.actionBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(u)}>
-                    <Ionicons name="trash" size={14} color={colors.error} />
+                    <Ionicons name="trash" size={13} color={colors.error} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -214,13 +214,16 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   headerBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brandPrimary },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm, ...shadows.card },
-  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm, ...shadows.card },
+  rowMain: { flex: 1, minWidth: 0 },
+  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  rowActions: { flexDirection: 'row', gap: 4, flexShrink: 0 },
+  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: colors.brandPrimary, fontWeight: '800', fontSize: 13 },
-  rowName: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
-  rowMeta: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
+  rowName: { fontSize: 14, fontWeight: '700', color: colors.onSurface, flexShrink: 1 },
+  rowMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 3 },
   youTag: { fontSize: 9, fontWeight: '800', color: colors.brandPrimary, backgroundColor: colors.brandTertiary, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-  rolePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  rolePill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
   roleText: { color: '#fff', fontSize: 9, fontWeight: '800' },
   actionBtn: { width: 30, height: 30, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
   err: { color: colors.error, fontSize: 13, textAlign: 'center', marginTop: spacing.md },

@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
@@ -14,6 +15,8 @@ export default function BillDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [bill, setBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -142,8 +145,21 @@ ${tipBlock}
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Bill #{bill.bill_no}</Text>
-          <Text style={styles.headerSub}>{new Date(bill.created_at).toLocaleString('en-IN')}</Text>
+          <Text style={styles.headerSub}>
+            {new Date(bill.created_at).toLocaleString('en-IN')}
+            {bill.edited_at ? ` · edited ${new Date(bill.edited_at).toLocaleDateString('en-IN')}` : ''}
+          </Text>
         </View>
+        {isAdmin && (
+          <TouchableOpacity
+            testID="edit-bill-btn"
+            onPress={() => router.push(`/(tabs)/new-bill?edit=${bill.id}` as any)}
+            style={styles.editBtn}
+          >
+            <Ionicons name="pencil" size={16} color={colors.brandPrimary} />
+            <Text style={styles.editBtnText}>Edit</Text>
+          </TouchableOpacity>
+        )}
       </SafeAreaView>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 }}>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="8" time="1.947" timestamp="2026-08-05T13:29:35.115373+00:00" hostname="agent-env-8be75086-2508-4b9a-8ae3-f5bc4654bc40"><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestPerLineTips" name="test_bill_response_rolls_up_line_tips" time="0.795"><failure message="AssertionError: expected sum 100, got 0.0&#10;assert 0.0 == 100">backend/tests/test_iter5_bill_tips_edit.py:81: in test_bill_response_rolls_up_line_tips
+    assert b["tip_amount"] == 100, f"expected sum 100, got {b['tip_amount']}"
+E   AssertionError: expected sum 100, got 0.0
+E   assert 0.0 == 100</failure></testcase><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestPerLineTips" name="test_bill_items_preserve_tip_fields" time="0.001"><failure message="AssertionError: got [(None, None), (None, None)]&#10;assert [(None, None), (None, None)] == [(50, 'cash'), (50, 'qr')]&#10;  &#10;  At index 0 diff: (None, None) != (50, 'cash')&#10;  &#10;  Full diff:&#10;    [&#10;        (&#10;  -         50,...&#10;  &#10;  ...Full output truncated (15 lines hidden), use '-vv' to show">backend/tests/test_iter5_bill_tips_edit.py:93: in test_bill_items_preserve_tip_fields
+    assert tips == [(50, "cash"), (50, "qr")], f"got {tips}"
+E   AssertionError: got [(None, None), (None, None)]
+E   assert [(None, None), (None, None)] == [(50, 'cash'), (50, 'qr')]
+E     
+E     At index 0 diff: (None, None) != (50, 'cash')
+E     
+E     Full diff:
+E       [
+E           (
+E     -         50,...
+E     
+E     ...Full output truncated (15 lines hidden), use '-vv' to show</failure></testcase><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestPerLineTips" name="test_cash_closing_subtracts_qr_tip_from_cash" time="0.087" /><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestPerLineTips" name="test_reports_summary_today_tips_reflect_line_tips" time="0.168"><failure message="AssertionError: today.tips=20.0&#10;assert 20.0 &gt;= 100">backend/tests/test_iter5_bill_tips_edit.py:113: in test_reports_summary_today_tips_reflect_line_tips
+    assert d["today"]["tips"] &gt;= 100, f"today.tips={d['today']['tips']}"
+E   AssertionError: today.tips=20.0
+E   assert 20.0 &gt;= 100</failure></testcase><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestBillEdit" name="test_admin_can_edit_bill" time="0.170"><failure message="assert 0.0 == 100">backend/tests/test_iter5_bill_tips_edit.py:173: in test_admin_can_edit_bill
+    assert u["tip_amount"] == 100
+E   assert 0.0 == 100</failure></testcase><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestBillEdit" name="test_get_reflects_edit" time="0.087" /><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestBillEdit" name="test_staff_cannot_edit_bill" time="0.382" /><testcase classname="backend.tests.test_iter5_bill_tips_edit.TestBillEdit" name="test_put_unknown_bill_returns_404" time="0.165" /></testsuite></testsuites>
