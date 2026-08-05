@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 6 retest — CRITICAL BILLITEM FIX VERIFIED. Main agent added `tip_amount: float = 0` and `tip_via: Optional[Literal['cash','qr']] = None` to BillItem Pydantic model at /app/backend/server.py:135-136. Per-line tips now flow end-to-end. Iter-5 test suite: 8/8 PASS (previously 4/8). Full backend regression: 51 passed, 1 conditional skip (test_cannot_demote_last_admin_conditional — expected safeguard). Total 59/59 executed tests pass. Specifically verified: (a) POST /api/bills with items containing tip_amount=50 (qr) + tip_amount=50 (cash) → response has tip_amount=100, tip_qr_total=50, tip_cash_total=50, items preserve per-line tip_amount+tip_via, grand_total=1100=services_net(1000)+tip(100). (b) reports/summary today.tips ≥ 100 reflecting per-line tips. (c) cash-closing/summary returns numeric cash_sales excluding QR-tip portion. (d) PUT /api/bills/{bid} as admin preserves bill_no + created_at, updates services_net (1200*0.9=1080), tip_amount=100, tip_qr_total=100, grand_total=1180, adds edited_by_name + edited_at. Staff PUT → 403. Unknown id PUT → 404. Frontend not tested per request. No new issues found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_bill_tips_edit.py",
+    "/app/backend/tests/test_glowup_backend.py",
+    "/app/backend/tests/test_glowup_regression.py",
+    "/app/backend/tests/test_auth_admin_management.py",
+    "/app/test_reports/pytest/pytest_iter5_retest.xml",
+    "/app/test_reports/pytest/pytest_iter5_full_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "BillItem model now correctly declares tip_amount + tip_via, aligning with the aggregation logic at server.py:478-480 and 569-570. Model_dump() emits full item shape including tips.",
+    "Minor pytest warning: two class-scoped fixtures are declared as instance methods (deprecated in pytest 10). Non-blocking. Consider @classmethod when convenient."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8 iter-5 + 51/51 regression executed; 1 conditional skip)", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "Test bills auto-cleaned via DELETE in fixture teardown. Admin/staff seeded via /api/seed (idempotent).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-5 per-line tips + admin bill-edit feature is fully verified on backend. If frontend testing is required later, testIDs to exercise: new-bill-screen, item-row-<i>, per-line tip input inside item row, tip-via-cash / tip-via-qr, process-payment-btn, bill-card-<id>, edit-bill-btn. Create a 2-item bill with ₹50 QR tip on item1 and ₹50 cash tip on item2; verify Bill Detail shows tip breakdown 50+50=100 and Cash Closing subtracts the ₹50 QR-tip from cash_sales.",
+  "rca_of_issue": "N/A — original blocker fixed by main agent (BillItem field addition). No new bugs discovered in retest."
+}

@@ -132,6 +132,8 @@ class BillItem(BaseModel):
     discount_pct: float = 0
     beautician_id: Optional[str] = None
     beautician_name: str
+    tip_amount: float = 0
+    tip_via: Optional[Literal["cash", "qr"]] = None
 
 
 class BillCreate(BaseModel):
