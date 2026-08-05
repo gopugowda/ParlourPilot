@@ -22,8 +22,8 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# JWT config
-JWT_SECRET = os.environ.get('JWT_SECRET', 'glowup-salon-super-secret-key-change-me-in-prod')
+# JWT config - REQUIRED from environment, fail fast if missing
+JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALG = 'HS256'
 JWT_EXP_HOURS = 24 * 7  # 7 days
 

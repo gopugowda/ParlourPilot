@@ -123,7 +123,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 }} keyboardShouldPersistTaps="handled">
           {/* Auto totals */}
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Today's Business</Text>
+            <Text style={styles.summaryLabel}>Today&apos;s Business</Text>
             <Text style={styles.summaryVal}>{fmtINR(summary?.total_revenue || 0)}</Text>
             <View style={styles.rowStats}>
               <View style={styles.statBox}>
@@ -151,7 +151,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
 
             <View style={styles.field}>
               <Text style={styles.label}>Opening Balance (₹)</Text>
-              <Text style={styles.helpText}>Cash in counter at start of day (auto-filled from yesterday's close)</Text>
+              <Text style={styles.helpText}>Cash in counter at start of day (auto-filled from yesterday&apos;s close)</Text>
               <TextInput
                 testID="opening-input"
                 value={opening}
@@ -165,7 +165,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
 
             <View style={styles.field}>
               <Text style={styles.label}>Cash Spent Today (₹)</Text>
-              <Text style={styles.helpText}>Cash taken from counter for expenses (auto = today's total expenses)</Text>
+              <Text style={styles.helpText}>Cash taken from counter for expenses (auto = today&apos;s total expenses)</Text>
               <TextInput
                 testID="cash-expenses-input"
                 value={cashExpenses}
