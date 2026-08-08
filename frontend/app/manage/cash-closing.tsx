@@ -13,7 +13,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
 export default function CashClosingScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const insets = useSafeAreaInsets();
   const today = new Date().toISOString().slice(0, 10);
   const [summary, setSummary] = useState<any>(null);
@@ -76,7 +76,8 @@ export default function CashClosingScreen() {
 
   const shareReport = async () => {
     if (!summary) return;
-    const msg = `*GLOW UP SALON — Daily Closing*
+    const salonName = (tenant?.business_name || 'Salon').toUpperCase();
+    const msg = `*${salonName} — Daily Closing*
 Date: ${today}
 Submitted by: ${user?.name}
 

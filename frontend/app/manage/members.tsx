@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
 type Member = {
@@ -20,6 +21,7 @@ type Member = {
 export default function MembersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ filter?: string }>();
+  const { tenant } = useAuth();
   const [list, setList] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -84,9 +86,13 @@ export default function MembersScreen() {
   const sendWhatsApp = async (m: Member) => {
     let phone = (m.phone || '').replace(/[^0-9]/g, '');
     if (phone.length === 10) phone = '91' + phone; // India default
+    const salon = tenant?.business_name || 'our salon';
+    const cityLine = tenant?.city ? `, ${tenant.city}` : '';
+    const discountPct = tenant?.member_discount_pct ?? 10;
+    const minPrice = tenant?.member_min_price ?? 100;
     const msg = m.status === 'expired'
-      ? `Hi ${m.name}, your GLOW UP SALON yearly membership expired on ${m.expires_at}. Renew today to keep enjoying 10% off on all services above ₹100. Reply YES to renew. - GLOW UP UNISEX SALON, Sullia`
-      : `Hi ${m.name}, your GLOW UP SALON yearly membership expires on ${m.expires_at} (${m.days_left} days left). Renew now to continue enjoying 10% off on all services above ₹100. - GLOW UP UNISEX SALON, Sullia`;
+      ? `Hi ${m.name}, your ${salon} yearly membership expired on ${m.expires_at}. Renew today to keep enjoying ${discountPct}% off on all services above ₹${minPrice}. Reply YES to renew. - ${salon}${cityLine}`
+      : `Hi ${m.name}, your ${salon} yearly membership expires on ${m.expires_at} (${m.days_left} days left). Renew now to continue enjoying ${discountPct}% off on all services above ₹${minPrice}. - ${salon}${cityLine}`;
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
     try {
       await Linking.openURL(url);

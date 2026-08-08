@@ -9,13 +9,14 @@ export default function ManageScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
 
-  const groups = user?.role === 'admin' ? [
+  const groups = (user?.role === 'admin' || user?.role === 'owner') ? [
     {
       title: 'Salon Management',
       items: [
+        { icon: 'business-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings' },
         { icon: 'pricetags-outline', label: 'Services', hint: 'Add, edit, remove services', route: '/manage/services' },
         { icon: 'people-outline', label: 'Beauticians', hint: 'Manage staff & barbers', route: '/manage/beauticians' },
-        { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto 10% off', route: '/manage/members' },
+        { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto discount', route: '/manage/members' },
         { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock' },
       ],
     },
@@ -30,6 +31,7 @@ export default function ManageScreen() {
       title: 'Admin',
       items: [
         { icon: 'person-add-outline', label: 'Users', hint: 'Add admin or staff logins', route: '/manage/users' },
+        { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription' },
       ],
     },
   ] : [

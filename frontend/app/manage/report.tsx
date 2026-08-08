@@ -30,7 +30,7 @@ const STAFF_PRESETS = [
 export default function ReportScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const presets = isAdmin ? ADMIN_PRESETS : STAFF_PRESETS;
 
   const [preset, setPreset] = useState<string>('week');

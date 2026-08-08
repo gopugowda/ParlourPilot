@@ -22,7 +22,7 @@ const UNITS = ['piece', 'ml', 'g', 'kg', 'L', 'pack', 'bottle'];
 export default function StockScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');

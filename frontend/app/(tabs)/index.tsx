@@ -11,10 +11,10 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
-const LOGO = require('../../assets/images/glow-logo-mark.png');
+const LOGO = require('../../assets/images/parlourpilot-logo.png');
 
 export default function DashboardScreen() {
-  const { user, logout } = useAuth();
+  const { user, tenant, subscription, logout } = useAuth();
   const router = useRouter();
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -32,7 +32,7 @@ export default function DashboardScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const adminActions = [
     { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
     { key: 'hist', label: 'History', icon: 'receipt', route: '/(tabs)/history', color: colors.success },
@@ -55,7 +55,7 @@ export default function DashboardScreen() {
         {/* Hero */}
         <View style={styles.heroWrap}>
           <LinearGradient
-            colors={['#1A1A1A', '#2C2416', '#3B2E17']}
+            colors={['#8A0E1D', '#C42032', '#E43D50']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
@@ -63,10 +63,19 @@ export default function DashboardScreen() {
           <SafeAreaView edges={['top']} style={styles.heroContent}>
             <View style={styles.heroTopRow}>
               <View style={styles.heroBrand}>
-                <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
-                <View>
-                  <Text style={styles.heroBrandName}>GLOW UP</Text>
-                  <Text style={styles.heroBrandSub}>Hi, {user?.name?.split(' ')[0] || 'there'}</Text>
+                <View style={styles.heroLogoWrap}>
+                  <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.heroBrandName} numberOfLines={1}>
+                    {tenant?.business_name || 'ParlourPilot'}
+                  </Text>
+                  <Text style={styles.heroBrandSub}>
+                    Hi, {user?.name?.split(' ')[0] || 'there'}
+                    {subscription?.status === 'trialing' && subscription?.days_left !== null && subscription?.days_left !== undefined
+                      ? `  · ${subscription.days_left}d trial left`
+                      : ''}
+                  </Text>
                 </View>
               </View>
               <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
@@ -237,15 +246,19 @@ const styles = StyleSheet.create({
   heroWrap: { minHeight: 260, overflow: 'hidden', position: 'relative' },
   heroContent: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
-  heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  heroLogo: { width: 56, height: 60 },
-  heroBrandName: { color: '#fff', fontSize: 20, fontWeight: '900', letterSpacing: 1.5 },
-  heroBrandSub: { color: colors.brandSecondary, fontSize: 12, marginTop: 2, fontWeight: '600' },
+  heroBrand: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 },
+  heroLogoWrap: {
+    width: 48, height: 48, borderRadius: 12, backgroundColor: '#FFFFFF',
+    alignItems: 'center', justifyContent: 'center', padding: 4,
+  },
+  heroLogo: { width: 38, height: 38 },
+  heroBrandName: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 0.3 },
+  heroBrandSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2, fontWeight: '600' },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
   heroLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 12, letterSpacing: 1, fontWeight: '700' },
-  heroValue: { color: colors.brandSecondary, fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
+  heroValue: { color: '#FFFFFF', fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
   heroStatsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' },
-  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(228,192,112,0.15)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(228,192,112,0.3)' },
+  heroStatChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
   heroStatText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   section: { paddingHorizontal: spacing.xl, marginTop: spacing.xl },

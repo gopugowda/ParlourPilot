@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator, TouchableOpacity, Modal,
@@ -8,12 +8,14 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
 export default function LoginScreen() {
   const { login } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
@@ -68,7 +70,6 @@ export default function LoginScreen() {
       await api('/auth/reset-password', { method: 'POST', body: { token: fpToken.trim(), new_password: fpNewPwd }, auth: false });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setFpMsg('Password reset — sign in with your new password.');
-      // Auto-fill and close after a moment
       setTimeout(() => {
         setEmail(fpEmail); setPassword('');
         setFpOpen(false); setFpStep('request'); setFpEmail(''); setFpToken(''); setFpNewPwd(''); setFpMsg(null);
@@ -91,12 +92,12 @@ export default function LoginScreen() {
       >
         <SafeAreaView edges={['top']} style={styles.hero}>
           <Image
-            source={require('../assets/images/glow-logo-mark.png')}
+            source={require('../assets/images/parlourpilot-logo.png')}
             style={styles.logoImg}
             contentFit="contain"
           />
-          <Text style={styles.brandName}>GLOW UP</Text>
-          <Text style={styles.brandSub}>UNISEX SALON · SULLIA</Text>
+          <Text style={styles.brandName}>ParlourPilot</Text>
+          <Text style={styles.brandSub}>SALON MANAGEMENT PLATFORM</Text>
         </SafeAreaView>
 
         <View style={styles.body}>
@@ -160,6 +161,21 @@ export default function LoginScreen() {
           >
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Sign In</Text>}
           </Pressable>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>New to ParlourPilot?</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            testID="signup-link-btn"
+            onPress={() => router.push('/signup')}
+            style={styles.signupBtn}
+          >
+            <Text style={styles.signupText}>Create your salon account · 7-day free trial</Text>
+            <Ionicons name="arrow-forward" size={16} color={colors.brandPrimary} />
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
@@ -249,11 +265,11 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   hero: {
     paddingTop: spacing.xl, paddingBottom: spacing.xl, paddingHorizontal: spacing.xl,
-    alignItems: 'center', backgroundColor: colors.surfaceInverse,
+    alignItems: 'center', backgroundColor: '#FFFFFF',
   },
-  logoImg: { width: 110, height: 120 },
-  brandName: { color: '#fff', fontSize: 26, fontWeight: '900', letterSpacing: 2, marginTop: spacing.md },
-  brandSub: { color: colors.brandSecondary, fontSize: 11, fontWeight: '700', letterSpacing: 2, marginTop: 4 },
+  logoImg: { width: 90, height: 90 },
+  brandName: { color: colors.brandPrimary, fontSize: 28, fontWeight: '900', letterSpacing: 0.5, marginTop: spacing.md },
+  brandSub: { color: colors.onSurfaceTertiary, fontSize: 10, fontWeight: '700', letterSpacing: 2, marginTop: 4 },
   body: { flex: 1, backgroundColor: colors.surface, padding: spacing.xl, gap: spacing.lg },
   title: { fontSize: 20, fontWeight: '800', color: colors.onSurface, marginBottom: spacing.sm },
   field: { gap: spacing.sm },
@@ -269,10 +285,20 @@ const styles = StyleSheet.create({
   forgotText: { color: colors.brandPrimary, fontSize: 13, fontWeight: '700' },
   err: { color: colors.error, fontSize: 14 },
   btn: {
-    backgroundColor: colors.surfaceInverse, minHeight: 52, borderRadius: radius.md,
+    backgroundColor: colors.brandPrimary, minHeight: 52, borderRadius: radius.md,
     alignItems: 'center', justifyContent: 'center', paddingVertical: 14, ...shadows.card,
   },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
+
+  divider: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: spacing.md },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
+  signupBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandTertiary,
+    borderWidth: 1, borderColor: colors.brandSecondary,
+  },
+  signupText: { color: colors.brandPrimary, fontSize: 14, fontWeight: '700' },
 
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, maxHeight: '90%' },

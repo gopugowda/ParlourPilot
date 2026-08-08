@@ -15,8 +15,8 @@ export default function BillDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const { user, tenant } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [bill, setBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -46,7 +46,7 @@ export default function BillDetailScreen() {
     }).join('');
 
     const dt = new Date(bill.created_at).toLocaleString('en-IN');
-    const memberBadge = bill.is_member ? `<div style="display:inline-block;background:#B88A3C;color:#fff;padding:4px 10px;border-radius:999px;font-weight:700;font-size:11px;margin-left:8px">★ MEMBER</div>` : '';
+    const memberBadge = bill.is_member ? `<div style="display:inline-block;background:#C42032;color:#fff;padding:4px 10px;border-radius:999px;font-weight:700;font-size:11px;margin-left:8px">★ MEMBER</div>` : '';
     const tipBlock = (bill.tip_amount || 0) > 0 ? `
       <div class="box">
         <h3>Tip</h3>
@@ -58,25 +58,49 @@ export default function BillDetailScreen() {
     ` : '';
     const servicesNet = bill.services_net ?? (bill.grand_total - (bill.tip_amount || 0));
 
+    // Dynamic tenant branding
+    const bizName = (tenant?.business_name || 'ParlourPilot').toUpperCase();
+    const addrLines: string[] = [];
+    if (tenant?.address) addrLines.push(tenant.address);
+    const cityLine = [tenant?.city, tenant?.state].filter(Boolean).join(', ');
+    if (cityLine) addrLines.push(cityLine);
+    if (tenant?.phone) addrLines.push(`Ph: ${tenant.phone}`);
+    if (tenant?.email) addrLines.push(tenant.email);
+    if (tenant?.tax_enabled && tenant?.tax_number) addrLines.push(`GST/Tax: ${tenant.tax_number}`);
+    const addrHtml = addrLines.map(l => `<div>${l}</div>`).join('');
+    const headerLine = tenant?.receipt_header ? `<div class="header-line">${tenant.receipt_header}</div>` : '';
+    const footerText = tenant?.receipt_footer || 'Thank you! Powered by ParlourPilot';
+
+    // Tax calculation (if enabled)
+    let taxAmount = 0;
+    let showTax = false;
+    if (tenant?.tax_enabled && tenant?.tax_percentage && tenant.tax_percentage > 0) {
+      taxAmount = servicesNet * (tenant.tax_percentage / 100);
+      showTax = true;
+    }
+    const displayGrandTotal = bill.grand_total + (showTax ? taxAmount : 0);
+
     return `
 <html><head><meta charset="utf-8"/>
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;color:#1A1A1A}
-.brand{color:#B88A3C;font-size:24px;font-weight:900;letter-spacing:2px}
-.sub{color:#6B6862;font-size:12px;margin-bottom:16px;letter-spacing:1px}
+.brand{color:#C42032;font-size:24px;font-weight:900;letter-spacing:1px}
+.sub{color:#6B6862;font-size:12px;margin-bottom:8px;letter-spacing:0.5px;line-height:1.6}
+.header-line{background:#FDECEE;color:#8A0E1D;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:600;margin-top:8px;text-align:center}
 .box{border:1px solid #E8E5DA;border-radius:12px;padding:14px;margin-top:14px}
 h3{margin:0 0 8px 0;font-size:13px;color:#6B6862;text-transform:uppercase}
 table{width:100%;border-collapse:collapse;margin-top:8px}
 th,td{padding:8px 6px;border-bottom:1px solid #F0EDE3;font-size:13px;text-align:left}
-th{background:#FAF3E1;color:#8A6524;font-size:11px;text-transform:uppercase}
+th{background:#FDECEE;color:#8A0E1D;font-size:11px;text-transform:uppercase}
 .totals{margin-top:10px;font-size:14px}
 .totals .row{display:flex;justify-content:space-between;padding:4px 0}
-.grand{font-size:22px;font-weight:900;color:#B88A3C}
+.grand{font-size:22px;font-weight:900;color:#C42032}
 .footer{margin-top:24px;text-align:center;color:#6B6862;font-size:11px}
-.pm{display:inline-block;background:#FAF3E1;color:#8A6524;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px}
+.pm{display:inline-block;background:#FDECEE;color:#8A0E1D;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px}
 </style></head><body>
-<div class="brand">GLOW UP</div>
-<div class="sub">UNISEX SALON · SULLIA</div>
+<div class="brand">${bizName}</div>
+<div class="sub">${addrHtml}</div>
+${headerLine}
 
 <div class="box">
   <h3>Invoice</h3>
@@ -100,8 +124,9 @@ ${tipBlock}
     <div class="row"><span>Subtotal</span><span>₹${bill.subtotal.toFixed(2)}</span></div>
     <div class="row"><span>Discount</span><span>- ₹${bill.discount.toFixed(2)}</span></div>
     <div class="row"><span>Services Net</span><span>₹${servicesNet.toFixed(2)}</span></div>
+    ${showTax ? `<div class="row"><span>Tax (${tenant?.tax_percentage}%)</span><span>+ ₹${taxAmount.toFixed(2)}</span></div>` : ''}
     ${(bill.tip_amount || 0) > 0 ? `<div class="row"><span>Tip</span><span>+ ₹${bill.tip_amount.toFixed(2)}</span></div>` : ''}
-    <div class="row"><span><b>Grand Total</b></span><span class="grand">₹${bill.grand_total.toFixed(2)}</span></div>
+    <div class="row"><span><b>Grand Total</b></span><span class="grand">₹${displayGrandTotal.toFixed(2)}</span></div>
   </div>
   <div style="margin-top:12px">
     <span class="pm">${bill.payment_mode.toUpperCase()}</span>
@@ -109,7 +134,7 @@ ${tipBlock}
   </div>
 </div>
 
-<div class="footer">Thank you for visiting GLOW UP · Please come again!</div>
+<div class="footer">${footerText}</div>
 </body></html>`;
   };
 

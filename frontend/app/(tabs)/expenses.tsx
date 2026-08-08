@@ -27,7 +27,7 @@ const CATEGORY_ICON: Record<string, any> = {
 
 export default function ExpensesScreen() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<string[]>(['Material', 'Utilities', 'Rent', 'Salary', 'Maintenance', 'Other']);
   const [filter, setFilter] = useState<'today' | 'month' | 'all'>('today');

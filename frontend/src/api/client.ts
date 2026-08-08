@@ -3,8 +3,10 @@ import { Platform } from 'react-native';
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
-const TOKEN_KEY = 'glowup_auth_token';
-const USER_KEY = 'glowup_auth_user';
+const TOKEN_KEY = 'parlourpilot_auth_token';
+const USER_KEY = 'parlourpilot_auth_user';
+const TENANT_KEY = 'parlourpilot_auth_tenant';
+const SUBSCRIPTION_KEY = 'parlourpilot_auth_subscription';
 
 // Web fallback for SecureStore (SecureStore is native-only)
 const storage = {
@@ -45,6 +47,46 @@ export const userStore = {
   clear: () => storage.removeItem(USER_KEY),
 };
 
+export const tenantStore = {
+  get: async () => {
+    const raw = await storage.getItem(TENANT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  },
+  set: (t: any) => storage.setItem(TENANT_KEY, JSON.stringify(t)),
+  clear: () => storage.removeItem(TENANT_KEY),
+};
+
+export const subscriptionStore = {
+  get: async () => {
+    const raw = await storage.getItem(SUBSCRIPTION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  },
+  set: (s: any) => storage.setItem(SUBSCRIPTION_KEY, JSON.stringify(s)),
+  clear: () => storage.removeItem(SUBSCRIPTION_KEY),
+};
+
+// Global listener for subscription-expired responses (402)
+let subscriptionExpiredListener: (() => void) | null = null;
+export function setSubscriptionExpiredListener(fn: () => void) {
+  subscriptionExpiredListener = fn;
+}
+
+// Global listener for unauthorized responses (401) - triggers logout
+let unauthorizedListener: (() => void) | null = null;
+export function setUnauthorizedListener(fn: () => void) {
+  unauthorizedListener = fn;
+}
+
+export class ApiError extends Error {
+  status: number;
+  data: any;
+  constructor(status: number, message: string, data?: any) {
+    super(message);
+    this.status = status;
+    this.data = data;
+  }
+}
+
 export async function api<T = any>(
   path: string,
   opts: { method?: string; body?: any; auth?: boolean } = {}
@@ -63,9 +105,18 @@ export async function api<T = any>(
   const text = await res.text();
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
   if (!res.ok) {
     const msg = (data && (data.detail || data.message)) || `Request failed (${res.status})`;
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    const message = typeof msg === 'string' ? msg : JSON.stringify(msg);
+
+    if (res.status === 401 && auth) {
+      if (unauthorizedListener) unauthorizedListener();
+    }
+    if (res.status === 402) {
+      if (subscriptionExpiredListener) subscriptionExpiredListener();
+    }
+    throw new ApiError(res.status, message, data);
   }
   return data as T;
 }
@@ -77,4 +128,20 @@ export const authApi = {
     api('/auth/register', { method: 'POST', body: data }),
   users: () => api('/auth/users'),
   seed: () => api('/seed', { method: 'POST', auth: false }),
+  deleteOwnAccount: () => api('/auth/me', { method: 'DELETE' }),
+};
+
+export const tenantApi = {
+  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string }) =>
+    api('/tenants/signup', { method: 'POST', body: data, auth: false }),
+  getMine: () => api('/tenants/me'),
+  updateMine: (data: any) => api('/tenants/me', { method: 'PUT', body: data }),
+  subscription: () => api('/tenants/me/subscription'),
+};
+
+export const platformApi = {
+  tenants: () => api('/platform/tenants'),
+  stats: () => api('/platform/stats'),
+  updateTenant: (tid: string, data: any) => api(`/platform/tenants/${tid}`, { method: 'PUT', body: data }),
+  setSubscription: (tid: string, data: any) => api(`/platform/tenants/${tid}/subscription`, { method: 'POST', body: data }),
 };

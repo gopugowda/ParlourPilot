@@ -119,7 +119,7 @@ export default function UsersScreen() {
               <View style={styles.rowMain}>
                 <View style={styles.rowNameLine}>
                   <Text style={styles.rowName} numberOfLines={1}>{u.name}</Text>
-                  <View style={[styles.rolePill, { backgroundColor: u.role === 'admin' ? colors.brandPrimary : colors.info }]}>
+                  <View style={[styles.rolePill, { backgroundColor: (u.role === 'admin' || u.role === 'owner') ? colors.brandPrimary : colors.info }]}>
                     <Text style={styles.roleText}>{u.role.toUpperCase()}</Text>
                   </View>
                   {u.id === me?.id && <Text style={styles.youTag}>YOU</Text>}
