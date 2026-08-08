@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
-type Service = { id: string; name: string; price: number; category: string; active: boolean };
+type Service = { id: string; name: string; price: number; category: string; tax_percentage?: number; active: boolean };
 
 export default function ServicesScreen() {
   const router = useRouter();
@@ -21,6 +21,7 @@ export default function ServicesScreen() {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [category, setCategory] = useState('General');
+  const [taxPct, setTaxPct] = useState('');
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -32,10 +33,12 @@ export default function ServicesScreen() {
   useFocusEffect(useCallback(() => { load(); }, []));
 
   const openAdd = () => {
-    setEditing(null); setName(''); setPrice(''); setCategory('General'); setActive(true); setErr(null); setEditOpen(true);
+    setEditing(null); setName(''); setPrice(''); setCategory('General'); setTaxPct(''); setActive(true); setErr(null); setEditOpen(true);
   };
   const openEdit = (s: Service) => {
-    setEditing(s); setName(s.name); setPrice(String(s.price)); setCategory(s.category); setActive(s.active); setErr(null); setEditOpen(true);
+    setEditing(s); setName(s.name); setPrice(String(s.price)); setCategory(s.category);
+    setTaxPct(s.tax_percentage ? String(s.tax_percentage) : '');
+    setActive(s.active); setErr(null); setEditOpen(true);
   };
 
   const save = async () => {
@@ -43,9 +46,16 @@ export default function ServicesScreen() {
     if (!name.trim()) { setErr('Name required'); return; }
     const p = Number(price);
     if (!(p > 0)) { setErr('Price must be > 0'); return; }
+    const tx = Number(taxPct);
+    if (taxPct && (!Number.isFinite(tx) || tx < 0 || tx > 100)) { setErr('Tax % must be between 0 and 100'); return; }
     setSaving(true);
     try {
-      const body = { name: name.trim(), price: p, category: category.trim() || 'General', active };
+      const body = {
+        name: name.trim(), price: p,
+        category: category.trim() || 'General',
+        tax_percentage: Number.isFinite(tx) ? tx : 0,
+        active,
+      };
       if (editing) await api(`/services/${editing.id}`, { method: 'PUT', body });
       else await api('/services', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -89,7 +99,11 @@ export default function ServicesScreen() {
             <View key={s.id} style={styles.row} testID={`svc-row-${s.id}`}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowName}>{s.name}</Text>
-                <Text style={styles.rowMeta}>{s.category} {!s.active && '· Inactive'}</Text>
+                <Text style={styles.rowMeta}>
+                  {s.category}
+                  {(s.tax_percentage ?? 0) > 0 ? ` · Tax ${s.tax_percentage}%` : ''}
+                  {!s.active && ' · Inactive'}
+                </Text>
               </View>
               <Text style={styles.rowPrice}>{fmtINR(s.price)}</Text>
               <TouchableOpacity testID={`svc-edit-${s.id}`} style={styles.smallBtn} onPress={() => openEdit(s)}>
@@ -117,6 +131,10 @@ export default function ServicesScreen() {
                 <View style={[styles.field, { flex: 1 }]}>
                   <Text style={styles.label}>Price (₹)</Text>
                   <TextInput testID="svc-price-input" value={price} onChangeText={(v) => setPrice(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+                </View>
+                <View style={[styles.field, { flex: 1 }]}>
+                  <Text style={styles.label}>Tax %</Text>
+                  <TextInput testID="svc-tax-input" value={taxPct} onChangeText={(v) => setTaxPct(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
                 <View style={[styles.field, { flex: 1.2 }]}>
                   <Text style={styles.label}>Category</Text>

@@ -272,6 +272,7 @@ class ServiceIn(BaseModel):
     name: str
     price: float
     category: Optional[str] = "General"
+    tax_percentage: Optional[float] = 0
     active: bool = True
 
 
@@ -280,6 +281,7 @@ class BillItem(BaseModel):
     service_name: str
     price: float
     discount_pct: float = 0
+    tax_percentage: float = 0  # per-service tax
     beautician_id: Optional[str] = None
     beautician_name: str
     tip_amount: float = 0
@@ -306,6 +308,7 @@ class MemberIn(BaseModel):
     phone: str
     joined_at: Optional[str] = None
     expires_at: Optional[str] = None
+    discount_pct: Optional[float] = None  # overrides tenant default when set
     notes: Optional[str] = ""
     active: bool = True
 
@@ -359,9 +362,15 @@ def _member_settings_for(tenant: Optional[dict]):
     )
 
 
-def apply_member_discount(items: List[BillItem], is_member: bool, tenant: Optional[dict]) -> List[dict]:
-    """Return list of item dicts with effective_discount_pct + member_applied flag (tenant-configurable)."""
-    disc_pct, min_price = _member_settings_for(tenant)
+def apply_member_discount(items: List[BillItem], is_member: bool, tenant: Optional[dict], member_discount_pct: Optional[float] = None) -> List[dict]:
+    """Return list of item dicts with effective_discount_pct + member_applied flag.
+
+    When member_discount_pct is provided (per-member override), it takes precedence
+    over the tenant default when the member is active.
+    """
+    tenant_disc_pct, min_price = _member_settings_for(tenant)
+    # Use member's own discount % if provided, else tenant default
+    disc_pct = float(member_discount_pct) if (member_discount_pct is not None) else tenant_disc_pct
     out = []
     for it in items:
         base = it.model_dump()
@@ -376,13 +385,17 @@ def apply_member_discount(items: List[BillItem], is_member: bool, tenant: Option
 def compute_bill_totals(items_effective: List[dict]):
     subtotal = 0.0
     total_discount = 0.0
+    total_tax = 0.0
     for it in items_effective:
         line_gross = it["price"]
         line_disc = line_gross * (it.get("effective_discount_pct", 0) or 0) / 100.0
+        line_net = line_gross - line_disc
+        line_tax = line_net * (it.get("tax_percentage", 0) or 0) / 100.0
         subtotal += line_gross
         total_discount += line_disc
+        total_tax += line_tax
     services_net = round(subtotal - total_discount, 2)
-    return round(subtotal, 2), round(total_discount, 2), services_net
+    return round(subtotal, 2), round(total_discount, 2), services_net, round(total_tax, 2)
 
 
 # ============ Tenant / Signup Routes ============
@@ -766,6 +779,7 @@ async def create_service(body: ServiceIn, user=Depends(require_admin_active)):
         "name": body.name,
         "price": float(body.price),
         "category": body.category or "General",
+        "tax_percentage": float(body.tax_percentage or 0),
         "active": body.active,
         "created_at": now_iso(),
     }
@@ -777,7 +791,12 @@ async def create_service(body: ServiceIn, user=Depends(require_admin_active)):
 async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin_active)):
     result = await db.services.find_one_and_update(
         tq(user, {"id": sid}),
-        {"$set": {"name": body.name, "price": float(body.price), "category": body.category, "active": body.active}},
+        {"$set": {
+            "name": body.name, "price": float(body.price),
+            "category": body.category,
+            "tax_percentage": float(body.tax_percentage or 0),
+            "active": body.active,
+        }},
         return_document=True, projection={"_id": 0},
     )
     if not result:
@@ -811,21 +830,31 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
     tid = tenant_id_of(user)
     tenant = await load_tenant(tid)
 
-    items_eff = apply_member_discount(body.items, body.is_member, tenant)
-    subtotal, discount, services_net = compute_bill_totals(items_eff)
+    # If is_member, look up the member's own discount override
+    member_disc_override: Optional[float] = None
+    if body.is_member and body.customer_phone:
+        m = await db.members.find_one({"tenant_id": tid, "phone": body.customer_phone.strip(), "active": True})
+        if m and m.get("discount_pct") is not None:
+            member_disc_override = float(m["discount_pct"])
+
+    items_eff = apply_member_discount(body.items, body.is_member, tenant, member_disc_override)
+    subtotal, discount, services_net, tax_total = compute_bill_totals(items_eff)
 
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
     line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
     line_tip_cash = line_tip_total - line_tip_qr
 
+    # payable amount BEFORE tips = services_net + tax
+    payable = round(services_net + tax_total, 2)
+
     if body.payment_mode == "cash":
-        cash_amt = services_net; qr_amt = 0.0
+        cash_amt = payable; qr_amt = 0.0
     elif body.payment_mode == "qr":
-        cash_amt = 0.0; qr_amt = services_net
+        cash_amt = 0.0; qr_amt = payable
     else:
         cash_amt = round(body.cash_amount, 2); qr_amt = round(body.qr_amount, 2)
-        if abs((cash_amt + qr_amt) - services_net) > 0.01:
-            raise HTTPException(status_code=400, detail=f"Split amounts must total {services_net}")
+        if abs((cash_amt + qr_amt) - payable) > 0.01:
+            raise HTTPException(status_code=400, detail=f"Split amounts must total {payable}")
 
     tip_amount = round(max(0.0, float(body.tip_amount or 0)), 2)
     tip_via = body.tip_via if tip_amount > 0 else None
@@ -835,7 +864,7 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
     total_tip_amount = round(tip_amount + line_tip_total, 2)
     total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
     total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
-    grand_total = round(services_net + total_tip_amount, 2)
+    grand_total = round(services_net + tax_total + total_tip_amount, 2)
 
     inv_prefix = (tenant or {}).get("invoice_prefix") or ""
     bill = {
@@ -847,8 +876,10 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
         "items": items_eff,
         "subtotal": subtotal,
         "discount": discount,
+        "tax_amount": tax_total,
         "services_net": services_net,
         "is_member": bool(body.is_member),
+        "member_discount_pct_applied": member_disc_override,
         "tip_amount": total_tip_amount,
         "tip_via": tip_via,
         "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
@@ -897,27 +928,35 @@ async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin_act
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one service required")
 
-    items_eff = apply_member_discount(body.items, body.is_member, tenant)
-    subtotal, discount, services_net = compute_bill_totals(items_eff)
+    member_disc_override: Optional[float] = None
+    if body.is_member and body.customer_phone:
+        m = await db.members.find_one({"tenant_id": tid, "phone": body.customer_phone.strip(), "active": True})
+        if m and m.get("discount_pct") is not None:
+            member_disc_override = float(m["discount_pct"])
+
+    items_eff = apply_member_discount(body.items, body.is_member, tenant, member_disc_override)
+    subtotal, discount, services_net, tax_total = compute_bill_totals(items_eff)
 
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
     line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
 
+    payable = round(services_net + tax_total, 2)
+
     if body.payment_mode == "cash":
-        cash_amt = services_net; qr_amt = 0.0
+        cash_amt = payable; qr_amt = 0.0
     elif body.payment_mode == "qr":
-        cash_amt = 0.0; qr_amt = services_net
+        cash_amt = 0.0; qr_amt = payable
     else:
         cash_amt = round(body.cash_amount, 2); qr_amt = round(body.qr_amount, 2)
-        if abs((cash_amt + qr_amt) - services_net) > 0.01:
-            raise HTTPException(status_code=400, detail=f"Split amounts must total {services_net}")
+        if abs((cash_amt + qr_amt) - payable) > 0.01:
+            raise HTTPException(status_code=400, detail=f"Split amounts must total {payable}")
 
     tip_amount = round(max(0.0, float(body.tip_amount or 0)), 2)
     tip_via = body.tip_via if tip_amount > 0 else None
     total_tip_amount = round(tip_amount + line_tip_total, 2)
     total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
     total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
-    grand_total = round(services_net + total_tip_amount, 2)
+    grand_total = round(services_net + tax_total + total_tip_amount, 2)
 
     update = {
         "customer_name": body.customer_name or existing.get("customer_name", "Walk-in"),
@@ -925,8 +964,10 @@ async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin_act
         "items": items_eff,
         "subtotal": subtotal,
         "discount": discount,
+        "tax_amount": tax_total,
         "services_net": services_net,
         "is_member": bool(body.is_member),
+        "member_discount_pct_applied": member_disc_override,
         "tip_amount": total_tip_amount,
         "tip_via": tip_via,
         "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
@@ -1007,6 +1048,9 @@ async def lookup_member(phone: str, user=Depends(get_current_user_active)):
     if not doc:
         return {"found": False}
     m = _member_status(doc)
+    tenant = await load_tenant(tenant_id_of(user))
+    default_pct, _ = _member_settings_for(tenant)
+    m["effective_discount_pct"] = float(m.get("discount_pct")) if m.get("discount_pct") is not None else float(default_pct)
     return {"found": True, "member": m, "is_active_member": m["status"] in ("active", "expiring_soon")}
 
 
@@ -1033,6 +1077,7 @@ async def create_member(body: MemberIn, user=Depends(require_admin_active)):
         "phone": phone_clean,
         "joined_at": joined,
         "expires_at": expires,
+        "discount_pct": float(body.discount_pct) if body.discount_pct is not None else None,
         "notes": body.notes or "",
         "active": body.active,
         "created_at": now_iso(),
@@ -1048,6 +1093,7 @@ async def update_member(mid: str, body: MemberIn, user=Depends(require_admin_act
         {"$set": {
             "name": body.name.strip(), "phone": body.phone.strip(),
             "joined_at": body.joined_at, "expires_at": body.expires_at,
+            "discount_pct": float(body.discount_pct) if body.discount_pct is not None else None,
             "notes": body.notes or "", "active": body.active,
         }},
         return_document=True, projection={"_id": 0},

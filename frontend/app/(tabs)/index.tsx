@@ -64,7 +64,11 @@ export default function DashboardScreen() {
             <View style={styles.heroTopRow}>
               <View style={styles.heroBrand}>
                 <View style={styles.heroLogoWrap}>
-                  <Image source={LOGO} style={styles.heroLogo} contentFit="contain" />
+                  <Image
+                    source={tenant?.logo ? { uri: tenant.logo } : LOGO}
+                    style={styles.heroLogo}
+                    contentFit="contain"
+                  />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.heroBrandName} numberOfLines={1}>

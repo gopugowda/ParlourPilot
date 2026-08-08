@@ -35,6 +35,7 @@ export default function LoginScreen() {
   const onSubmit = async () => {
     setErr(null);
     if (!email.trim() || !password) { setErr('Enter email and password'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErr('Enter a valid email address'); return; }
     setLoading(true);
     try {
       await login(email.trim(), password);

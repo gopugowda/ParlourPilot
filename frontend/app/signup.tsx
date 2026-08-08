@@ -11,6 +11,8 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function SignupScreen() {
   const { signup } = useAuth();
   const router = useRouter();
@@ -30,6 +32,11 @@ export default function SignupScreen() {
     if (!businessName.trim()) return setErr('Enter your salon/business name');
     if (!ownerName.trim()) return setErr('Enter owner name');
     if (!email.trim()) return setErr('Enter your email');
+    if (!EMAIL_RE.test(email.trim())) return setErr('Enter a valid email address');
+    if (phone.trim()) {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 6 || digits.length > 15) return setErr('Phone must be 6-15 digits');
+    }
     if (password.length < 6) return setErr('Password must be at least 6 characters');
 
     setLoading(true);

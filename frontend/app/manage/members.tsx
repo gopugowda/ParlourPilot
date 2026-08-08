@@ -14,6 +14,7 @@ import { colors, spacing, radius, shadows } from '@/src/theme';
 type Member = {
   id: string; name: string; phone: string; joined_at: string; expires_at: string;
   active: boolean; notes?: string;
+  discount_pct?: number | null;
   status: 'active' | 'expiring_soon' | 'expired' | 'inactive';
   days_left: number | null;
 };
@@ -33,6 +34,7 @@ export default function MembersScreen() {
   const [phone, setPhone] = useState('');
   const [joinedAt, setJoinedAt] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  const [discountPct, setDiscountPct] = useState(''); // per-member override
   const [active, setActive] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -48,20 +50,42 @@ export default function MembersScreen() {
     const nextYear = new Date(); nextYear.setFullYear(nextYear.getFullYear() + 1);
     setJoinedAt(today);
     setExpiresAt(nextYear.toISOString().slice(0, 10));
+    setDiscountPct('');
     setActive(true); setNotes(''); setErr(null); setEditOpen(true);
   };
   const openEdit = (m: Member) => {
     setEditing(m); setName(m.name); setPhone(m.phone);
     setJoinedAt(m.joined_at || ''); setExpiresAt(m.expires_at || '');
+    setDiscountPct((m as any).discount_pct !== null && (m as any).discount_pct !== undefined ? String((m as any).discount_pct) : '');
     setActive(m.active); setNotes(m.notes || ''); setErr(null); setEditOpen(true);
   };
 
   const save = async () => {
     setErr(null);
     if (!name.trim() || !phone.trim()) { setErr('Name and phone required'); return; }
+    // Phone: digits only, 6-15 chars
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.length < 6 || phoneDigits.length > 15) {
+      setErr('Phone must be 6-15 digits');
+      return;
+    }
+    let discOverride: number | null = null;
+    if (discountPct.trim()) {
+      const d = Number(discountPct);
+      if (!Number.isFinite(d) || d < 0 || d > 100) { setErr('Discount % must be between 0 and 100'); return; }
+      discOverride = d;
+    }
     setSaving(true);
     try {
-      const body = { name: name.trim(), phone: phone.trim(), joined_at: joinedAt, expires_at: expiresAt, active, notes: notes.trim() };
+      const body: any = {
+        name: name.trim(),
+        phone: phoneDigits,
+        joined_at: joinedAt,
+        expires_at: expiresAt,
+        discount_pct: discOverride,
+        active,
+        notes: notes.trim(),
+      };
       if (editing) await api(`/members/${editing.id}`, { method: 'PUT', body });
       else await api('/members', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -84,16 +108,17 @@ export default function MembersScreen() {
   const expiringCount = list.filter(m => m.status === 'expiring_soon' || m.status === 'expired').length;
 
   const sendWhatsApp = async (m: Member) => {
-    let phone = (m.phone || '').replace(/[^0-9]/g, '');
-    if (phone.length === 10) phone = '91' + phone; // India default
+    let phoneNum = (m.phone || '').replace(/[^0-9]/g, '');
+    if (phoneNum.length === 10) phoneNum = '91' + phoneNum;
     const salon = tenant?.business_name || 'our salon';
     const cityLine = tenant?.city ? `, ${tenant.city}` : '';
-    const discountPct = tenant?.member_discount_pct ?? 10;
+    const memberOverride = (m as any).discount_pct;
+    const discountPct = (memberOverride !== null && memberOverride !== undefined) ? memberOverride : (tenant?.member_discount_pct ?? 10);
     const minPrice = tenant?.member_min_price ?? 100;
     const msg = m.status === 'expired'
       ? `Hi ${m.name}, your ${salon} yearly membership expired on ${m.expires_at}. Renew today to keep enjoying ${discountPct}% off on all services above ₹${minPrice}. Reply YES to renew. - ${salon}${cityLine}`
       : `Hi ${m.name}, your ${salon} yearly membership expires on ${m.expires_at} (${m.days_left} days left). Renew now to continue enjoying ${discountPct}% off on all services above ₹${minPrice}. - ${salon}${cityLine}`;
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    const url = `https://wa.me/${phoneNum}?text=${encodeURIComponent(msg)}`;
     try {
       await Linking.openURL(url);
       Haptics.selectionAsync();
@@ -177,7 +202,14 @@ export default function MembersScreen() {
                     <Ionicons name="star" size={16} color={colors.brandPrimary} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.name}>{m.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.name}>{m.name}</Text>
+                      {m.discount_pct !== null && m.discount_pct !== undefined && (
+                        <View style={styles.discBadge}>
+                          <Text style={styles.discBadgeText}>{m.discount_pct}% off</Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.meta}>{m.phone} · expires {m.expires_at || '—'}</Text>
                   </View>
                   <View style={[styles.statusPill, { backgroundColor: s.bg }]}>
@@ -216,6 +248,23 @@ export default function MembersScreen() {
                   <Text style={styles.label}>Expires (YYYY-MM-DD)</Text>
                   <TextInput testID="m-expires" value={expiresAt} onChangeText={setExpiresAt} placeholder="2027-01-01" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
+              </View>
+              <View style={styles.field}>
+                <Text style={styles.label}>
+                  Discount % Override
+                  <Text style={{ color: colors.onSurfaceTertiary, fontWeight: '400' }}>
+                    {'  '}(leave blank to use salon default {tenant?.member_discount_pct ?? 10}%)
+                  </Text>
+                </Text>
+                <TextInput
+                  testID="m-discount"
+                  value={discountPct}
+                  onChangeText={(v) => setDiscountPct(v.replace(/[^0-9.]/g, ''))}
+                  keyboardType="numeric"
+                  placeholder="e.g. 20 for Student, 15 for VIP"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
               </View>
               <View style={styles.field}><Text style={styles.label}>Notes (optional)</Text><TextInput testID="m-notes" value={notes} onChangeText={setNotes} placeholder="e.g. Family plan, referred by..." placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
               <View style={styles.switchRow}>
@@ -264,6 +313,8 @@ const styles = StyleSheet.create({
   name: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
   meta: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
+  discBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary },
+  discBadgeText: { color: colors.brandPrimary, fontSize: 9, fontWeight: '800' },
   statusText: { fontSize: 11, fontWeight: '800' },
   waBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center', marginLeft: spacing.sm },
 

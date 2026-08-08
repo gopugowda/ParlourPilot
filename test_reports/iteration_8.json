@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 8: Verified 6 fixes for ParlourPilot (tax_percentage per-service, discount_pct per-member override, member auto-detect reset, logo on dashboard, phone/email validation). 14/14 backend pytest passed (100%). Frontend smoke: login+signup email/phone validation, dashboard renders with logo, services modal has 'Tax %' field, members modal has 'Discount % Override' with placeholder 'e.g. 20 for Student, 15 for VIP' and hint 'leave blank to use salon default 10%'. All target behaviors confirmed on live public URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter8_tax_member_discount.py",
+    "/app/test_reports/pytest/pytest_iter8.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~1700 lines — consider splitting into routers (auth, services, bills, members, reports, platform) for maintainability. Not blocking.",
+    "Deprecation warning in web console: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — RN Web deprecation, non-blocking but should be migrated in shared theme/shadows utility (src/theme).",
+    "apply_member_discount: member override discount is applied whether member is active or not — control comes from create_bill/update_bill which only looks up active:true members. Behavior is correct as long as inactive members are filtered before call; documented but a defense-in-depth check inside apply_member_discount could be added."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter8_tax_member_discount.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14)",
+    "frontend": "100% (5/5 smoke checks — login email val, signup email/phone val, dashboard logo render, services Tax% field, members Discount % Override field)"
+  },
+  "seed_data_creation": "Ephemeral: test services/members/bills/beauticians/tenants created with TEST_ prefix and cleaned up after each test class. One second tenant (iso_*@testsalon.com) created for isolation smoke — left in DB but flagged with TEST_ prefix.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 6 reported fixes verified. Reusable pytest suite at /app/backend/tests/test_iter8_tax_member_discount.py covers: service tax_percentage CRUD, member discount_pct CRUD, /members/lookup effective_discount_pct (override + tenant default), bill member override, per-line tax computation (1000 → net 800 → tax 144 → grand 944), split payment validation against services_net+tax_amount, non-member with is_member=true uses tenant default, bill UPDATE recomputes correctly, cross-tenant isolation for services. Frontend validation flows use testIDs: login-email-input, login-error, signup-email-input, signup-phone-input, signup-error, signup-submit-btn.",
+  "rca_of_issue": "N/A — all fixes work as designed. Backend correctly persists tax_percentage on services and discount_pct on members, resolves member override at bill creation via active phone match, computes per-line tax on line_net, and validates split payments against services_net+tax_amount. Frontend correctly gates form submission on email regex and phone digit-count."
+}

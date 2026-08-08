@@ -12,6 +12,8 @@ import { tenantApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function SalonSettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -100,13 +102,37 @@ export default function SalonSettingsScreen() {
   };
 
   const save = async () => {
+    // Validate
+    if (email.trim() && !EMAIL_RE.test(email.trim())) {
+      Alert.alert('Invalid email', 'Please enter a valid email address');
+      return;
+    }
+    if (phone.trim()) {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 6 || digits.length > 15) {
+        Alert.alert('Invalid phone', 'Phone number must be 6-15 digits');
+        return;
+      }
+    }
+    if (taxEnabled && taxPercentage) {
+      const t = parseFloat(taxPercentage);
+      if (!Number.isFinite(t) || t < 0 || t > 100) {
+        Alert.alert('Invalid tax %', 'Tax percentage must be between 0 and 100');
+        return;
+      }
+    }
+    const md = parseFloat(memberDiscount);
+    if (!Number.isFinite(md) || md < 0 || md > 100) {
+      Alert.alert('Invalid discount %', 'Member discount % must be between 0 and 100');
+      return;
+    }
     setSaving(true);
     try {
       const payload: any = {
         business_name: businessName.trim(),
         owner_name: ownerName.trim(),
         email: email.trim().toLowerCase() || undefined,
-        phone: phone.trim(),
+        phone: phone.replace(/\D/g, ''),
         website: website.trim(),
         address: address.trim(),
         city: city.trim(),

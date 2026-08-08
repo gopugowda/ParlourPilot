@@ -8,22 +8,25 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/src/api/client';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
-const MEMBER_PCT = 10;
-const MEMBER_MIN_PRICE = 100;
+const DEFAULT_MEMBER_PCT = 10;
+const DEFAULT_MEMBER_MIN_PRICE = 100;
 
-type Service = { id: string; name: string; price: number; category: string };
+type Service = { id: string; name: string; price: number; category: string; tax_percentage?: number };
 type Beautician = { id: string; name: string; role: string };
 type Item = {
   service_id?: string; service_name: string; price: number;
-  discount_pct: number; beautician_id?: string; beautician_name: string;
+  discount_pct: number; tax_percentage?: number;
+  beautician_id?: string; beautician_name: string;
   tip_amount?: number; tip_via?: 'cash' | 'qr';
 };
 
 export default function NewBillScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { tenant } = useAuth();
   const params = useLocalSearchParams<{ edit?: string }>();
   const editBillId = params?.edit as string | undefined;
   const [services, setServices] = useState<Service[]>([]);
@@ -35,6 +38,7 @@ export default function NewBillScreen() {
   const [cashAmt, setCashAmt] = useState('');
   const [qrAmt, setQrAmt] = useState('');
   const [isMember, setIsMember] = useState(false);
+  const [memberDiscountPct, setMemberDiscountPct] = useState<number | null>(null); // per-member override
   const [memberInfo, setMemberInfo] = useState<{ name: string; status: string; days_left: number | null } | null>(null);
   const [tipAmt, setTipAmt] = useState('');
   const [tipVia, setTipVia] = useState<'cash' | 'qr'>('cash');
@@ -67,6 +71,7 @@ export default function NewBillScreen() {
         setItems((b.items || []).map((it: any) => ({
           service_id: it.service_id, service_name: it.service_name,
           price: it.price, discount_pct: it.discount_pct || 0,
+          tax_percentage: it.tax_percentage || 0,
           beautician_id: it.beautician_id, beautician_name: it.beautician_name,
           tip_amount: it.tip_amount || 0, tip_via: it.tip_via || 'cash',
         })));
@@ -80,10 +85,20 @@ export default function NewBillScreen() {
     })();
   }, [editBillId]);
 
-  // Auto-detect member by phone
+  // Tenant-configurable member settings
+  const tenantMemberPct = tenant?.member_discount_pct ?? DEFAULT_MEMBER_PCT;
+  const tenantMinPrice = tenant?.member_min_price ?? DEFAULT_MEMBER_MIN_PRICE;
+
+  // Auto-detect member by phone with proper reset behavior
   useEffect(() => {
     const p = (customerPhone || '').trim();
-    if (p.length < 4) { setMemberInfo(null); return; }
+    // Short/empty phone → clear all member state
+    if (p.length < 4) {
+      setMemberInfo(null);
+      setIsMember(false);
+      setMemberDiscountPct(null);
+      return;
+    }
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
@@ -92,15 +107,26 @@ export default function NewBillScreen() {
         if (res?.found && res.is_active_member) {
           setMemberInfo({ name: res.member.name, status: res.member.status, days_left: res.member.days_left });
           setIsMember(true);
+          const pct = res.member?.effective_discount_pct ?? res.member?.discount_pct ?? null;
+          setMemberDiscountPct(typeof pct === 'number' ? pct : null);
           if (!customerName && res.member.name) setCustomerName(res.member.name);
         } else if (res?.found) {
-          // Found but expired/inactive
+          // Found but expired/inactive → show info banner but NO discount
           setMemberInfo({ name: res.member.name, status: res.member.status, days_left: res.member.days_left });
+          setIsMember(false);
+          setMemberDiscountPct(null);
         } else {
+          // Not found → non-member
           setMemberInfo(null);
+          setIsMember(false);
+          setMemberDiscountPct(null);
         }
       } catch {
-        if (!cancelled) setMemberInfo(null);
+        if (!cancelled) {
+          setMemberInfo(null);
+          setIsMember(false);
+          setMemberDiscountPct(null);
+        }
       }
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
@@ -120,23 +146,35 @@ export default function NewBillScreen() {
     setItems(prev => prev.filter((_, idx) => idx !== i));
   };
 
+  const memberPctToApply = memberDiscountPct ?? tenantMemberPct;
   const subtotal = items.reduce((s, it) => s + (Number(it.price) || 0), 0);
   const discount = items.reduce((s, it) => {
     const price = Number(it.price) || 0;
     const manual = Number(it.discount_pct) || 0;
-    const member = isMember && price > MEMBER_MIN_PRICE ? MEMBER_PCT : 0;
+    const member = isMember && price > tenantMinPrice ? memberPctToApply : 0;
     const eff = Math.max(manual, member);
     return s + price * (eff / 100);
   }, 0);
   const servicesNet = Math.max(0, subtotal - discount);
+  // Per-item tax (applied on line net = price - discount)
+  const taxTotal = items.reduce((s, it) => {
+    const price = Number(it.price) || 0;
+    const manual = Number(it.discount_pct) || 0;
+    const member = isMember && price > tenantMinPrice ? memberPctToApply : 0;
+    const eff = Math.max(manual, member);
+    const lineNet = price * (1 - eff / 100);
+    const taxPct = Number(it.tax_percentage) || 0;
+    return s + lineNet * (taxPct / 100);
+  }, 0);
   const lineTipTotal = items.reduce((s, it) => s + (Number(it.tip_amount) || 0), 0);
   const tip = Math.max(0, Number(tipAmt) || 0) + lineTipTotal;
-  const total = servicesNet + tip;
+  const total = servicesNet + taxTotal + tip;
 
   const resetForm = () => {
     setItems([]); setCustomerName(''); setCustomerPhone('');
     setPaymentMode('cash'); setCashAmt(''); setQrAmt('');
-    setIsMember(false); setTipAmt(''); setTipVia('cash');
+    setIsMember(false); setMemberDiscountPct(null);
+    setTipAmt(''); setTipVia('cash');
     setTipBeauticianId(undefined); setTipBeauticianName('');
     setMemberInfo(null);
   };
@@ -151,11 +189,12 @@ export default function NewBillScreen() {
     }
     if (Math.max(0, Number(tipAmt) || 0) > 0 && !tipBeauticianName) { setErr('Choose beautician who received the tip'); return; }
     let cash = 0, qr = 0;
-    if (paymentMode === 'cash') cash = servicesNet;
-    else if (paymentMode === 'qr') qr = servicesNet;
+    const payable = servicesNet + taxTotal;
+    if (paymentMode === 'cash') cash = payable;
+    else if (paymentMode === 'qr') qr = payable;
     else {
       cash = Number(cashAmt) || 0; qr = Number(qrAmt) || 0;
-      if (Math.abs(cash + qr - servicesNet) > 0.01) { setErr(`Split for services must total ${fmtINR(servicesNet)}`); return; }
+      if (Math.abs(cash + qr - payable) > 0.01) { setErr(`Split for services + tax must total ${fmtINR(payable)}`); return; }
     }
     setSaving(true);
     try {
@@ -165,6 +204,7 @@ export default function NewBillScreen() {
         items: items.map(it => ({
           service_id: it.service_id, service_name: it.service_name,
           price: Number(it.price), discount_pct: Number(it.discount_pct) || 0,
+          tax_percentage: Number(it.tax_percentage) || 0,
           beautician_id: it.beautician_id, beautician_name: it.beautician_name,
           tip_amount: Number(it.tip_amount) || 0,
           tip_via: (Number(it.tip_amount) || 0) > 0 ? (it.tip_via || 'cash') : null,
@@ -248,9 +288,10 @@ export default function NewBillScreen() {
             {items.map((it, i) => {
               const price = Number(it.price) || 0;
               const manual = Number(it.discount_pct) || 0;
-              const memberPct = isMember && price > MEMBER_MIN_PRICE ? MEMBER_PCT : 0;
+              const memberPct = isMember && price > tenantMinPrice ? memberPctToApply : 0;
               const effPct = Math.max(manual, memberPct);
               const lineTotal = price * (1 - effPct / 100);
+              const lineTax = lineTotal * (Number(it.tax_percentage) || 0) / 100;
               const memberActive = memberPct > 0 && memberPct >= manual;
               return (
                 <View key={i} style={styles.itemBlock} testID={`item-row-${i}`}>
@@ -260,7 +301,12 @@ export default function NewBillScreen() {
                       {memberActive && (
                         <View style={styles.memberBadge}>
                           <Ionicons name="star" size={9} color="#fff" />
-                          <Text style={styles.memberBadgeText}>-{MEMBER_PCT}% Member</Text>
+                          <Text style={styles.memberBadgeText}>-{memberPct}% Member</Text>
+                        </View>
+                      )}
+                      {(Number(it.tax_percentage) || 0) > 0 && (
+                        <View style={styles.taxBadge}>
+                          <Text style={styles.taxBadgeText}>Tax {it.tax_percentage}%</Text>
                         </View>
                       )}
                     </View>
@@ -468,7 +514,7 @@ export default function NewBillScreen() {
           {/* Payment */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Payment Mode (Services)</Text>
-            <Text style={styles.hintText}>How the customer paid for services: {fmtINR(servicesNet)}</Text>
+            <Text style={styles.hintText}>How the customer paid for services + tax: {fmtINR(servicesNet + taxTotal)}</Text>
             <View style={styles.segmentRow}>
               {[
                 { k: 'cash', label: 'Cash', icon: 'cash-outline' },
@@ -527,6 +573,7 @@ export default function NewBillScreen() {
             <Text style={styles.footerTotal} testID="bill-total">{fmtINR(total)}</Text>
             <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: 2, flexWrap: 'wrap' }}>
               {discount > 0 && <Text style={styles.footerHint}>Saved {fmtINR(discount)}</Text>}
+              {taxTotal > 0 && <Text style={styles.footerHint}>Tax {fmtINR(taxTotal)}</Text>}
               {tip > 0 && <Text style={[styles.footerHint, { color: colors.brandPrimary }]}>Tip {fmtINR(tip)}</Text>}
             </View>
           </View>
@@ -574,7 +621,11 @@ export default function NewBillScreen() {
                   onPress={() => {
                     if (!pickerFor) return;
                     if (pickerFor.type === 'service' && 'index' in pickerFor) {
-                      updateItem(pickerFor.index, { service_id: opt.id, service_name: opt.name, price: opt.price });
+                      updateItem(pickerFor.index, {
+                        service_id: opt.id, service_name: opt.name,
+                        price: opt.price,
+                        tax_percentage: opt.tax_percentage || 0,
+                      });
                     } else if (pickerFor.type === 'beautician' && 'index' in pickerFor) {
                       updateItem(pickerFor.index, { beautician_id: opt.id, beautician_name: opt.name });
                     } else if (pickerFor.type === 'tip-beautician') {
@@ -656,6 +707,8 @@ const styles = StyleSheet.create({
   memberIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
   memberBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   memberBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
+  taxBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: '#EFEDE3', borderWidth: 1, borderColor: colors.borderStrong },
+  taxBadgeText: { color: colors.onSurfaceSecondary, fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
   memberDetectBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: '#E9F1E7', borderWidth: 1, borderColor: '#C8DDC4',
