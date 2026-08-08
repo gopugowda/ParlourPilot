@@ -1,17 +1,23 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+"""
+ParlourPilot - Multi-Tenant Salon Management SaaS
+Backend API (FastAPI + MongoDB)
+
+Every tenant-owned collection is scoped by `tenant_id`. All authenticated
+requests derive the tenant from the JWT — never from the request body.
+"""
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
+import os, re, ssl, logging, uuid
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Literal
-import uuid
+from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime, timezone, timedelta
 import bcrypt
 import jwt as pyjwt
+import certifi
 
 
 ROOT_DIR = Path(__file__).parent
@@ -19,7 +25,11 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+_client_kwargs: Dict[str, Any] = {}
+if mongo_url.startswith("mongodb+srv://"):
+    # Atlas requires TLS with certifi CA bundle in some container environments
+    _client_kwargs["tlsCAFile"] = certifi.where()
+client = AsyncIOMotorClient(mongo_url, **_client_kwargs)
 db = client[os.environ['DB_NAME']]
 
 # JWT config - REQUIRED from environment, fail fast if missing
@@ -27,14 +37,26 @@ JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALG = 'HS256'
 JWT_EXP_HOURS = 24 * 7  # 7 days
 
-app = FastAPI(title="GLOW UP Salon Billing API")
+# SaaS defaults
+TRIAL_DAYS = 7
+DEFAULT_MEMBER_DISCOUNT_PCT = 10.0
+DEFAULT_MEMBER_MIN_PRICE = 100.0
+
+app = FastAPI(title="ParlourPilot SaaS API")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 # ============ Utility ============
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def today_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def hash_password(pwd: str) -> str:
@@ -48,10 +70,18 @@ def verify_password(pwd: str, hashed: str) -> bool:
         return False
 
 
-def create_token(user_id: str, role: str) -> str:
+def slugify(text: str) -> str:
+    text = (text or "").lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-")
+    return text or "salon"
+
+
+def create_token(user_id: str, role: str, tenant_id: Optional[str]) -> str:
     payload = {
         "sub": user_id,
         "role": role,
+        "tenant_id": tenant_id,
         "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS),
     }
     return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
@@ -66,31 +96,151 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
         if not user:
             raise HTTPException(status_code=401, detail="Invalid token")
+        if not user.get("is_active", True):
+            raise HTTPException(status_code=403, detail="User account is disabled")
         return user
     except pyjwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
 async def require_admin(user=Depends(get_current_user)):
-    if user.get("role") != "admin":
+    """Tenant admin/owner (formerly 'admin')."""
+    if user.get("role") not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 
+async def require_platform_admin(user=Depends(get_current_user)):
+    if user.get("role") != "platform_admin":
+        raise HTTPException(status_code=403, detail="Platform admin access required")
+    return user
+
+
+def tenant_id_of(user: dict) -> str:
+    """Extract tenant_id from authenticated user. Fails if missing (guards accidental cross-tenant leaks)."""
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(status_code=403, detail="No tenant scope on user")
+    return tid
+
+
+def tq(user: dict, extra: Optional[dict] = None) -> dict:
+    """Build a tenant-scoped Mongo query filter. Always includes tenant_id."""
+    q = {"tenant_id": tenant_id_of(user)}
+    if extra:
+        q.update(extra)
+    return q
+
+
+def tenant_status(tenant: dict) -> dict:
+    """Compute subscription status: active | trialing | expired | suspended | cancelled."""
+    status_val = tenant.get("subscription_status") or "trialing"
+    now = datetime.now(timezone.utc)
+    end_iso = tenant.get("subscription_end_date") or tenant.get("trial_end_date")
+    days_left = None
+    if end_iso:
+        try:
+            end_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+            days_left = (end_dt - now).days
+            if status_val in ("trialing", "active") and now > end_dt:
+                status_val = "expired"
+        except Exception:
+            pass
+    return {
+        "status": status_val,
+        "days_left": days_left,
+        "trial_end_date": tenant.get("trial_end_date"),
+        "subscription_end_date": tenant.get("subscription_end_date"),
+        "subscription_plan": tenant.get("subscription_plan", "trial"),
+    }
+
+
+async def load_tenant(tid: str) -> Optional[dict]:
+    if not tid:
+        return None
+    return await db.tenants.find_one({"id": tid}, {"_id": 0})
+
+
+async def check_subscription(user: dict) -> dict:
+    """Return tenant with status; raise 402 if expired/suspended for non-platform users."""
+    if user.get("role") == "platform_admin":
+        return {}
+    tenant = await load_tenant(user.get("tenant_id"))
+    if not tenant:
+        raise HTTPException(status_code=403, detail="Tenant not found")
+    if not tenant.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Tenant is suspended")
+    st = tenant_status(tenant)
+    if st["status"] in ("expired", "cancelled", "suspended"):
+        raise HTTPException(
+            status_code=402,
+            detail=f"Subscription {st['status']}. Please renew to continue using ParlourPilot.",
+        )
+    return {"tenant": tenant, "status": st}
+
+
+async def get_current_user_active(user=Depends(get_current_user)):
+    """User dependency that also enforces subscription/trial validity."""
+    await check_subscription(user)
+    return user
+
+
+async def require_admin_active(user=Depends(require_admin)):
+    await check_subscription(user)
+    return user
+
+
 # ============ Models ============
+class TenantSignup(BaseModel):
+    business_name: str
+    owner_name: str
+    email: EmailStr
+    password: str
+    phone: Optional[str] = ""
+    city: Optional[str] = ""
+    country: Optional[str] = "India"
+
+
+class TenantUpdate(BaseModel):
+    business_name: Optional[str] = None
+    logo: Optional[str] = None  # base64 or URL
+    owner_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    postal_code: Optional[str] = None
+    currency: Optional[str] = None
+    timezone: Optional[str] = None
+    tax_enabled: Optional[bool] = None
+    tax_number: Optional[str] = None
+    tax_percentage: Optional[float] = None
+    invoice_prefix: Optional[str] = None
+    receipt_header: Optional[str] = None
+    receipt_footer: Optional[str] = None
+    website: Optional[str] = None
+    member_discount_pct: Optional[float] = None
+    member_min_price: Optional[float] = None
+
+
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
-    role: Literal["admin", "staff"] = "staff"
+    role: Literal["admin", "owner", "staff"] = "staff"
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
-    role: Optional[Literal["admin", "staff"]] = None
+    role: Optional[Literal["admin", "owner", "staff"]] = None
+    is_active: Optional[bool] = None
 
 
 class PasswordReset(BaseModel):
@@ -113,7 +263,7 @@ class LoginReq(BaseModel):
 
 class BeauticianIn(BaseModel):
     name: str
-    role: Optional[str] = "Stylist"  # e.g. Barber, Beautician, Stylist
+    role: Optional[str] = "Stylist"
     phone: Optional[str] = ""
     active: bool = True
 
@@ -154,8 +304,8 @@ class BillCreate(BaseModel):
 class MemberIn(BaseModel):
     name: str
     phone: str
-    joined_at: Optional[str] = None  # YYYY-MM-DD
-    expires_at: Optional[str] = None  # YYYY-MM-DD
+    joined_at: Optional[str] = None
+    expires_at: Optional[str] = None
     notes: Optional[str] = ""
     active: bool = True
 
@@ -167,7 +317,7 @@ class ExpenseIn(BaseModel):
     category: str = "Other"
     description: str
     amount: float
-    date: Optional[str] = None  # YYYY-MM-DD; defaults to today
+    date: Optional[str] = None
     notes: Optional[str] = ""
 
 
@@ -187,29 +337,35 @@ class StockMovementIn(BaseModel):
     item_id: str
     type: Literal["purchase", "use", "adjust"]
     qty: float
-    unit_cost: Optional[float] = None  # only for purchase
+    unit_cost: Optional[float] = None
     notes: Optional[str] = ""
 
 
 class CashClosingIn(BaseModel):
-    date: Optional[str] = None  # YYYY-MM-DD; defaults today
+    date: Optional[str] = None
     opening_balance: float = 0
     cash_expenses: float = 0
     actual_closing: float = 0
     notes: Optional[str] = ""
 
 
-# ============ Helpers ============
-MEMBER_DISCOUNT_PCT = 10.0
-MEMBER_MIN_PRICE = 100.0
+# ============ Business Helpers ============
+def _member_settings_for(tenant: Optional[dict]):
+    if not tenant:
+        return DEFAULT_MEMBER_DISCOUNT_PCT, DEFAULT_MEMBER_MIN_PRICE
+    return (
+        float(tenant.get("member_discount_pct") or DEFAULT_MEMBER_DISCOUNT_PCT),
+        float(tenant.get("member_min_price") or DEFAULT_MEMBER_MIN_PRICE),
+    )
 
 
-def apply_member_discount(items: List[BillItem], is_member: bool) -> List[dict]:
-    """Return list of item dicts with effective_discount_pct + member_applied flag."""
+def apply_member_discount(items: List[BillItem], is_member: bool, tenant: Optional[dict]) -> List[dict]:
+    """Return list of item dicts with effective_discount_pct + member_applied flag (tenant-configurable)."""
+    disc_pct, min_price = _member_settings_for(tenant)
     out = []
     for it in items:
         base = it.model_dump()
-        member_pct = MEMBER_DISCOUNT_PCT if (is_member and it.price > MEMBER_MIN_PRICE) else 0.0
+        member_pct = disc_pct if (is_member and it.price > min_price) else 0.0
         eff = max(float(it.discount_pct or 0), member_pct)
         base["effective_discount_pct"] = round(eff, 2)
         base["member_applied"] = member_pct > 0 and member_pct >= (it.discount_pct or 0)
@@ -229,71 +385,236 @@ def compute_bill_totals(items_effective: List[dict]):
     return round(subtotal, 2), round(total_discount, 2), services_net
 
 
+# ============ Tenant / Signup Routes ============
+@api_router.post("/tenants/signup")
+async def signup_tenant(body: TenantSignup):
+    """Public endpoint. Creates a new tenant + owner user + 7-day trial."""
+    email = body.email.lower().strip()
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if not body.business_name.strip():
+        raise HTTPException(status_code=400, detail="Business name required")
+
+    now = datetime.now(timezone.utc)
+    trial_end = now + timedelta(days=TRIAL_DAYS)
+    tenant_id = str(uuid.uuid4())
+    slug = slugify(body.business_name)
+    # Ensure unique slug
+    base_slug = slug
+    i = 1
+    while await db.tenants.find_one({"slug": slug}):
+        i += 1
+        slug = f"{base_slug}-{i}"
+
+    tenant_doc = {
+        "id": tenant_id,
+        "business_name": body.business_name.strip(),
+        "slug": slug,
+        "logo": None,
+        "owner_name": body.owner_name.strip(),
+        "email": email,
+        "phone": body.phone or "",
+        "address": "",
+        "city": body.city or "",
+        "state": "",
+        "country": body.country or "India",
+        "postal_code": "",
+        "website": "",
+        "currency": "INR",
+        "timezone": "Asia/Kolkata",
+        "tax_enabled": False,
+        "tax_number": "",
+        "tax_percentage": 0.0,
+        "invoice_prefix": "INV",
+        "receipt_header": "",
+        "receipt_footer": "Thank you! Powered by ParlourPilot",
+        "member_discount_pct": DEFAULT_MEMBER_DISCOUNT_PCT,
+        "member_min_price": DEFAULT_MEMBER_MIN_PRICE,
+        "subscription_plan": "trial",
+        "subscription_status": "trialing",
+        "trial_start_date": now.isoformat(),
+        "trial_end_date": trial_end.isoformat(),
+        "subscription_start_date": None,
+        "subscription_end_date": trial_end.isoformat(),
+        "is_active": True,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.tenants.insert_one(tenant_doc)
+
+    user_doc = {
+        "id": str(uuid.uuid4()),
+        "tenant_id": tenant_id,
+        "name": body.owner_name.strip(),
+        "email": email,
+        "password_hash": hash_password(body.password),
+        "role": "admin",  # owner (using "admin" for backward-compat with frontend role checks)
+        "is_active": True,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.users.insert_one(user_doc)
+
+    token = create_token(user_doc["id"], user_doc["role"], tenant_id)
+    return {
+        "token": token,
+        "user": {
+            "id": user_doc["id"],
+            "tenant_id": tenant_id,
+            "name": user_doc["name"],
+            "email": user_doc["email"],
+            "role": user_doc["role"],
+        },
+        "tenant": {k: v for k, v in tenant_doc.items() if k != "_id"},
+        "subscription": tenant_status(tenant_doc),
+    }
+
+
+@api_router.get("/tenants/me")
+async def get_my_tenant(user=Depends(get_current_user)):
+    if user.get("role") == "platform_admin":
+        return {"tenant": None, "subscription": None}
+    tenant = await load_tenant(tenant_id_of(user))
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {"tenant": tenant, "subscription": tenant_status(tenant)}
+
+
+@api_router.put("/tenants/me")
+async def update_my_tenant(body: TenantUpdate, user=Depends(require_admin)):
+    tid = tenant_id_of(user)
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        tenant = await load_tenant(tid)
+        return {"tenant": tenant, "subscription": tenant_status(tenant)}
+    updates["updated_at"] = now_iso()
+    tenant = await db.tenants.find_one_and_update(
+        {"id": tid}, {"$set": updates},
+        return_document=True, projection={"_id": 0},
+    )
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {"tenant": tenant, "subscription": tenant_status(tenant)}
+
+
+@api_router.get("/tenants/me/subscription")
+async def my_subscription(user=Depends(get_current_user)):
+    if user.get("role") == "platform_admin":
+        return {"status": "platform_admin"}
+    tenant = await load_tenant(tenant_id_of(user))
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant_status(tenant)
+
+
 # ============ Auth Routes ============
 @api_router.post("/auth/register")
 async def register(body: UserCreate, user=Depends(require_admin)):
-    existing = await db.users.find_one({"email": body.email.lower()})
+    """Admin creates a staff/user WITHIN their own tenant."""
+    tid = tenant_id_of(user)
+    email = body.email.lower()
+    existing = await db.users.find_one({"email": email, "tenant_id": tid})
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=400, detail="Email already registered in this salon")
+    role = "admin" if body.role in ("admin", "owner") else "staff"
     user_doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tid,
         "name": body.name,
-        "email": body.email.lower(),
+        "email": email,
         "password_hash": hash_password(body.password),
-        "role": body.role,
+        "role": role,
+        "is_active": True,
         "created_at": now_iso(),
+        "updated_at": now_iso(),
     }
     await db.users.insert_one(user_doc)
-    return {"id": user_doc["id"], "name": user_doc["name"], "email": user_doc["email"], "role": user_doc["role"]}
+    return {k: v for k, v in user_doc.items() if k not in ("_id", "password_hash")}
 
 
 @api_router.post("/auth/login")
 async def login(body: LoginReq):
-    user = await db.users.find_one({"email": body.email.lower()})
+    email = body.email.lower()
+    # Platform admin has no tenant_id — allow login
+    user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = create_token(user["id"], user["role"])
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Account disabled. Please contact administrator.")
+
+    token = create_token(user["id"], user["role"], user.get("tenant_id"))
+
+    subscription = None
+    tenant = None
+    if user.get("tenant_id"):
+        tenant = await load_tenant(user["tenant_id"])
+        if tenant:
+            subscription = tenant_status(tenant)
+
     return {
         "token": token,
-        "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]},
+        "user": {
+            "id": user["id"],
+            "tenant_id": user.get("tenant_id"),
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"],
+        },
+        "tenant": tenant,
+        "subscription": subscription,
     }
 
 
 @api_router.get("/auth/me")
 async def me(user=Depends(get_current_user)):
-    return user
+    tenant = None
+    subscription = None
+    if user.get("tenant_id"):
+        tenant = await load_tenant(user["tenant_id"])
+        if tenant:
+            subscription = tenant_status(tenant)
+    return {"user": user, "tenant": tenant, "subscription": subscription}
 
 
 @api_router.get("/auth/users")
 async def list_users(user=Depends(require_admin)):
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+    users = await db.users.find(tq(user), {"_id": 0, "password_hash": 0}).to_list(500)
     return users
 
 
 @api_router.put("/auth/users/{uid}")
 async def update_user(uid: str, body: UserUpdate, user=Depends(require_admin)):
-    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    tid = tenant_id_of(user)
+    target = await db.users.find_one({"id": uid, "tenant_id": tid}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     updates: dict = {}
-    if body.name is not None: updates["name"] = body.name.strip()
+    if body.name is not None:
+        updates["name"] = body.name.strip()
     if body.email is not None:
         email_lower = body.email.lower()
-        existing = await db.users.find_one({"email": email_lower, "id": {"$ne": uid}})
+        existing = await db.users.find_one({"email": email_lower, "tenant_id": tid, "id": {"$ne": uid}})
         if existing:
             raise HTTPException(status_code=400, detail="Email already in use")
         updates["email"] = email_lower
     if body.role is not None:
-        # Prevent demoting the last admin
-        if target["role"] == "admin" and body.role != "admin":
-            admin_count = await db.users.count_documents({"role": "admin"})
+        target_role = target.get("role")
+        new_role = "admin" if body.role in ("admin", "owner") else "staff"
+        # Prevent demoting the last admin/owner of this tenant
+        if target_role in ("admin", "owner") and new_role == "staff":
+            admin_count = await db.users.count_documents({"tenant_id": tid, "role": {"$in": ["admin", "owner"]}})
             if admin_count <= 1:
-                raise HTTPException(status_code=400, detail="Cannot demote the last admin")
-        updates["role"] = body.role
+                raise HTTPException(status_code=400, detail="Cannot demote the last owner/admin")
+        updates["role"] = new_role
+    if body.is_active is not None:
+        updates["is_active"] = bool(body.is_active)
     if not updates:
         return {k: v for k, v in target.items() if k != "password_hash"}
+    updates["updated_at"] = now_iso()
     result = await db.users.find_one_and_update(
-        {"id": uid}, {"$set": updates},
+        {"id": uid, "tenant_id": tid}, {"$set": updates},
         return_document=True, projection={"_id": 0, "password_hash": 0},
     )
     return result
@@ -301,37 +622,51 @@ async def update_user(uid: str, body: UserUpdate, user=Depends(require_admin)):
 
 @api_router.delete("/auth/users/{uid}")
 async def delete_user(uid: str, user=Depends(require_admin)):
+    tid = tenant_id_of(user)
     if uid == user["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
-    target = await db.users.find_one({"id": uid})
+    target = await db.users.find_one({"id": uid, "tenant_id": tid})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    if target["role"] == "admin":
-        admin_count = await db.users.count_documents({"role": "admin"})
+    if target.get("role") in ("admin", "owner"):
+        admin_count = await db.users.count_documents({"tenant_id": tid, "role": {"$in": ["admin", "owner"]}})
         if admin_count <= 1:
-            raise HTTPException(status_code=400, detail="Cannot delete the last admin")
+            raise HTTPException(status_code=400, detail="Cannot delete the last owner/admin")
+    await db.users.delete_one({"id": uid, "tenant_id": tid})
+    return {"ok": True}
+
+
+@api_router.delete("/auth/me")
+async def delete_own_account(user=Depends(get_current_user)):
+    """Self-service account deletion (App Store review compliant).
+    Owners cannot self-delete if they are the last admin; they should delete the tenant instead."""
+    uid = user["id"]
+    tid = user.get("tenant_id")
+    if tid and user.get("role") in ("admin", "owner"):
+        admin_count = await db.users.count_documents({"tenant_id": tid, "role": {"$in": ["admin", "owner"]}})
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="You are the last owner. Please transfer ownership or contact support to delete your account.")
     await db.users.delete_one({"id": uid})
     return {"ok": True}
 
 
 @api_router.post("/auth/users/{uid}/reset-password")
 async def admin_reset_password(uid: str, body: PasswordReset, user=Depends(require_admin)):
+    tid = tenant_id_of(user)
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-    target = await db.users.find_one({"id": uid})
+    target = await db.users.find_one({"id": uid, "tenant_id": tid})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    await db.users.update_one({"id": uid}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    await db.users.update_one({"id": uid, "tenant_id": tid}, {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso()}})
     return {"ok": True}
 
 
 @api_router.post("/auth/forgot-password")
 async def forgot_password(body: ForgotPasswordReq):
-    """Generate a password reset token. Returns token directly (no email service configured)."""
     email = body.email.lower()
     target = await db.users.find_one({"email": email})
     if not target:
-        # Return generic ok to avoid email enumeration, but include no token
         return {"ok": True, "email_sent": False, "message": "If the email exists, a reset link is available."}
     token = str(uuid.uuid4()).replace("-", "")
     expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
@@ -343,7 +678,6 @@ async def forgot_password(body: ForgotPasswordReq):
         "used": False,
         "created_at": now_iso(),
     })
-    # In production this would be emailed. For now returned inline so user can copy-paste.
     return {
         "ok": True,
         "email_sent": False,
@@ -370,22 +704,23 @@ async def reset_password(body: ResetPasswordReq):
         raise
     except Exception:
         pass
-    await db.users.update_one({"id": doc["user_id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    await db.users.update_one({"id": doc["user_id"]}, {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso()}})
     await db.password_resets.update_one({"token": body.token}, {"$set": {"used": True, "used_at": now_iso()}})
     return {"ok": True}
 
 
 # ============ Beauticians ============
 @api_router.get("/beauticians")
-async def list_beauticians(user=Depends(get_current_user)):
-    docs = await db.beauticians.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+async def list_beauticians(user=Depends(get_current_user_active)):
+    docs = await db.beauticians.find(tq(user), {"_id": 0}).sort("name", 1).to_list(500)
     return docs
 
 
 @api_router.post("/beauticians")
-async def create_beautician(body: BeauticianIn, user=Depends(require_admin)):
+async def create_beautician(body: BeauticianIn, user=Depends(require_admin_active)):
     doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tenant_id_of(user),
         "name": body.name,
         "role": body.role or "Stylist",
         "phone": body.phone or "",
@@ -397,12 +732,11 @@ async def create_beautician(body: BeauticianIn, user=Depends(require_admin)):
 
 
 @api_router.put("/beauticians/{bid}")
-async def update_beautician(bid: str, body: BeauticianIn, user=Depends(require_admin)):
+async def update_beautician(bid: str, body: BeauticianIn, user=Depends(require_admin_active)):
     result = await db.beauticians.find_one_and_update(
-        {"id": bid},
+        tq(user, {"id": bid}),
         {"$set": {"name": body.name, "role": body.role, "phone": body.phone or "", "active": body.active}},
-        return_document=True,
-        projection={"_id": 0},
+        return_document=True, projection={"_id": 0},
     )
     if not result:
         raise HTTPException(status_code=404, detail="Beautician not found")
@@ -410,8 +744,8 @@ async def update_beautician(bid: str, body: BeauticianIn, user=Depends(require_a
 
 
 @api_router.delete("/beauticians/{bid}")
-async def delete_beautician(bid: str, user=Depends(require_admin)):
-    result = await db.beauticians.delete_one({"id": bid})
+async def delete_beautician(bid: str, user=Depends(require_admin_active)):
+    result = await db.beauticians.delete_one(tq(user, {"id": bid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -419,15 +753,16 @@ async def delete_beautician(bid: str, user=Depends(require_admin)):
 
 # ============ Services ============
 @api_router.get("/services")
-async def list_services(user=Depends(get_current_user)):
-    docs = await db.services.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+async def list_services(user=Depends(get_current_user_active)):
+    docs = await db.services.find(tq(user), {"_id": 0}).sort("name", 1).to_list(500)
     return docs
 
 
 @api_router.post("/services")
-async def create_service(body: ServiceIn, user=Depends(require_admin)):
+async def create_service(body: ServiceIn, user=Depends(require_admin_active)):
     doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tenant_id_of(user),
         "name": body.name,
         "price": float(body.price),
         "category": body.category or "General",
@@ -439,12 +774,11 @@ async def create_service(body: ServiceIn, user=Depends(require_admin)):
 
 
 @api_router.put("/services/{sid}")
-async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin)):
+async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin_active)):
     result = await db.services.find_one_and_update(
-        {"id": sid},
+        tq(user, {"id": sid}),
         {"$set": {"name": body.name, "price": float(body.price), "category": body.category, "active": body.active}},
-        return_document=True,
-        projection={"_id": 0},
+        return_document=True, projection={"_id": 0},
     )
     if not result:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -452,44 +786,44 @@ async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin))
 
 
 @api_router.delete("/services/{sid}")
-async def delete_service(sid: str, user=Depends(require_admin)):
-    result = await db.services.delete_one({"id": sid})
+async def delete_service(sid: str, user=Depends(require_admin_active)):
+    result = await db.services.delete_one(tq(user, {"id": sid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
 
 
 # ============ Bills ============
-async def _next_bill_number() -> str:
+async def _next_bill_number(tid: str, prefix_override: Optional[str] = None) -> str:
     now = datetime.now(timezone.utc)
-    prefix = now.strftime("%Y%m%d")
-    count = await db.bills.count_documents({"bill_no": {"$regex": f"^{prefix}"}})
-    return f"{prefix}-{count + 1:04d}"
+    date_prefix = now.strftime("%Y%m%d")
+    count = await db.bills.count_documents({"tenant_id": tid, "bill_no": {"$regex": f".*{date_prefix}"}})
+    inv_prefix = (prefix_override or "").strip()
+    if inv_prefix:
+        return f"{inv_prefix}-{date_prefix}-{count + 1:04d}"
+    return f"{date_prefix}-{count + 1:04d}"
 
 
 @api_router.post("/bills")
-async def create_bill(body: BillCreate, user=Depends(get_current_user)):
+async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one service required")
+    tid = tenant_id_of(user)
+    tenant = await load_tenant(tid)
 
-    items_eff = apply_member_discount(body.items, body.is_member)
+    items_eff = apply_member_discount(body.items, body.is_member, tenant)
     subtotal, discount, services_net = compute_bill_totals(items_eff)
 
-    # Aggregate per-line tips from items (each item can carry tip_amount + tip_via)
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
     line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
     line_tip_cash = line_tip_total - line_tip_qr
 
-    # Validate payment amounts (services only; tip handled separately)
     if body.payment_mode == "cash":
-        cash_amt = services_net
-        qr_amt = 0.0
+        cash_amt = services_net; qr_amt = 0.0
     elif body.payment_mode == "qr":
-        cash_amt = 0.0
-        qr_amt = services_net
-    else:  # split
-        cash_amt = round(body.cash_amount, 2)
-        qr_amt = round(body.qr_amount, 2)
+        cash_amt = 0.0; qr_amt = services_net
+    else:
+        cash_amt = round(body.cash_amount, 2); qr_amt = round(body.qr_amount, 2)
         if abs((cash_amt + qr_amt) - services_net) > 0.01:
             raise HTTPException(status_code=400, detail=f"Split amounts must total {services_net}")
 
@@ -498,16 +832,16 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user)):
     if tip_amount > 0 and tip_via not in ("cash", "qr"):
         raise HTTPException(status_code=400, detail="tip_via required when tip_amount > 0")
 
-    # Combine bill-level tip with per-line tips (per-line takes precedence via items)
     total_tip_amount = round(tip_amount + line_tip_total, 2)
     total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
     total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
-
     grand_total = round(services_net + total_tip_amount, 2)
 
+    inv_prefix = (tenant or {}).get("invoice_prefix") or ""
     bill = {
         "id": str(uuid.uuid4()),
-        "bill_no": await _next_bill_number(),
+        "tenant_id": tid,
+        "bill_no": await _next_bill_number(tid, inv_prefix),
         "customer_name": body.customer_name or "Walk-in",
         "customer_phone": body.customer_phone or "",
         "items": items_eff,
@@ -537,15 +871,14 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user)):
 @api_router.get("/bills")
 async def list_bills(
     limit: int = 100,
-    date: Optional[str] = None,  # YYYY-MM-DD
+    date: Optional[str] = None,
     payment_mode: Optional[str] = None,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_active),
 ):
-    query: dict = {}
-    # Staff can only see today's bills
+    query: dict = tq(user)
     if user.get("role") == "staff":
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        query["created_at"] = {"$gte": f"{today}T00:00:00", "$lt": f"{today}T23:59:59.999999+00:00"}
+        t = today_str()
+        query["created_at"] = {"$gte": f"{t}T00:00:00", "$lt": f"{t}T23:59:59.999999+00:00"}
     elif date:
         query["created_at"] = {"$gte": f"{date}T00:00:00", "$lt": f"{date}T23:59:59.999999+00:00"}
     if payment_mode and payment_mode != "all":
@@ -555,15 +888,16 @@ async def list_bills(
 
 
 @api_router.put("/bills/{bid}")
-async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin)):
-    """Admin-only edit for an existing processed bill. Preserves bill_no & created_at."""
-    existing = await db.bills.find_one({"id": bid}, {"_id": 0})
+async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin_active)):
+    tid = tenant_id_of(user)
+    tenant = await load_tenant(tid)
+    existing = await db.bills.find_one({"id": bid, "tenant_id": tid}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Bill not found")
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one service required")
 
-    items_eff = apply_member_discount(body.items, body.is_member)
+    items_eff = apply_member_discount(body.items, body.is_member, tenant)
     subtotal, discount, services_net = compute_bill_totals(items_eff)
 
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
@@ -609,28 +943,27 @@ async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin)):
         "edited_at": now_iso(),
     }
     result = await db.bills.find_one_and_update(
-        {"id": bid}, {"$set": update},
+        {"id": bid, "tenant_id": tid}, {"$set": update},
         return_document=True, projection={"_id": 0},
     )
     return result
 
 
 @api_router.get("/bills/{bid}")
-async def get_bill(bid: str, user=Depends(get_current_user)):
-    doc = await db.bills.find_one({"id": bid}, {"_id": 0})
+async def get_bill(bid: str, user=Depends(get_current_user_active)):
+    doc = await db.bills.find_one(tq(user, {"id": bid}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Bill not found")
-    # Staff can only view today's bills
     if user.get("role") == "staff":
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if not doc["created_at"].startswith(today):
+        t = today_str()
+        if not doc["created_at"].startswith(t):
             raise HTTPException(status_code=403, detail="Staff can only view today's bills")
     return doc
 
 
 @api_router.delete("/bills/{bid}")
-async def delete_bill(bid: str, user=Depends(require_admin)):
-    result = await db.bills.delete_one({"id": bid})
+async def delete_bill(bid: str, user=Depends(require_admin_active)):
+    result = await db.bills.delete_one(tq(user, {"id": bid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -638,63 +971,52 @@ async def delete_bill(bid: str, user=Depends(require_admin)):
 
 # ============ Members ============
 def _member_status(m: dict) -> dict:
-    """Attach computed status: active | expired | expiring_soon | inactive."""
     m = dict(m)
     if not m.get("active"):
-        m["status"] = "inactive"
-        m["days_left"] = None
+        m["status"] = "inactive"; m["days_left"] = None
         return m
     exp = m.get("expires_at")
     if not exp:
-        m["status"] = "active"
-        m["days_left"] = None
+        m["status"] = "active"; m["days_left"] = None
         return m
     try:
         exp_dt = datetime.strptime(exp, "%Y-%m-%d")
         today = datetime.now(timezone.utc).replace(tzinfo=None)
         days_left = (exp_dt - today).days
         m["days_left"] = days_left
-        if days_left < 0:
-            m["status"] = "expired"
-        elif days_left <= 30:
-            m["status"] = "expiring_soon"
-        else:
-            m["status"] = "active"
+        if days_left < 0: m["status"] = "expired"
+        elif days_left <= 30: m["status"] = "expiring_soon"
+        else: m["status"] = "active"
     except Exception:
-        m["status"] = "active"
-        m["days_left"] = None
+        m["status"] = "active"; m["days_left"] = None
     return m
 
 
 @api_router.get("/members")
-async def list_members(user=Depends(get_current_user)):
-    docs = await db.members.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+async def list_members(user=Depends(get_current_user_active)):
+    docs = await db.members.find(tq(user), {"_id": 0}).sort("name", 1).to_list(1000)
     return [_member_status(m) for m in docs]
 
 
 @api_router.get("/members/lookup")
-async def lookup_member(phone: str, user=Depends(get_current_user)):
-    """Find an active membership by phone number. Used by New Bill auto-detect."""
+async def lookup_member(phone: str, user=Depends(get_current_user_active)):
     phone_clean = (phone or "").strip()
     if len(phone_clean) < 4:
         return {"found": False}
-    doc = await db.members.find_one({"phone": phone_clean}, {"_id": 0})
+    doc = await db.members.find_one(tq(user, {"phone": phone_clean}), {"_id": 0})
     if not doc:
         return {"found": False}
     m = _member_status(doc)
-    return {
-        "found": True,
-        "member": m,
-        "is_active_member": m["status"] in ("active", "expiring_soon"),
-    }
+    return {"found": True, "member": m, "is_active_member": m["status"] in ("active", "expiring_soon")}
 
 
 @api_router.post("/members")
-async def create_member(body: MemberIn, user=Depends(require_admin)):
+async def create_member(body: MemberIn, user=Depends(require_admin_active)):
+    tid = tenant_id_of(user)
     phone_clean = body.phone.strip()
-    if await db.members.find_one({"phone": phone_clean}):
+    if await db.members.find_one({"tenant_id": tid, "phone": phone_clean}):
         raise HTTPException(status_code=400, detail="Phone already registered as member")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = today_str()
     joined = body.joined_at or today
     if not body.expires_at:
         try:
@@ -706,6 +1028,7 @@ async def create_member(body: MemberIn, user=Depends(require_admin)):
         expires = body.expires_at
     doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tid,
         "name": body.name.strip(),
         "phone": phone_clean,
         "joined_at": joined,
@@ -719,9 +1042,9 @@ async def create_member(body: MemberIn, user=Depends(require_admin)):
 
 
 @api_router.put("/members/{mid}")
-async def update_member(mid: str, body: MemberIn, user=Depends(require_admin)):
+async def update_member(mid: str, body: MemberIn, user=Depends(require_admin_active)):
     result = await db.members.find_one_and_update(
-        {"id": mid},
+        tq(user, {"id": mid}),
         {"$set": {
             "name": body.name.strip(), "phone": body.phone.strip(),
             "joined_at": body.joined_at, "expires_at": body.expires_at,
@@ -735,16 +1058,28 @@ async def update_member(mid: str, body: MemberIn, user=Depends(require_admin)):
 
 
 @api_router.delete("/members/{mid}")
-async def delete_member(mid: str, user=Depends(require_admin)):
-    result = await db.members.delete_one({"id": mid})
+async def delete_member(mid: str, user=Depends(require_admin_active)):
+    result = await db.members.delete_one(tq(user, {"id": mid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
 
 
+@api_router.get("/members/expiring")
+async def members_expiring(days: int = 30, user=Depends(require_admin_active)):
+    docs = await db.members.find(tq(user, {"active": True}), {"_id": 0}).to_list(1000)
+    result = []
+    for m in docs:
+        m2 = _member_status(m)
+        if m2["status"] in ("expiring_soon", "expired"):
+            result.append(m2)
+    result.sort(key=lambda x: x.get("days_left") if x.get("days_left") is not None else 9999)
+    return result
+
+
 # ============ Expenses ============
 @api_router.get("/expenses/categories")
-async def expense_categories(user=Depends(get_current_user)):
+async def expense_categories(user=Depends(get_current_user_active)):
     return EXPENSE_CATEGORIES
 
 
@@ -753,12 +1088,11 @@ async def list_expenses(
     date: Optional[str] = None,
     month: Optional[str] = None,
     limit: int = 200,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_active),
 ):
-    query: dict = {}
-    # Staff can only see today's expenses
+    query: dict = tq(user)
     if user.get("role") == "staff":
-        query["date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        query["date"] = today_str()
     elif date:
         query["date"] = date
     elif month:
@@ -768,15 +1102,16 @@ async def list_expenses(
 
 
 @api_router.post("/expenses")
-async def create_expense(body: ExpenseIn, user=Depends(get_current_user)):
+async def create_expense(body: ExpenseIn, user=Depends(get_current_user_active)):
     if not (body.amount and body.amount > 0):
         raise HTTPException(status_code=400, detail="Amount must be > 0")
     if not body.description.strip():
         raise HTTPException(status_code=400, detail="Description required")
     cat = body.category if body.category in EXPENSE_CATEGORIES else "Other"
-    d = body.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    d = body.date or today_str()
     doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tenant_id_of(user),
         "category": cat,
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
@@ -791,16 +1126,16 @@ async def create_expense(body: ExpenseIn, user=Depends(get_current_user)):
 
 
 @api_router.put("/expenses/{eid}")
-async def update_expense(eid: str, body: ExpenseIn, user=Depends(require_admin)):
+async def update_expense(eid: str, body: ExpenseIn, user=Depends(require_admin_active)):
     if not (body.amount and body.amount > 0):
         raise HTTPException(status_code=400, detail="Amount must be > 0")
     cat = body.category if body.category in EXPENSE_CATEGORIES else "Other"
     result = await db.expenses.find_one_and_update(
-        {"id": eid},
+        tq(user, {"id": eid}),
         {"$set": {
             "category": cat, "description": body.description.strip(),
             "amount": round(float(body.amount), 2),
-            "date": body.date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "date": body.date or today_str(),
             "notes": body.notes or "",
         }},
         return_document=True, projection={"_id": 0},
@@ -811,8 +1146,8 @@ async def update_expense(eid: str, body: ExpenseIn, user=Depends(require_admin))
 
 
 @api_router.delete("/expenses/{eid}")
-async def delete_expense(eid: str, user=Depends(require_admin)):
-    result = await db.expenses.delete_one({"id": eid})
+async def delete_expense(eid: str, user=Depends(require_admin_active)):
+    result = await db.expenses.delete_one(tq(user, {"id": eid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -820,30 +1155,32 @@ async def delete_expense(eid: str, user=Depends(require_admin)):
 
 # ============ Stock / Inventory ============
 @api_router.get("/stock/units")
-async def stock_units(user=Depends(get_current_user)):
+async def stock_units(user=Depends(get_current_user_active)):
     return STOCK_UNITS
 
 
 @api_router.get("/stock")
-async def list_stock(user=Depends(get_current_user)):
-    docs = await db.stock_items.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+async def list_stock(user=Depends(get_current_user_active)):
+    docs = await db.stock_items.find(tq(user), {"_id": 0}).sort("name", 1).to_list(500)
     for d in docs:
         d["low_stock"] = d.get("current_qty", 0) <= d.get("min_qty", 0)
     return docs
 
 
 @api_router.get("/stock/low")
-async def list_low_stock(user=Depends(get_current_user)):
-    docs = await db.stock_items.find({}, {"_id": 0}).to_list(500)
+async def list_low_stock(user=Depends(get_current_user_active)):
+    docs = await db.stock_items.find(tq(user), {"_id": 0}).to_list(500)
     return [d for d in docs if d.get("current_qty", 0) <= d.get("min_qty", 0)]
 
 
 @api_router.post("/stock")
-async def create_stock(body: StockItemIn, user=Depends(require_admin)):
-    if await db.stock_items.find_one({"name": body.name.strip()}):
+async def create_stock(body: StockItemIn, user=Depends(require_admin_active)):
+    tid = tenant_id_of(user)
+    if await db.stock_items.find_one({"tenant_id": tid, "name": body.name.strip()}):
         raise HTTPException(status_code=400, detail="Item with this name already exists")
     doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tid,
         "name": body.name.strip(),
         "unit": body.unit if body.unit in STOCK_UNITS else "piece",
         "current_qty": round(float(body.current_qty or 0), 2),
@@ -857,9 +1194,9 @@ async def create_stock(body: StockItemIn, user=Depends(require_admin)):
 
 
 @api_router.put("/stock/{sid}")
-async def update_stock(sid: str, body: StockItemIn, user=Depends(require_admin)):
+async def update_stock(sid: str, body: StockItemIn, user=Depends(require_admin_active)):
     result = await db.stock_items.find_one_and_update(
-        {"id": sid},
+        tq(user, {"id": sid}),
         {"$set": {
             "name": body.name.strip(),
             "unit": body.unit if body.unit in STOCK_UNITS else "piece",
@@ -876,17 +1213,19 @@ async def update_stock(sid: str, body: StockItemIn, user=Depends(require_admin))
 
 
 @api_router.delete("/stock/{sid}")
-async def delete_stock(sid: str, user=Depends(require_admin)):
-    result = await db.stock_items.delete_one({"id": sid})
+async def delete_stock(sid: str, user=Depends(require_admin_active)):
+    tid = tenant_id_of(user)
+    result = await db.stock_items.delete_one({"id": sid, "tenant_id": tid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
-    await db.stock_movements.delete_many({"item_id": sid})
+    await db.stock_movements.delete_many({"item_id": sid, "tenant_id": tid})
     return {"ok": True}
 
 
 @api_router.post("/stock/movement")
-async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_user)):
-    item = await db.stock_items.find_one({"id": body.item_id}, {"_id": 0})
+async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_user_active)):
+    tid = tenant_id_of(user)
+    item = await db.stock_items.find_one({"id": body.item_id, "tenant_id": tid}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Stock item not found")
     if not (body.qty and body.qty > 0):
@@ -900,7 +1239,7 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
         new_qty = round(item["current_qty"] - body.qty, 2)
         unit_cost = 0
         total_cost = 0
-    else:  # adjust — set qty to body.qty absolute
+    else:
         new_qty = round(float(body.qty), 2)
         unit_cost = 0
         total_cost = 0
@@ -908,11 +1247,12 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
     update = {"current_qty": new_qty}
     if body.type == "purchase" and unit_cost > 0:
         update["unit_cost"] = unit_cost
-    await db.stock_items.update_one({"id": body.item_id}, {"$set": update})
+    await db.stock_items.update_one({"id": body.item_id, "tenant_id": tid}, {"$set": update})
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = today_str()
     mv = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tid,
         "item_id": body.item_id,
         "item_name": item["name"],
         "unit": item["unit"],
@@ -929,11 +1269,11 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
     }
     await db.stock_movements.insert_one(mv)
 
-    # Auto-create Material expense on purchase
     expense_created = None
     if body.type == "purchase" and total_cost > 0:
         exp = {
             "id": str(uuid.uuid4()),
+            "tenant_id": tid,
             "category": "Material",
             "description": f"{item['name']} x{body.qty}{item['unit']}",
             "amount": total_cost,
@@ -951,17 +1291,15 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
 
 
 @api_router.get("/stock/{sid}/movements")
-async def list_movements(sid: str, limit: int = 50, user=Depends(get_current_user)):
-    docs = await db.stock_movements.find({"item_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+async def list_movements(sid: str, limit: int = 50, user=Depends(get_current_user_active)):
+    docs = await db.stock_movements.find(tq(user, {"item_id": sid}), {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
 
 
-
 # ============ Cash Closing ============
-async def _compute_day_totals(d: str):
-    """Compute totals for a given date (UTC yyyy-mm-dd)."""
+async def _compute_day_totals(tid: str, d: str):
     bills = await db.bills.find(
-        {"created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}},
+        {"tenant_id": tid, "created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}},
         {"_id": 0},
     ).to_list(3000)
     services_net = sum(b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0)) for b in bills)
@@ -969,7 +1307,7 @@ async def _compute_day_totals(d: str):
     tip_qr = sum(b.get("tip_qr_total", b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0) for b in bills)
     cash_sales = sum(b.get("cash_amount", 0) for b in bills) - tip_qr
     upi_sales = sum(b.get("qr_amount", 0) for b in bills) + tip_qr
-    exps = await db.expenses.find({"date": d}, {"_id": 0}).to_list(500)
+    exps = await db.expenses.find({"tenant_id": tid, "date": d}, {"_id": 0}).to_list(500)
     total_expenses = sum(e["amount"] for e in exps)
     return {
         "bills_count": len(bills),
@@ -982,28 +1320,21 @@ async def _compute_day_totals(d: str):
 
 
 @api_router.get("/cash-closing/summary")
-async def cash_closing_summary(date: Optional[str] = None, user=Depends(get_current_user)):
-    d = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    totals = await _compute_day_totals(d)
-
-    # Suggested opening = previous day's actual closing
-    prev = await db.cash_closings.find_one({"date": {"$lt": d}}, sort=[("date", -1)], projection={"_id": 0})
+async def cash_closing_summary(date: Optional[str] = None, user=Depends(get_current_user_active)):
+    tid = tenant_id_of(user)
+    d = date or today_str()
+    totals = await _compute_day_totals(tid, d)
+    prev = await db.cash_closings.find_one({"tenant_id": tid, "date": {"$lt": d}}, sort=[("date", -1)], projection={"_id": 0})
     suggested_opening = prev["actual_closing"] if prev else 0
-
-    existing = await db.cash_closings.find_one({"date": d}, projection={"_id": 0})
-
-    return {
-        "date": d,
-        **totals,
-        "suggested_opening": round(suggested_opening, 2),
-        "existing_closing": existing,
-    }
+    existing = await db.cash_closings.find_one({"tenant_id": tid, "date": d}, projection={"_id": 0})
+    return {"date": d, **totals, "suggested_opening": round(suggested_opening, 2), "existing_closing": existing}
 
 
 @api_router.post("/cash-closing")
-async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user)):
-    d = body.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    totals = await _compute_day_totals(d)
+async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user_active)):
+    tid = tenant_id_of(user)
+    d = body.date or today_str()
+    totals = await _compute_day_totals(tid, d)
 
     opening = round(float(body.opening_balance or 0), 2)
     cash_exp = round(float(body.cash_expenses or 0), 2)
@@ -1013,6 +1344,7 @@ async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user
 
     doc = {
         "id": str(uuid.uuid4()),
+        "tenant_id": tid,
         "date": d,
         "opening_balance": opening,
         "cash_sales": totals["cash_sales"],
@@ -1030,20 +1362,19 @@ async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user
         "submitted_by_name": user["name"],
         "submitted_at": now_iso(),
     }
-    # One closing per date — upsert
-    await db.cash_closings.replace_one({"date": d}, doc, upsert=True)
+    await db.cash_closings.replace_one({"tenant_id": tid, "date": d}, doc, upsert=True)
     return doc
 
 
 @api_router.get("/cash-closing")
-async def list_cash_closings(limit: int = 30, user=Depends(get_current_user)):
-    docs = await db.cash_closings.find({}, {"_id": 0}).sort("date", -1).to_list(limit)
+async def list_cash_closings(limit: int = 30, user=Depends(get_current_user_active)):
+    docs = await db.cash_closings.find(tq(user), {"_id": 0}).sort("date", -1).to_list(limit)
     return docs
 
 
 @api_router.delete("/cash-closing/{cid}")
-async def delete_cash_closing(cid: str, user=Depends(require_admin)):
-    result = await db.cash_closings.delete_one({"id": cid})
+async def delete_cash_closing(cid: str, user=Depends(require_admin_active)):
+    result = await db.cash_closings.delete_one(tq(user, {"id": cid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -1051,14 +1382,14 @@ async def delete_cash_closing(cid: str, user=Depends(require_admin)):
 
 # ============ Reports ============
 @api_router.get("/reports/summary")
-async def reports_summary(user=Depends(get_current_user)):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+async def reports_summary(user=Depends(get_current_user_active)):
+    tid = tenant_id_of(user)
+    today = today_str()
     month = datetime.now(timezone.utc).strftime("%Y-%m")
 
-    all_bills = await db.bills.find({}, {"_id": 0}).to_list(10000)
+    all_bills = await db.bills.find({"tenant_id": tid}, {"_id": 0}).to_list(10000)
 
     def revenue(b):
-        # Salon revenue excludes tips
         return b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
 
     today_bills = [b for b in all_bills if b["created_at"].startswith(today)]
@@ -1069,18 +1400,13 @@ async def reports_summary(user=Depends(get_current_user)):
     month_total = sum(revenue(b) for b in month_bills)
     month_count = len(month_bills)
 
-    # Cash counter net = services cash in - tips paid out to beauticians via QR
     def tip_qr_of(b):
-        # Prefer aggregate field, fallback to bill-level tip_via
         if "tip_qr_total" in b: return b.get("tip_qr_total", 0)
         return b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0
-    today_cash = sum(b.get("cash_amount", 0) for b in today_bills) \
-        - sum(tip_qr_of(b) for b in today_bills)
-    today_qr = sum(b.get("qr_amount", 0) for b in today_bills) \
-        + sum(tip_qr_of(b) for b in today_bills)
+    today_cash = sum(b.get("cash_amount", 0) for b in today_bills) - sum(tip_qr_of(b) for b in today_bills)
+    today_qr = sum(b.get("qr_amount", 0) for b in today_bills) + sum(tip_qr_of(b) for b in today_bills)
     today_tips = sum(b.get("tip_amount", 0) for b in today_bills)
 
-    # Per beautician (month) — services revenue distribution
     per_beautician: dict = {}
     for b in month_bills:
         line_totals = []
@@ -1096,7 +1422,6 @@ async def reports_summary(user=Depends(get_current_user)):
             per_beautician.setdefault(name, {"name": name, "amount": 0.0, "bills": 0, "tips": 0.0})
             per_beautician[name]["amount"] += share
             per_beautician[name]["bills"] += 1
-        # Tips attributed to the tip beautician
         if b.get("tip_amount", 0) > 0 and b.get("tip_beautician_name"):
             n = b["tip_beautician_name"]
             per_beautician.setdefault(n, {"name": n, "amount": 0.0, "bills": 0, "tips": 0.0})
@@ -1107,27 +1432,23 @@ async def reports_summary(user=Depends(get_current_user)):
         key=lambda x: x["amount"] + x["tips"], reverse=True
     )
 
-    # Expenses
-    all_exp = await db.expenses.find({}, {"_id": 0}).to_list(20000)
+    all_exp = await db.expenses.find({"tenant_id": tid}, {"_id": 0}).to_list(20000)
     today_exp = sum(e["amount"] for e in all_exp if e["date"] == today)
     month_exp = sum(e["amount"] for e in all_exp if e["date"].startswith(month))
     exp_by_cat_today: dict = {}
     for e in all_exp:
-        if e["date"] != today:
-            continue
+        if e["date"] != today: continue
         exp_by_cat_today[e["category"]] = exp_by_cat_today.get(e["category"], 0) + e["amount"]
 
-    # Low stock alert
-    stock_docs = await db.stock_items.find({}, {"_id": 0}).to_list(500)
+    stock_docs = await db.stock_items.find({"tenant_id": tid}, {"_id": 0}).to_list(500)
     low_stock = [
         {"id": s["id"], "name": s["name"], "current_qty": s.get("current_qty", 0), "min_qty": s.get("min_qty", 0), "unit": s.get("unit", "piece")}
         for s in stock_docs if s.get("current_qty", 0) <= s.get("min_qty", 0)
     ]
 
-    # Expiring members alert (only if admin)
     expiring_members = []
-    if user.get("role") == "admin":
-        mem_docs = await db.members.find({"active": True}, {"_id": 0}).to_list(1000)
+    if user.get("role") in ("admin", "owner"):
+        mem_docs = await db.members.find({"tenant_id": tid, "active": True}, {"_id": 0}).to_list(1000)
         for m in mem_docs:
             m2 = _member_status(m)
             if m2["status"] in ("expiring_soon", "expired"):
@@ -1161,12 +1482,12 @@ async def reports_summary(user=Depends(get_current_user)):
 
 
 @api_router.get("/reports/daily")
-async def reports_daily(days: int = 30, user=Depends(get_current_user)):
-    # Staff can only see last 2 days
+async def reports_daily(days: int = 30, user=Depends(get_current_user_active)):
+    tid = tenant_id_of(user)
     if user.get("role") == "staff":
         days = min(days, 2)
-    all_bills = await db.bills.find({}, {"_id": 0}).to_list(20000)
-    all_exp = await db.expenses.find({}, {"_id": 0}).to_list(20000)
+    all_bills = await db.bills.find({"tenant_id": tid}, {"_id": 0}).to_list(20000)
+    all_exp = await db.expenses.find({"tenant_id": tid}, {"_id": 0}).to_list(20000)
     by_day: dict = {}
     for b in all_bills:
         day = b["created_at"][:10]
@@ -1196,12 +1517,12 @@ async def reports_daily(days: int = 30, user=Depends(get_current_user)):
 
 @api_router.get("/reports/range")
 async def reports_range(
-    preset: Optional[str] = None,  # today|yesterday|week|month|last_month|custom
-    from_date: Optional[str] = None,  # YYYY-MM-DD
+    preset: Optional[str] = None,
+    from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_active),
 ):
-    """Aggregated report for a date range. Staff limited to last 2 days."""
+    tid = tenant_id_of(user)
     today = datetime.now(timezone.utc).date()
 
     if preset == "today":
@@ -1209,17 +1530,14 @@ async def reports_range(
     elif preset == "yesterday":
         d_from = d_to = today - timedelta(days=1)
     elif preset == "week":
-        d_from = today - timedelta(days=6)
-        d_to = today
+        d_from = today - timedelta(days=6); d_to = today
     elif preset == "month":
-        d_from = today.replace(day=1)
-        d_to = today
+        d_from = today.replace(day=1); d_to = today
     elif preset == "last_month":
         first_this = today.replace(day=1)
         last_prev = first_this - timedelta(days=1)
-        d_from = last_prev.replace(day=1)
-        d_to = last_prev
-    else:  # custom
+        d_from = last_prev.replace(day=1); d_to = last_prev
+    else:
         try:
             d_from = datetime.strptime(from_date, "%Y-%m-%d").date() if from_date else today
             d_to = datetime.strptime(to_date, "%Y-%m-%d").date() if to_date else today
@@ -1229,28 +1547,23 @@ async def reports_range(
     if d_from > d_to:
         d_from, d_to = d_to, d_from
 
-    # Staff clamp: only allow last 2 days
     if user.get("role") == "staff":
-        earliest = today - timedelta(days=1)  # today + yesterday
-        if d_from < earliest:
-            d_from = earliest
-        if d_to < earliest:
-            d_to = earliest
+        earliest = today - timedelta(days=1)
+        if d_from < earliest: d_from = earliest
+        if d_to < earliest: d_to = earliest
 
     from_str = d_from.strftime("%Y-%m-%d")
     to_str = d_to.strftime("%Y-%m-%d")
 
-    # Fetch bills in range
     bills = await db.bills.find(
-        {"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}},
+        {"tenant_id": tid, "created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}},
         {"_id": 0},
     ).to_list(20000)
     exps = await db.expenses.find(
-        {"date": {"$gte": from_str, "$lte": to_str}},
+        {"tenant_id": tid, "date": {"$gte": from_str, "$lte": to_str}},
         {"_id": 0},
     ).to_list(20000)
 
-    # Aggregate per day
     by_day: dict = {}
     cur = d_from
     while cur <= d_to:
@@ -1259,8 +1572,7 @@ async def reports_range(
 
     for b in bills:
         day = b["created_at"][:10]
-        if day not in by_day:
-            continue
+        if day not in by_day: continue
         rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
         by_day[day]["total"] += rev
         by_day[day]["count"] += 1
@@ -1270,8 +1582,7 @@ async def reports_range(
         by_day[day]["qr"] += b.get("qr_amount", 0) + (tip if tip_via == "qr" else 0)
         by_day[day]["tips"] += tip
     for e in exps:
-        if e["date"] in by_day:
-            by_day[e["date"]]["expenses"] += e["amount"]
+        if e["date"] in by_day: by_day[e["date"]]["expenses"] += e["amount"]
 
     rows = sorted(by_day.values(), key=lambda x: x["date"], reverse=True)
     for r in rows:
@@ -1291,66 +1602,219 @@ async def reports_range(
         "expenses": round(sum(r["expenses"] for r in rows), 2),
         "net": round(sum(r["net"] for r in rows), 2),
     }
-
-    return {
-        "from": from_str,
-        "to": to_str,
-        "days": len(rows),
-        "totals": totals,
-        "rows": rows,
-    }
+    return {"from": from_str, "to": to_str, "days": len(rows), "totals": totals, "rows": rows}
 
 
-@api_router.get("/members/expiring")
-async def members_expiring(days: int = 30, user=Depends(require_admin)):
-    """Members expiring within the next `days` days (or already expired)."""
-    docs = await db.members.find({"active": True}, {"_id": 0}).to_list(1000)
-    result = []
-    for m in docs:
-        m2 = _member_status(m)
-        if m2["status"] in ("expiring_soon", "expired"):
-            result.append(m2)
-    result.sort(key=lambda x: x.get("days_left") if x.get("days_left") is not None else 9999)
-    return result
+# ============ Platform Admin (SaaS-level) ============
+@api_router.get("/platform/tenants")
+async def platform_list_tenants(user=Depends(require_platform_admin)):
+    docs = await db.tenants.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    for d in docs:
+        d["subscription"] = tenant_status(d)
+        d["user_count"] = await db.users.count_documents({"tenant_id": d["id"]})
+        d["bills_count"] = await db.bills.count_documents({"tenant_id": d["id"]})
+    return docs
 
 
+@api_router.get("/platform/stats")
+async def platform_stats(user=Depends(require_platform_admin)):
+    tenant_count = await db.tenants.count_documents({})
+    active = await db.tenants.count_documents({"is_active": True, "subscription_status": {"$in": ["active", "trialing"]}})
+    expired = await db.tenants.count_documents({"subscription_status": "expired"})
+    users = await db.users.count_documents({})
+    bills = await db.bills.count_documents({})
+    return {"tenants": tenant_count, "active_tenants": active, "expired_tenants": expired, "users": users, "bills": bills}
 
-# ============ Seed ============
+
+@api_router.put("/platform/tenants/{tid}")
+async def platform_update_tenant(tid: str, body: TenantUpdate, user=Depends(require_platform_admin)):
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        tenant = await load_tenant(tid)
+        return {"tenant": tenant}
+    updates["updated_at"] = now_iso()
+    tenant = await db.tenants.find_one_and_update({"id": tid}, {"$set": updates}, return_document=True, projection={"_id": 0})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {"tenant": tenant}
+
+
+class PlatformSubscriptionUpdate(BaseModel):
+    subscription_status: Optional[Literal["trialing", "active", "expired", "suspended", "cancelled"]] = None
+    subscription_plan: Optional[str] = None
+    extend_days: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+@api_router.post("/platform/tenants/{tid}/subscription")
+async def platform_set_subscription(tid: str, body: PlatformSubscriptionUpdate, user=Depends(require_platform_admin)):
+    tenant = await load_tenant(tid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    updates: dict = {"updated_at": now_iso()}
+    if body.subscription_status is not None:
+        updates["subscription_status"] = body.subscription_status
+    if body.subscription_plan is not None:
+        updates["subscription_plan"] = body.subscription_plan
+    if body.is_active is not None:
+        updates["is_active"] = bool(body.is_active)
+    if body.extend_days:
+        current_end = tenant.get("subscription_end_date") or tenant.get("trial_end_date") or datetime.now(timezone.utc).isoformat()
+        try:
+            end_dt = datetime.fromisoformat(current_end.replace("Z", "+00:00"))
+        except Exception:
+            end_dt = datetime.now(timezone.utc)
+        if end_dt < datetime.now(timezone.utc):
+            end_dt = datetime.now(timezone.utc)
+        new_end = end_dt + timedelta(days=body.extend_days)
+        updates["subscription_end_date"] = new_end.isoformat()
+        updates["subscription_status"] = updates.get("subscription_status", "active")
+        if not tenant.get("subscription_start_date"):
+            updates["subscription_start_date"] = datetime.now(timezone.utc).isoformat()
+    await db.tenants.update_one({"id": tid}, {"$set": updates})
+    tenant2 = await load_tenant(tid)
+    return {"tenant": tenant2, "subscription": tenant_status(tenant2)}
+
+
+# ============ Seed (legacy demo API — still tenant-aware) ============
 @api_router.post("/seed")
 async def seed_data():
-    """Idempotent seed for demo data. Safe to call multiple times."""
-    created = {"users": 0, "beauticians": 0, "services": 0}
+    """Legacy endpoint kept for compatibility. Creates the default Glow Up tenant only if empty."""
+    await ensure_glow_up_tenant()
+    return {"ok": True}
 
-    # Admin
-    if not await db.users.find_one({"email": "admin@glowup.com"}):
-        admin_password = os.environ.get("ADMIN_SEED_PASSWORD")
-        if admin_password:
-            await db.users.insert_one({
-                "id": str(uuid.uuid4()),
-                "name": "Salon Admin",
-                "email": "admin@glowup.com",
-                "password_hash": hash_password(admin_password),
-                "role": "admin",
-                "created_at": now_iso(),
-            })
-            created["users"] += 1
-        else:
-            logger.warning("ADMIN_SEED_PASSWORD env var not set; skipping admin seed")
 
-    if not await db.users.find_one({"email": "staff@glowup.com"}):
-        staff_password = os.environ.get("STAFF_SEED_PASSWORD")
-        if staff_password:
-            await db.users.insert_one({
-                "id": str(uuid.uuid4()),
-                "name": "Front Desk",
-                "email": "staff@glowup.com",
-                "password_hash": hash_password(staff_password),
-                "role": "staff",
-                "created_at": now_iso(),
-            })
-            created["users"] += 1
-        else:
-            logger.warning("STAFF_SEED_PASSWORD env var not set; skipping staff seed")
+@api_router.get("/")
+async def root():
+    return {"message": "ParlourPilot SaaS API", "status": "ok"}
+
+
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============ Startup: Migration + Seed + Indexes ============
+GLOW_UP_TENANT_ID = "glowup-tenant-0001"
+
+
+async def ensure_indexes():
+    """Create tenant-scoped indexes on all collections."""
+    try:
+        await db.tenants.create_index("id", unique=True)
+        await db.tenants.create_index("slug", unique=True)
+        await db.users.create_index("id", unique=True)
+        await db.users.create_index([("email", 1)])
+        await db.users.create_index([("tenant_id", 1), ("email", 1)])
+        await db.bills.create_index([("tenant_id", 1), ("created_at", -1)])
+        await db.bills.create_index([("tenant_id", 1), ("bill_no", 1)])
+        await db.services.create_index([("tenant_id", 1), ("name", 1)])
+        await db.beauticians.create_index([("tenant_id", 1), ("name", 1)])
+        await db.members.create_index([("tenant_id", 1), ("phone", 1)])
+        await db.expenses.create_index([("tenant_id", 1), ("date", -1)])
+        await db.stock_items.create_index([("tenant_id", 1), ("name", 1)])
+        await db.stock_movements.create_index([("tenant_id", 1), ("created_at", -1)])
+        await db.cash_closings.create_index([("tenant_id", 1), ("date", -1)])
+        logger.info("Indexes ensured")
+    except Exception as e:
+        logger.warning(f"Index creation warning: {e}")
+
+
+async def ensure_glow_up_tenant():
+    """Create the default 'Glow Up Unisex Salon' tenant and backfill existing data."""
+    existing = await db.tenants.find_one({"id": GLOW_UP_TENANT_ID})
+    if not existing:
+        now = datetime.now(timezone.utc)
+        # Give the Glow Up tenant a long grace period (so existing users don't hit trial expiry)
+        far_future = (now + timedelta(days=365 * 10)).isoformat()
+        doc = {
+            "id": GLOW_UP_TENANT_ID,
+            "business_name": "Glow Up Unisex Salon",
+            "slug": "glow-up-unisex-salon",
+            "logo": None,
+            "owner_name": "Salon Admin",
+            "email": "admin@glowup.com",
+            "phone": "",
+            "address": "Sullia",
+            "city": "Sullia",
+            "state": "Karnataka",
+            "country": "India",
+            "postal_code": "",
+            "website": "",
+            "currency": "INR",
+            "timezone": "Asia/Kolkata",
+            "tax_enabled": False,
+            "tax_number": "",
+            "tax_percentage": 0.0,
+            "invoice_prefix": "GLOW",
+            "receipt_header": "",
+            "receipt_footer": "Thank you! Powered by ParlourPilot",
+            "member_discount_pct": DEFAULT_MEMBER_DISCOUNT_PCT,
+            "member_min_price": DEFAULT_MEMBER_MIN_PRICE,
+            "subscription_plan": "professional",
+            "subscription_status": "active",
+            "trial_start_date": now.isoformat(),
+            "trial_end_date": far_future,
+            "subscription_start_date": now.isoformat(),
+            "subscription_end_date": far_future,
+            "is_active": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.tenants.insert_one(doc)
+        logger.info("Created default Glow Up tenant")
+
+    # Backfill tenant_id on all existing docs that lack it
+    collections = [
+        "users", "bills", "services", "beauticians", "members",
+        "expenses", "stock_items", "stock_movements", "cash_closings",
+    ]
+    for c in collections:
+        res = await db[c].update_many({"tenant_id": {"$exists": False}}, {"$set": {"tenant_id": GLOW_UP_TENANT_ID}})
+        if res.modified_count:
+            logger.info(f"Backfilled tenant_id on {res.modified_count} docs in {c}")
+
+    # Ensure users are_active flag set
+    await db.users.update_many({"is_active": {"$exists": False}}, {"$set": {"is_active": True}})
+
+
+async def seed_initial_users():
+    """Seed default admin/staff for Glow Up tenant only if no users exist yet."""
+    if await db.users.count_documents({}) > 0:
+        return
+    admin_pw = os.environ.get("ADMIN_SEED_PASSWORD")
+    staff_pw = os.environ.get("STAFF_SEED_PASSWORD")
+
+    if admin_pw:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": GLOW_UP_TENANT_ID,
+            "name": "Salon Admin",
+            "email": "admin@glowup.com",
+            "password_hash": hash_password(admin_pw),
+            "role": "admin",
+            "is_active": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        })
+    if staff_pw:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": GLOW_UP_TENANT_ID,
+            "name": "Front Desk",
+            "email": "staff@glowup.com",
+            "password_hash": hash_password(staff_pw),
+            "role": "staff",
+            "is_active": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        })
 
     beauticians = [
         {"name": "Ravi Kumar", "role": "Barber"},
@@ -1363,16 +1827,16 @@ async def seed_data():
         {"name": "Priya Hegde", "role": "Stylist"},
     ]
     for b in beauticians:
-        if not await db.beauticians.find_one({"name": b["name"]}):
+        if not await db.beauticians.find_one({"tenant_id": GLOW_UP_TENANT_ID, "name": b["name"]}):
             await db.beauticians.insert_one({
                 "id": str(uuid.uuid4()),
+                "tenant_id": GLOW_UP_TENANT_ID,
                 "name": b["name"],
                 "role": b["role"],
                 "phone": "",
                 "active": True,
                 "created_at": now_iso(),
             })
-            created["beauticians"] += 1
 
     services = [
         {"name": "Haircut (Men)", "price": 150, "category": "Hair"},
@@ -1394,48 +1858,52 @@ async def seed_data():
         {"name": "Bridal Makeup", "price": 5000, "category": "Bridal"},
     ]
     for s in services:
-        if not await db.services.find_one({"name": s["name"]}):
+        if not await db.services.find_one({"tenant_id": GLOW_UP_TENANT_ID, "name": s["name"]}):
             await db.services.insert_one({
                 "id": str(uuid.uuid4()),
+                "tenant_id": GLOW_UP_TENANT_ID,
                 "name": s["name"],
                 "price": float(s["price"]),
                 "category": s["category"],
                 "active": True,
                 "created_at": now_iso(),
             })
-            created["services"] += 1
-
-    return {"seeded": created, "ok": True}
 
 
-@api_router.get("/")
-async def root():
-    return {"message": "GLOW UP Salon Billing API", "status": "ok"}
-
-
-app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+async def seed_platform_admin():
+    """Seed platform_admin user (SaaS operator) if PLATFORM_ADMIN_EMAIL & PWD are set."""
+    email = os.environ.get("PLATFORM_ADMIN_EMAIL")
+    pw = os.environ.get("PLATFORM_ADMIN_PASSWORD")
+    if not (email and pw):
+        return
+    email = email.lower().strip()
+    existing = await db.users.find_one({"email": email, "role": "platform_admin"})
+    if existing:
+        return
+    await db.users.insert_one({
+        "id": str(uuid.uuid4()),
+        "tenant_id": None,
+        "name": "Platform Admin",
+        "email": email,
+        "password_hash": hash_password(pw),
+        "role": "platform_admin",
+        "is_active": True,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    })
+    logger.info(f"Seeded platform_admin: {email}")
 
 
 @app.on_event("startup")
-async def startup_seed():
+async def startup():
     try:
-        # Auto-seed on startup so demo is always ready
-        if await db.users.count_documents({}) == 0:
-            await seed_data()
-            logger.info("Initial seed complete")
+        await ensure_indexes()
+        await ensure_glow_up_tenant()
+        await seed_initial_users()
+        await seed_platform_admin()
+        logger.info("Startup migration + seed complete")
     except Exception as e:
-        logger.error(f"Seed error: {e}")
+        logger.error(f"Startup error: {e}", exc_info=True)
 
 
 @app.on_event("shutdown")
