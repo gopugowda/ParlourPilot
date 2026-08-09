@@ -24,6 +24,7 @@ export default function ManageScreen() {
     {
       title: 'Daily Operations',
       items: [
+        { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer appointments', route: '/manage/appointments' },
         { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
         { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
       ],
@@ -39,6 +40,7 @@ export default function ManageScreen() {
     {
       title: 'Daily Operations',
       items: [
+        { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer bookings', route: '/manage/appointments' },
         { icon: 'star-outline', label: 'Members', hint: 'View & search members · WhatsApp reminders', route: '/manage/members' },
         { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
         { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },

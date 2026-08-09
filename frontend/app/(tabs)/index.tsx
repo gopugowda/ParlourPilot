@@ -8,7 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { api } from '@/src/api/client';
+import { api, appointmentApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
@@ -18,14 +18,19 @@ export default function DashboardScreen() {
   const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout } = useAuth();
   const router = useRouter();
   const [summary, setSummary] = useState<any>(null);
+  const [aptStats, setAptStats] = useState<{ today: number; week: number; upcoming: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
     try {
-      const data = await api('/reports/summary');
+      const [data, apts] = await Promise.all([
+        api('/reports/summary'),
+        appointmentApi.stats().catch(() => null),
+      ]);
       setSummary(data);
+      setAptStats(apts as any);
     } catch {}
   };
 
@@ -225,6 +230,55 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* Schedule (appointments) widget */}
+        <View style={styles.section}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={styles.sectionTitle}>Schedule</Text>
+            <TouchableOpacity onPress={() => router.push('/manage/appointments' as any)} testID="view-schedule">
+              <Text style={styles.linkText}>View all →</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.aptCard}>
+            <View style={styles.aptStatRow}>
+              <TouchableOpacity style={styles.aptStat} onPress={() => router.push('/manage/appointments' as any)} activeOpacity={0.85}>
+                <Ionicons name="today-outline" size={18} color={colors.brandPrimary} />
+                <Text style={styles.aptStatNum}>{aptStats?.today ?? 0}</Text>
+                <Text style={styles.aptStatLabel}>Today</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.aptStat} onPress={() => router.push('/manage/appointments' as any)} activeOpacity={0.85}>
+                <Ionicons name="calendar-outline" size={18} color={colors.brandPrimary} />
+                <Text style={styles.aptStatNum}>{aptStats?.week ?? 0}</Text>
+                <Text style={styles.aptStatLabel}>Next 7d</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.aptAddBtn} onPress={() => router.push('/manage/appointments' as any)} testID="dashboard-new-apt">
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.aptAddText}>New</Text>
+              </TouchableOpacity>
+            </View>
+            {(aptStats?.upcoming || []).length > 0 ? (
+              <View style={{ marginTop: spacing.md, gap: 6 }}>
+                {aptStats!.upcoming.slice(0, 3).map((a: any) => {
+                  const t = (() => { try { return new Date(a.scheduled_start).toLocaleString('en-IN', { weekday: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return a.scheduled_start; } })();
+                  return (
+                    <TouchableOpacity key={a.id} style={styles.upcomingRow} onPress={() => router.push('/manage/appointments' as any)} activeOpacity={0.85}>
+                      <Text style={styles.upcomingTime}>{t}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.upcomingName} numberOfLines={1}>{a.customer_name}</Text>
+                        <Text style={styles.upcomingMeta} numberOfLines={1}>
+                          {a.beautician_name || 'Any beautician'}
+                          {a.service_names && a.service_names.length > 0 ? ` · ${a.service_names.join(', ')}` : ''}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={styles.aptEmpty}>No upcoming appointments — tap New to book one.</Text>
+            )}
+          </View>
+        </View>
+
         {/* Month summary — admin only */}
         {isAdmin && (
         <View style={styles.section}>
@@ -404,4 +458,17 @@ const styles = StyleSheet.create({
   expMemIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(184,138,60,0.15)', alignItems: 'center', justifyContent: 'center' },
   expMemTitle: { fontSize: 14, fontWeight: '700', color: colors.brandPrimary },
   expMemSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
+  linkText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
+  aptCard: { backgroundColor: '#FFFFFF', borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm, ...shadows.card },
+  aptStatRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+  aptStat: { flex: 1, alignItems: 'center', backgroundColor: colors.brandTertiary, borderRadius: radius.sm, paddingVertical: 10, gap: 2 },
+  aptStatNum: { fontSize: 22, fontWeight: '900', color: colors.brandPrimary },
+  aptStatLabel: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.5 },
+  aptAddBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.brandPrimary, borderRadius: radius.sm, paddingHorizontal: 12, paddingVertical: 10 },
+  aptAddText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  aptEmpty: { textAlign: 'center', color: colors.onSurfaceTertiary, fontSize: 12, marginTop: spacing.md },
+  upcomingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: 8, backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm },
+  upcomingTime: { fontSize: 11, fontWeight: '800', color: colors.brandPrimary, minWidth: 90 },
+  upcomingName: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  upcomingMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
 });

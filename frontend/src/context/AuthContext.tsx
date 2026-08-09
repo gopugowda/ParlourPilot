@@ -4,6 +4,7 @@ import {
   currentBranchStore,
   setSubscriptionExpiredListener, setUnauthorizedListener,
 } from '../api/client';
+import { setCurrencySymbol, CURRENCY_CHOICES } from '../theme';
 
 export type User = {
   id: string;
@@ -47,6 +48,7 @@ export type Tenant = {
   country?: string;
   postal_code?: string;
   currency?: string;
+  currency_symbol?: string;
   timezone?: string;
   tax_enabled?: boolean;
   tax_number?: string;
@@ -122,11 +124,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const applyTenantCurrency = (t: Tenant | null) => {
+    if (!t) { setCurrencySymbol('₹', 'en-IN'); return; }
+    // If tenant has explicit currency_symbol set, honor it. Otherwise look up from code.
+    if (t.currency_symbol) {
+      setCurrencySymbol(t.currency_symbol);
+      return;
+    }
+    const code = (t.currency || 'INR').toUpperCase();
+    const choice = CURRENCY_CHOICES.find(c => c.code === code);
+    setCurrencySymbol(choice?.symbol || '₹', choice?.locale);
+  };
+
   const applyLoginResponse = async (res: any) => {
     const u = res.user;
     setUser(u);
     await userStore.set(u);
-    if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); }
+    if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); applyTenantCurrency(res.tenant); }
     else { setTenant(null); await tenantStore.clear(); }
     if (res.subscription) {
       setSubscription(res.subscription);
@@ -204,12 +218,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshTenant = useCallback(async () => {
     try {
       const res: any = await tenantApi.getMine();
-      if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); }
+      if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); applyTenantCurrency(res.tenant); }
       if (res.subscription) {
         setSubscription(res.subscription);
         await subscriptionStore.set(res.subscription);
       }
     } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshBranches = useCallback(async () => {

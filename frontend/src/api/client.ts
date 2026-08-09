@@ -156,6 +156,20 @@ export const branchApi = {
   create: (data: any) => api('/branches', { method: 'POST', body: data }),
   update: (bid: string, data: any) => api(`/branches/${bid}`, { method: 'PUT', body: data }),
   remove: (bid: string) => api(`/branches/${bid}`, { method: 'DELETE' }),
+  checkout: (data: { plan: 'monthly' | 'yearly'; branch: any; amount_inr?: number; display_amount?: number; display_currency?: string; payment_reference?: string }) =>
+    api('/branches/checkout', { method: 'POST', body: data }),
+  pricing: () => api('/pricing'),
+};
+
+export const appointmentApi = {
+  list: (params?: { date_from?: string; date_to?: string; status?: string; beautician_id?: string; limit?: number }) => {
+    const q = params ? '?' + Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&') : '';
+    return api(`/appointments${q}`);
+  },
+  create: (data: any) => api('/appointments', { method: 'POST', body: data }),
+  update: (aid: string, data: any) => api(`/appointments/${aid}`, { method: 'PUT', body: data }),
+  remove: (aid: string) => api(`/appointments/${aid}`, { method: 'DELETE' }),
+  stats: () => api('/appointments/stats'),
 };
 
 export const platformApi = {
@@ -163,4 +177,7 @@ export const platformApi = {
   stats: () => api('/platform/stats'),
   updateTenant: (tid: string, data: any) => api(`/platform/tenants/${tid}`, { method: 'PUT', body: data }),
   setSubscription: (tid: string, data: any) => api(`/platform/tenants/${tid}/subscription`, { method: 'POST', body: data }),
+  resetPassword: (tid: string, data: { user_id?: string; email?: string; new_password: string }) =>
+    api(`/platform/tenants/${tid}/reset-password`, { method: 'POST', body: data }),
+  listTenantUsers: (tid: string) => api(`/platform/tenants/${tid}/users`),
 };

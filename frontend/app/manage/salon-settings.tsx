@@ -10,7 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { tenantApi, branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows } from '@/src/theme';
+import { colors, spacing, radius, shadows, CURRENCY_CHOICES } from '@/src/theme';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -29,6 +29,8 @@ export default function SalonSettingsScreen() {
   const [companyPhone, setCompanyPhone] = useState('');
   const [website, setWebsite] = useState('');
   const [country, setCountry] = useState('India');
+  const [currencyCode, setCurrencyCode] = useState('INR');
+  const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
   const [companyLogo, setCompanyLogo] = useState<string | null>(null); // fallback logo
   const [memberDiscount, setMemberDiscount] = useState('10');
   const [memberMinPrice, setMemberMinPrice] = useState('100');
@@ -73,6 +75,7 @@ export default function SalonSettingsScreen() {
     setCompanyPhone(tenant.phone || '');
     setWebsite(tenant.website || '');
     setCountry(tenant.country || 'India');
+    setCurrencyCode((tenant.currency || 'INR').toUpperCase());
     setCompanyLogo(tenant.logo || null);
     setMemberDiscount(String(tenant.member_discount_pct ?? 10));
     setMemberMinPrice(String(tenant.member_min_price ?? 100));
@@ -165,6 +168,8 @@ export default function SalonSettingsScreen() {
         phone: companyPhone.replace(/\D/g, ''),
         website: website.trim(),
         country: country.trim(),
+        currency: currencyCode,
+        currency_symbol: (CURRENCY_CHOICES.find(c => c.code === currencyCode)?.symbol) || '₹',
         logo: companyLogo,
         member_discount_pct: parseFloat(memberDiscount) || 10,
         member_min_price: parseFloat(memberMinPrice) || 100,
@@ -296,6 +301,19 @@ export default function SalonSettingsScreen() {
             <LabeledInput label="Company Phone" value={companyPhone} onChangeText={setCompanyPhone} keyboardType="phone-pad" />
             <LabeledInput label="Website (optional)" value={website} onChangeText={setWebsite} autoCapitalize="none" />
             <LabeledInput label="Country" value={country} onChangeText={setCountry} />
+
+            {/* Currency selector */}
+            <View style={{ marginBottom: spacing.md }}>
+              <Text style={styles.label}>Currency for Bills / Invoices / Expenses</Text>
+              <TouchableOpacity style={styles.currencyBtn} onPress={() => setCurrencyPickerOpen(true)} testID="currency-picker">
+                <Text style={styles.currencySymbol}>{(CURRENCY_CHOICES.find(c => c.code === currencyCode)?.symbol) || '₹'}</Text>
+                <Text style={styles.currencyLabel}>
+                  {currencyCode} — {(CURRENCY_CHOICES.find(c => c.code === currencyCode)?.label) || 'Indian Rupee'}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color={colors.onSurfaceTertiary} />
+              </TouchableOpacity>
+              <Text style={styles.helpText}>Display-only. Amounts are not converted; you enter values in this currency.</Text>
+            </View>
           </View>
 
           <View style={styles.card}>
@@ -459,6 +477,38 @@ export default function SalonSettingsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Currency picker modal */}
+      <Modal visible={currencyPickerOpen} transparent animationType="fade" onRequestClose={() => setCurrencyPickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setCurrencyPickerOpen(false)}>
+          <Pressable style={styles.pickerSheet} onPress={() => {}}>
+            <Text style={styles.pickerTitle}>Choose Currency</Text>
+            <ScrollView style={{ maxHeight: 480 }}>
+              {CURRENCY_CHOICES.map(c => {
+                const isSelected = c.code === currencyCode;
+                return (
+                  <TouchableOpacity
+                    key={c.code}
+                    testID={`currency-${c.code}`}
+                    onPress={() => { setCurrencyCode(c.code); setCurrencyPickerOpen(false); Haptics.selectionAsync(); }}
+                    style={[styles.pickerItem, isSelected && styles.pickerItemActive]}
+                  >
+                    <Text style={{ fontSize: 20, fontWeight: '800', color: isSelected ? colors.brandPrimary : colors.onSurface, minWidth: 40 }}>{c.symbol}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.pickerItemText, isSelected && { color: colors.brandPrimary, fontWeight: '800' }]}>{c.code}</Text>
+                      <Text style={styles.pickerItemMeta}>{c.label}</Text>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity style={[styles.actionBtn, { alignSelf: 'stretch', justifyContent: 'center' }]} onPress={() => setCurrencyPickerOpen(false)}>
+              <Text style={styles.actionText}>Close</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -527,4 +577,11 @@ const styles = StyleSheet.create({
   pickerItemActive: { backgroundColor: colors.brandTertiary, borderColor: colors.brandSecondary },
   pickerItemText: { fontSize: 14, fontWeight: '600', color: colors.onSurface },
   pickerItemMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  currencyBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border,
+  },
+  currencySymbol: { fontSize: 20, fontWeight: '800', color: colors.brandPrimary, minWidth: 32 },
+  currencyLabel: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.onSurface },
 });

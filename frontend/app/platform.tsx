@@ -23,6 +23,49 @@ export default function PlatformScreen() {
   const [extendDays, setExtendDays] = useState('30');
   const [busy, setBusy] = useState(false);
 
+  // Password reset modal state
+  const [pwdEditor, setPwdEditor] = useState<{ tenant: Tenant | null; visible: boolean }>({ tenant: null, visible: false });
+  const [tenantUsers, setTenantUsers] = useState<any[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [newPwd, setNewPwd] = useState('');
+  const [newPwd2, setNewPwd2] = useState('');
+  const [pwdBusy, setPwdBusy] = useState(false);
+
+  const openPwdEditor = async (tenant: Tenant) => {
+    setPwdEditor({ tenant, visible: true });
+    setNewPwd(''); setNewPwd2(''); setSelectedUserId(null);
+    setTenantUsers([]);
+    try {
+      const res: any = await platformApi.listTenantUsers(tenant.id);
+      const users = res?.users || [];
+      setTenantUsers(users);
+      // Prefer owner/admin as default
+      const owner = users.find((u: any) => u.role === 'owner') || users.find((u: any) => u.role === 'admin') || users[0];
+      if (owner) setSelectedUserId(owner.id);
+    } catch (e: any) {
+      Alert.alert('Failed to load users', e.message || String(e));
+    }
+  };
+
+  const submitPasswordReset = async () => {
+    if (!pwdEditor.tenant) return;
+    if (!selectedUserId) { Alert.alert('Choose a user', 'Please select a user to reset password for'); return; }
+    if (!newPwd || newPwd.length < 6) { Alert.alert('Weak password', 'Password must be at least 6 characters'); return; }
+    if (newPwd !== newPwd2) { Alert.alert('Mismatch', 'Passwords do not match'); return; }
+    setPwdBusy(true);
+    try {
+      const res: any = await platformApi.resetPassword(pwdEditor.tenant.id, {
+        user_id: selectedUserId,
+        new_password: newPwd,
+      });
+      Alert.alert('Password reset', `Password updated for ${res.email} (${res.role})`);
+      setPwdEditor({ tenant: null, visible: false });
+      setNewPwd(''); setNewPwd2('');
+    } catch (e: any) {
+      Alert.alert('Failed', e.message || String(e));
+    } finally { setPwdBusy(false); }
+  };
+
   const load = useCallback(async () => {
     try {
       const [t, s] = await Promise.all([platformApi.tenants(), platformApi.stats()]);
@@ -153,6 +196,14 @@ export default function PlatformScreen() {
                   <Text style={styles.actionText}>Extend</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => openPwdEditor(t)}
+                  testID={`reset-pwd-${t.id}`}
+                >
+                  <Ionicons name="key-outline" size={16} color={colors.brandPrimary} />
+                  <Text style={styles.actionText}>Reset Password</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[styles.actionBtn, !t.is_active && { backgroundColor: '#FEE' }]}
                   onPress={() => toggleActive(t)}
                 >
@@ -193,6 +244,80 @@ export default function PlatformScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.btnPrimary, { flex: 1 }]} onPress={submitSubUpdate} disabled={busy}>
                   {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Extend & Activate</Text>}
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
+      {/* Password Reset Modal */}
+      <Modal visible={pwdEditor.visible} transparent animationType="slide" onRequestClose={() => setPwdEditor({ tenant: null, visible: false })}>
+        <Pressable style={styles.backdrop} onPress={() => setPwdEditor({ tenant: null, visible: false })}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <Pressable style={styles.sheet} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={styles.sheetTitle}>Reset User Password</Text>
+              <Text style={styles.sheetSub}>{pwdEditor.tenant?.business_name}</Text>
+
+              {/* User selector */}
+              <View style={[styles.field, { maxHeight: 200 }]}>
+                <Text style={styles.label}>Select User</Text>
+                <ScrollView style={{ maxHeight: 160 }}>
+                  {tenantUsers.map((u: any) => {
+                    const sel = selectedUserId === u.id;
+                    return (
+                      <TouchableOpacity
+                        key={u.id}
+                        testID={`pwd-user-${u.id}`}
+                        onPress={() => setSelectedUserId(u.id)}
+                        style={[styles.userRow, sel && styles.userRowActive]}
+                      >
+                        <Ionicons name={sel ? 'radio-button-on' : 'radio-button-off'} size={16} color={sel ? colors.brandPrimary : colors.onSurfaceTertiary} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.userRowName, sel && { color: colors.brandPrimary }]}>{u.name} <Text style={{ fontSize: 10, fontWeight: '600', color: colors.onSurfaceTertiary }}>· {(u.role || '').toUpperCase()}</Text></Text>
+                          <Text style={styles.userRowMeta}>{u.email}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {tenantUsers.length === 0 && (
+                    <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12 }}>Loading users…</Text>
+                  )}
+                </ScrollView>
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>New Password (min 6 chars)</Text>
+                <TextInput
+                  value={newPwd}
+                  onChangeText={setNewPwd}
+                  secureTextEntry
+                  style={styles.plainInput}
+                  placeholder="•••••••"
+                  autoCapitalize="none"
+                  testID="pwd-new"
+                />
+              </View>
+              <View style={styles.field}>
+                <Text style={styles.label}>Confirm Password</Text>
+                <TextInput
+                  value={newPwd2}
+                  onChangeText={setNewPwd2}
+                  secureTextEntry
+                  style={styles.plainInput}
+                  placeholder="•••••••"
+                  autoCapitalize="none"
+                  testID="pwd-confirm"
+                />
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.md }}>
+                <TouchableOpacity style={styles.btnGhost} onPress={() => setPwdEditor({ tenant: null, visible: false })}>
+                  <Text style={styles.btnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btnPrimary, { flex: 1 }]} onPress={submitPasswordReset} disabled={pwdBusy} testID="pwd-submit">
+                  {pwdBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Reset Password</Text>}
                 </TouchableOpacity>
               </View>
             </Pressable>
@@ -265,4 +390,8 @@ const styles = StyleSheet.create({
   btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   btnGhost: { flex: 1, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
   btnGhostText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 15 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, marginBottom: 6 },
+  userRowActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
+  userRowName: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  userRowMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
 });

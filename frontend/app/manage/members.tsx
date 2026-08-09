@@ -198,12 +198,18 @@ export default function MembersScreen() {
           {filtered.length === 0 && (
             <View style={styles.empty}>
               <Ionicons name="star-outline" size={48} color={colors.onSurfaceTertiary} />
-              <Text style={styles.emptyTitle}>No members yet</Text>
-              <Text style={styles.emptySub}>Yearly members get 10% off on services above ₹100</Text>
-              <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
-                <Ionicons name="add" size={18} color="#fff" />
-                <Text style={styles.ctaBtnText}>Add Member</Text>
-              </TouchableOpacity>
+              <Text style={styles.emptyTitle}>
+                {list.length === 0 ? 'No members yet' : `No ${filter === 'all' ? '' : filter + ' '}members`}
+              </Text>
+              {list.length === 0 && (
+                <Text style={styles.emptySub}>Yearly members get discount on services above minimum price</Text>
+              )}
+              {isAdmin && list.length === 0 && (
+                <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
+                  <Ionicons name="add" size={18} color="#fff" />
+                  <Text style={styles.ctaBtnText}>Add Member</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
           {filtered.map(m => {

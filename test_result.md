@@ -227,3 +227,188 @@ agent_communication:
            /auth/users/{id}.
       Test credentials: /app/memory/test_credentials.md — Glow Up owner (admin@glowup.com/admin123)
       and staff (staff@glowup.com/staff123).
+
+user_problem_statement: |
+  Iteration 11 mixed FE+BE changes:
+  1. Staff account: hide "Add Member" empty CTA button (staff is read-only for members)
+  2. Per-branch subscription: main salon ₹999/mo or ₹9999/yr; extra branch ₹888/mo or ₹8888/yr.
+     Add Branch → checkout flow (mock payment) → branch is created ONLY after "payment" success.
+     Currency selector on checkout with live FX conversion for the SaaS price.
+  3. Platform admin: reset/change any tenant user's password (defaults to owner)
+  4. Appointment/Booking module: staff & admin can create/modify/cancel. Dashboard shows
+     Today's + Weekly counts + upcoming preview. Branch-scoped.
+  5. Bills/invoices/expenses: allow salon to pick display currency symbol (no FX). Static list
+     of ~20 major currencies.
+
+backend:
+  - task: "Platform admin password reset endpoint"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/platform/tenants/{tid}/reset-password with body {user_id?, email?, new_password}. Also added GET /api/platform/tenants/{tid}/users to list tenant users. Only platform_admin can call."
+
+  - task: "Branch checkout (mock payment) endpoint"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/branches/checkout accepts {plan: monthly|yearly, branch: BranchIn, amount_inr?, display_amount?, display_currency?, payment_reference?}. Creates a NON-head branch with subscription_status=active and subscription_end_date = now + 30d/365d. Records a mock payment doc in `payments` collection. Also added GET /api/pricing returning INR prices for main and branch."
+
+  - task: "Appointments CRUD + stats"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET/POST/PUT/DELETE /api/appointments (branch-scoped), GET /api/appointments/stats returns {today, week, upcoming[5]}. Staff & admin can create/modify (uses get_current_user_active dependency). Branch scoping enforced via X-Branch-Id."
+
+  - task: "Currency symbol on tenant"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added `currency_symbol` to TenantUpdate model. Existing `currency` field also kept. Frontend derives symbol from CURRENCY_CHOICES table when saving."
+
+frontend:
+  - task: "Members: hide Add CTA for staff"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/members.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Empty-state Add button now shows only for admin, and only when list is empty. Header Add is a lock icon for staff. Filter chips work for staff and admin alike."
+
+  - task: "Platform Admin: reset user password UI"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/platform.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added Reset Password button on each tenant card → modal shows list of users in the tenant (radio select, defaults to owner/admin), new password + confirm. Calls resetPassword API. Displays success alert with target email/role."
+
+  - task: "Branch checkout screen with live FX"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/checkout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New route /checkout?type=branch. Fetches live FX rates from open.er-api.com (INR base). Shows plan cards Monthly ₹888/Yearly ₹8888. Currency picker with 10 majors — display amount auto-computes (₹888 * rate). Auto-detects locale to pre-select currency. MOCK payment simulated with a 1.5s delay, then POST /branches/checkout to create the branch. On success shows alert and redirects to /manage/branches. Fallback FX table if API unreachable."
+
+  - task: "Branches: Add Branch routes to checkout"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/branches.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "openAdd() now navigates to /checkout?type=branch instead of opening the create modal. Existing edit modal is unchanged (works for editing). Also updated pricing box to show both main (₹999/₹9999) and extra branch (₹888/₹8888) rates."
+
+  - task: "Salon Settings: currency picker for bill display"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/salon-settings.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Company Info card now has a Currency selector (₹, $, €, etc.) with a scrollable picker of 20 major currencies. On save it persists `currency` code and `currency_symbol` to tenant. AuthContext applies the symbol globally via setCurrencySymbol() so fmtINR() throughout the app shows the chosen symbol without touching individual files."
+
+  - task: "Appointments screen (staff + admin)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/appointments.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New /manage/appointments screen. Filter chips: Today / This Week / All Upcoming. Rows grouped by date, show time-of-day + duration + status chip (booked/in_progress/completed/canceled/no_show). Tap status chip to cycle. Editor modal for new/edit with fields: customer name/phone, date/time (plain text YYYY-MM-DD and HH:MM for cross-platform), duration, beautician chips, services multi-select (with prices), status pills, notes. Uses appointmentApi.list/create/update/remove. Both admin and staff can access via Manage tab entry."
+
+  - task: "Dashboard Schedule widget"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/index.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New Schedule card between Quick Actions and This Month. Shows Today count / Next 7d count / New button, plus a preview of next up-to-3 upcoming appointments. Loads via appointmentApi.stats(). Available to both admin and staff."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 11
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Platform admin password reset endpoint"
+    - "Branch checkout (mock payment) endpoint"
+    - "Appointments CRUD + stats"
+    - "Currency symbol on tenant"
+    - "Members: hide Add CTA for staff"
+    - "Platform Admin: reset user password UI"
+    - "Branch checkout screen with live FX"
+    - "Branches: Add Branch routes to checkout"
+    - "Salon Settings: currency picker for bill display"
+    - "Appointments screen (staff + admin)"
+    - "Dashboard Schedule widget"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Iteration 11 is a large feature drop:
+      • Platform admin password reset endpoint + UI (target user selectable within a tenant).
+      • Branch checkout flow with mock payment + live FX conversion (base INR).
+      • Full Appointments module (backend CRUD + stats; frontend list, editor, dashboard widget).
+      • Currency selector for bills/invoices/expenses display (20 currencies, no FX).
+      • Staff-side Add Member CTA removed.
+      Please verify BOTH backend and frontend flows. Test credentials as before.
+      A live FX API call to open.er-api.com is made from the checkout screen — this is a public
+      no-key API. If it fails, the code falls back to an internal rate table so the UI still works.
+      MOCK PAYMENT: the /branches/checkout endpoint accepts a `payment_reference` and inserts a
+      record in `payments`. It does NOT integrate with any real gateway. Users should be informed.
+

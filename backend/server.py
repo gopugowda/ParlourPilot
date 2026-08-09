@@ -5,7 +5,7 @@ Backend API (FastAPI + MongoDB)
 Every tenant-owned collection is scoped by `tenant_id`. All authenticated
 requests derive the tenant from the JWT — never from the request body.
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request, Header, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -364,6 +364,7 @@ class TenantUpdate(BaseModel):
     country: Optional[str] = None
     postal_code: Optional[str] = None
     currency: Optional[str] = None
+    currency_symbol: Optional[str] = None
     timezone: Optional[str] = None
     tax_enabled: Optional[bool] = None
     tax_number: Optional[str] = None
@@ -795,6 +796,238 @@ async def delete_branch(bid: str, user=Depends(require_admin_active)):
     new_bid = head["id"] if head else None
     await db.users.update_many({"tenant_id": tid, "branch_id": bid}, {"$set": {"branch_id": new_bid}})
     return {"ok": True}
+
+
+# ---------- Branch subscription (mock payment) ----------
+class BranchCheckoutBody(BaseModel):
+    plan: Literal["monthly", "yearly"]
+    branch: BranchIn
+    # Mock-payment metadata (for record keeping only; nothing real):
+    amount_inr: Optional[float] = None
+    currency: Optional[str] = "INR"
+    display_amount: Optional[float] = None  # e.g. equivalent in USD selected by user
+    display_currency: Optional[str] = None
+    payment_reference: Optional[str] = None
+
+
+BRANCH_PLAN_PRICES_INR = {"monthly": 888, "yearly": 8888}
+TENANT_PLAN_PRICES_INR = {"monthly": 999, "yearly": 9999}
+
+
+def _plan_end_iso(plan: str) -> str:
+    now = datetime.now(timezone.utc)
+    delta = timedelta(days=365) if plan == "yearly" else timedelta(days=30)
+    return (now + delta).isoformat()
+
+
+@api_router.post("/branches/checkout")
+async def branch_checkout(body: BranchCheckoutBody, user=Depends(require_admin_active)):
+    """Mock-payment checkout for an additional branch. Creates a branch with an active subscription."""
+    tid = tenant_id_of(user)
+    if not body.branch.name.strip():
+        raise HTTPException(status_code=400, detail="Branch name required")
+    plan = body.plan
+    if plan not in ("monthly", "yearly"):
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    now = datetime.now(timezone.utc)
+    end_iso = _plan_end_iso(plan)
+    payment_ref = body.payment_reference or f"MOCKPAY-{uuid.uuid4().hex[:12].upper()}"
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tenant_id": tid,
+        "name": body.branch.name.strip(),
+        "address": body.branch.address or "",
+        "city": body.branch.city or "",
+        "state": body.branch.state or "",
+        "country": body.branch.country or "India",
+        "postal_code": body.branch.postal_code or "",
+        "phone": body.branch.phone or "",
+        "email": body.branch.email or "",
+        "logo": body.branch.logo,
+        "tax_enabled": bool(body.branch.tax_enabled),
+        "tax_number": body.branch.tax_number or "",
+        "tax_percentage": float(body.branch.tax_percentage or 0),
+        "invoice_prefix": body.branch.invoice_prefix or "",
+        "receipt_header": body.branch.receipt_header or "",
+        "receipt_footer": body.branch.receipt_footer or "",
+        "is_head": False,  # extra branches are never head
+        "parent_branch_id": body.branch.parent_branch_id,
+        "active": True,
+        "subscription_status": "active",
+        "subscription_plan": plan,
+        "subscription_start_date": now.isoformat(),
+        "subscription_end_date": end_iso,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.branches.insert_one(doc)
+    # Record the mock payment for audit trail
+    await db.payments.insert_one({
+        "id": str(uuid.uuid4()),
+        "tenant_id": tid,
+        "branch_id": doc["id"],
+        "type": "branch_subscription",
+        "plan": plan,
+        "amount_inr": body.amount_inr or float(BRANCH_PLAN_PRICES_INR[plan]),
+        "display_amount": body.display_amount,
+        "display_currency": body.display_currency,
+        "payment_reference": payment_ref,
+        "status": "success",
+        "provider": "mock",
+        "created_at": now_iso(),
+    })
+    return {
+        "branch": {k: v for k, v in doc.items() if k != "_id"},
+        "payment": {
+            "reference": payment_ref,
+            "amount_inr": body.amount_inr or float(BRANCH_PLAN_PRICES_INR[plan]),
+            "plan": plan,
+            "next_renewal": end_iso,
+        },
+    }
+
+
+@api_router.get("/pricing")
+async def get_pricing(user=Depends(get_current_user)):
+    """Return SaaS pricing table (in INR). Frontend converts to user's preferred currency."""
+    return {
+        "currency_base": "INR",
+        "tenant": TENANT_PLAN_PRICES_INR,
+        "branch": BRANCH_PLAN_PRICES_INR,
+    }
+
+
+# ---------- Appointments (scheduling) ----------
+class AppointmentIn(BaseModel):
+    customer_name: str
+    customer_phone: Optional[str] = ""
+    member_id: Optional[str] = None
+    beautician_id: Optional[str] = None
+    beautician_name: Optional[str] = ""
+    service_ids: Optional[List[str]] = []
+    service_names: Optional[List[str]] = []
+    scheduled_start: str  # ISO datetime
+    duration_minutes: Optional[int] = 60
+    status: Optional[Literal["booked", "in_progress", "completed", "canceled", "no_show"]] = "booked"
+    notes: Optional[str] = ""
+    price_estimate: Optional[float] = 0
+
+
+def _end_from_start(start_iso: str, duration_min: int) -> str:
+    try:
+        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid scheduled_start format (ISO 8601 expected)")
+    return (dt + timedelta(minutes=int(duration_min or 60))).isoformat()
+
+
+@api_router.get("/appointments")
+async def list_appointments(
+    scope: BranchScope = Depends(branch_scope),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    beautician_id: Optional[str] = None,
+    limit: int = 200,
+):
+    """List appointments for the current tenant/branch. Supports date range filtering."""
+    q = scope.filter()
+    if date_from or date_to:
+        rng: dict = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to
+        q["scheduled_start"] = rng
+    if status_filter:
+        q["status"] = status_filter
+    if beautician_id:
+        q["beautician_id"] = beautician_id
+    docs = await db.appointments.find(q, {"_id": 0}).sort("scheduled_start", 1).to_list(int(limit))
+    return docs
+
+
+@api_router.post("/appointments")
+async def create_appointment(body: AppointmentIn, scope: BranchScope = Depends(branch_scope_required)):
+    """Both admin and staff can create appointments."""
+    if not body.customer_name.strip():
+        raise HTTPException(status_code=400, detail="Customer name required")
+    end_iso = _end_from_start(body.scheduled_start, body.duration_minutes or 60)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tenant_id": scope.tenant_id,
+        "branch_id": scope.branch_id,
+        "customer_name": body.customer_name.strip(),
+        "customer_phone": (body.customer_phone or "").strip(),
+        "member_id": body.member_id,
+        "beautician_id": body.beautician_id,
+        "beautician_name": body.beautician_name or "",
+        "service_ids": body.service_ids or [],
+        "service_names": body.service_names or [],
+        "scheduled_start": body.scheduled_start,
+        "duration_minutes": int(body.duration_minutes or 60),
+        "scheduled_end": end_iso,
+        "status": body.status or "booked",
+        "notes": body.notes or "",
+        "price_estimate": float(body.price_estimate or 0),
+        "created_by": scope.user.get("id"),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.appointments.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.put("/appointments/{apt_id}")
+async def update_appointment(apt_id: str, body: AppointmentIn, scope: BranchScope = Depends(branch_scope)):
+    """Both admin and staff can modify appointments."""
+    q = scope.filter({"id": apt_id})
+    updates: dict = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    if "scheduled_start" in updates or "duration_minutes" in updates:
+        start = updates.get("scheduled_start")
+        if not start:
+            existing = await db.appointments.find_one(q, {"scheduled_start": 1})
+            start = existing.get("scheduled_start") if existing else None
+        dur = int(updates.get("duration_minutes") or 60)
+        if start:
+            updates["scheduled_end"] = _end_from_start(start, dur)
+    updates["updated_at"] = now_iso()
+    result = await db.appointments.find_one_and_update(
+        q, {"$set": updates}, return_document=True, projection={"_id": 0}
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return result
+
+
+@api_router.delete("/appointments/{apt_id}")
+async def delete_appointment(apt_id: str, scope: BranchScope = Depends(branch_scope)):
+    q = scope.filter({"id": apt_id})
+    res = await db.appointments.delete_one(q)
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return {"ok": True}
+
+
+@api_router.get("/appointments/stats")
+async def appointment_stats(scope: BranchScope = Depends(branch_scope)):
+    """Today & week counts + upcoming preview for dashboard."""
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
+    week_end = today_start + timedelta(days=7)
+
+    q_today = scope.filter({"scheduled_start": {"$gte": today_start.isoformat(), "$lt": today_end.isoformat()}})
+    q_week = scope.filter({"scheduled_start": {"$gte": today_start.isoformat(), "$lt": week_end.isoformat()}})
+    today_count = await db.appointments.count_documents(q_today)
+    week_count = await db.appointments.count_documents(q_week)
+    upcoming = await db.appointments.find(
+        scope.filter({"scheduled_start": {"$gte": now.isoformat()}, "status": {"$in": ["booked", "in_progress"]}}),
+        {"_id": 0}
+    ).sort("scheduled_start", 1).to_list(5)
+    return {"today": today_count, "week": week_count, "upcoming": upcoming}
 
 
 @api_router.get("/subscription/plans")
@@ -2043,6 +2276,47 @@ async def platform_set_subscription(tid: str, body: PlatformSubscriptionUpdate, 
     await db.tenants.update_one({"id": tid}, {"$set": updates})
     tenant2 = await load_tenant(tid)
     return {"tenant": tenant2, "subscription": tenant_status(tenant2)}
+
+
+# ============ Seed (legacy demo API — still tenant-aware) ============
+@api_router.post("/platform/tenants/{tid}/reset-password")
+async def platform_reset_tenant_password(tid: str, body: dict = Body(...), user=Depends(require_platform_admin)):
+    """Platform admin can reset ANY user's password within a tenant. Body: { user_id?, email?, new_password }."""
+    new_password = (body or {}).get("new_password")
+    user_id = (body or {}).get("user_id")
+    email = (body or {}).get("email")
+    if not new_password or len(str(new_password)) < 6:
+        raise HTTPException(status_code=400, detail="new_password must be at least 6 characters")
+    tenant = await load_tenant(tid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    target = None
+    if user_id:
+        target = await db.users.find_one({"id": user_id, "tenant_id": tid})
+    elif email:
+        target = await db.users.find_one({"email": str(email).lower(), "tenant_id": tid})
+    else:
+        # default: reset the owner of the tenant
+        target = await db.users.find_one({"tenant_id": tid, "role": {"$in": ["owner", "admin"]}}, sort=[("created_at", 1)])
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found in tenant")
+    await db.users.update_one(
+        {"id": target["id"]},
+        {"$set": {"password_hash": hash_password(str(new_password)), "updated_at": now_iso()}}
+    )
+    return {"ok": True, "user_id": target["id"], "email": target["email"], "role": target.get("role")}
+
+
+@api_router.get("/platform/tenants/{tid}/users")
+async def platform_list_tenant_users(tid: str, user=Depends(require_platform_admin)):
+    tenant = await load_tenant(tid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    users = await db.users.find(
+        {"tenant_id": tid},
+        {"_id": 0, "password_hash": 0}
+    ).to_list(200)
+    return {"users": users}
 
 
 # ============ Seed (legacy demo API — still tenant-aware) ============

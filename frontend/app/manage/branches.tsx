@@ -42,8 +42,9 @@ export default function BranchesScreen() {
   useEffect(() => { load(); }, [load]);
 
   const openAdd = () => {
-    setEditing(null); setName(''); setAddress(''); setCity('');
-    setPhone(''); setInvoicePrefix(''); setIsHead(false); setActive(true); setLogo(null); setErr(null); setEditOpen(true);
+    // Adding an EXTRA branch requires a paid subscription → route to checkout first.
+    // The checkout screen will create the branch on successful (mock) payment.
+    router.push('/checkout?type=branch');
   };
   const openEdit = (b: Branch) => {
     setEditing(b); setName(b.name || ''); setAddress(b.address || ''); setCity(b.city || '');
@@ -177,9 +178,17 @@ export default function BranchesScreen() {
               <Ionicons name="card-outline" size={18} color={colors.brandPrimary} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.pricingTitle}>Subscription cost</Text>
-                <Text style={styles.pricingText}>₹999/month/branch or ₹9999/year/branch · {list.filter(b => b.active).length} active branches</Text>
+                <Text style={styles.pricingText}>Main salon: ₹999/mo or ₹9999/yr · Extra branch: ₹888/mo or ₹8888/yr</Text>
+                <Text style={styles.pricingText}>Active branches: {list.filter(b => b.active).length}</Text>
               </View>
             </View>
+          )}
+
+          {list.length > 0 && (
+            <TouchableOpacity testID="add-branch-cta" style={[styles.ctaBtn, { alignSelf: 'stretch', marginTop: spacing.md }]} onPress={openAdd}>
+              <Ionicons name="add-circle" size={18} color="#fff" />
+              <Text style={styles.ctaBtnText}>Add Branch (paid)</Text>
+            </TouchableOpacity>
           )}
         </ScrollView>
       )}
