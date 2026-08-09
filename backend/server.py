@@ -918,7 +918,12 @@ async def update_user(uid: str, body: UserUpdate, user=Depends(require_admin)):
             if admin_count <= 1:
                 raise HTTPException(status_code=400, detail="Cannot demote the last owner/admin")
         updates["role"] = new_role
-    if body.branch_id is not None:
+    if "branch_id" in body.model_fields_set:
+        # Preventing staff from being unassigned from a branch (staff MUST have a branch)
+        target_role = target.get("role")
+        new_role = updates.get("role", target_role)
+        if new_role == "staff" and not body.branch_id:
+            raise HTTPException(status_code=400, detail="Staff users must be assigned to a branch")
         if body.branch_id:
             br = await db.branches.find_one({"id": body.branch_id, "tenant_id": tid})
             if not br:
