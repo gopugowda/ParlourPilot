@@ -11,11 +11,11 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
-type UserRow = { id: string; name: string; email: string; role: 'admin' | 'staff' };
+type UserRow = { id: string; name: string; email: string; role: 'admin' | 'staff'; branch_id?: string | null };
 
 export default function UsersScreen() {
   const router = useRouter();
-  const { user: me } = useAuth();
+  const { user: me, branches } = useAuth();
   const [list, setList] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,8 +26,15 @@ export default function UsersScreen() {
   const [email, setEmail] = useState('');
   const [pwd, setPwd] = useState('');
   const [role, setRole] = useState<'admin' | 'staff'>('staff');
+  const [branchId, setBranchId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const branchNameById = (bid?: string | null) => {
+    if (!bid) return null;
+    const b = (branches || []).find((br: any) => br.id === bid);
+    return b ? (b as any).name : null;
+  };
 
   // Reset password
   const [pwdOpen, setPwdOpen] = useState<UserRow | null>(null);
@@ -41,27 +48,36 @@ export default function UsersScreen() {
   useFocusEffect(useCallback(() => { load(); }, []));
 
   const openAdd = () => {
-    setEditing(null); setName(''); setEmail(''); setPwd(''); setRole('staff'); setErr(null); setEditOpen(true);
+    setEditing(null); setName(''); setEmail(''); setPwd(''); setRole('staff');
+    // Default to head branch (or first) for staff
+    const defaultBid = (branches && branches.length > 0)
+      ? ((branches as any[]).find(b => b.is_head) || branches[0]).id
+      : null;
+    setBranchId(defaultBid);
+    setErr(null); setEditOpen(true);
   };
   const openEdit = (u: UserRow) => {
-    setEditing(u); setName(u.name); setEmail(u.email); setPwd(''); setRole(u.role); setErr(null); setEditOpen(true);
+    setEditing(u); setName(u.name); setEmail(u.email); setPwd(''); setRole(u.role);
+    setBranchId(u.branch_id || null);
+    setErr(null); setEditOpen(true);
   };
 
   const save = async () => {
     setErr(null);
     if (!name.trim() || !email.trim()) { setErr('Name and email required'); return; }
     if (!editing && pwd.length < 6) { setErr('Password ≥ 6 chars'); return; }
+    if (role === 'staff' && !branchId) { setErr('Staff must be assigned to a branch'); return; }
     setSaving(true);
     try {
       if (editing) {
         await api(`/auth/users/${editing.id}`, {
           method: 'PUT',
-          body: { name: name.trim(), email: email.trim().toLowerCase(), role },
+          body: { name: name.trim(), email: email.trim().toLowerCase(), role, branch_id: branchId },
         });
       } else {
         await api('/auth/register', {
           method: 'POST',
-          body: { name: name.trim(), email: email.trim().toLowerCase(), password: pwd, role },
+          body: { name: name.trim(), email: email.trim().toLowerCase(), password: pwd, role, branch_id: branchId },
         });
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -127,7 +143,10 @@ export default function UsersScreen() {
                   </View>
                   {u.id === me?.id && <Text style={styles.youTag}>YOU</Text>}
                 </View>
-                <Text style={styles.rowMeta} numberOfLines={1}>{u.email}</Text>
+                <Text style={styles.rowMeta} numberOfLines={1}>
+                  {u.email}
+                  {branchNameById(u.branch_id) ? ` · ${branchNameById(u.branch_id)}` : (u.role !== 'staff' ? ' · All branches' : '')}
+                </Text>
               </View>
               <View style={styles.rowActions}>
                 <TouchableOpacity testID={`u-edit-${u.id}`} style={styles.actionBtn} onPress={() => openEdit(u)}>
@@ -169,6 +188,44 @@ export default function UsersScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
+              </View>
+
+              {/* Branch assignment */}
+              <View style={styles.field}>
+                <Text style={styles.label}>
+                  {role === 'staff' ? 'Assign to Branch *' : 'Home Branch (optional)'}
+                </Text>
+                {role !== 'staff' && (
+                  <TouchableOpacity
+                    testID="branch-all"
+                    onPress={() => setBranchId(null)}
+                    style={[styles.branchChip, branchId === null && styles.branchChipActive, { marginBottom: 6 }]}
+                  >
+                    <Ionicons name={branchId === null ? 'checkmark-circle' : 'ellipse-outline'} size={14} color={branchId === null ? '#fff' : colors.brandPrimary} />
+                    <Text style={[styles.branchChipText, branchId === null && styles.branchChipTextActive]}>All Branches (Owner)</Text>
+                  </TouchableOpacity>
+                )}
+                <ScrollView style={{ maxHeight: 160 }}>
+                  {(branches || []).map((b: any) => {
+                    const selected = branchId === b.id;
+                    return (
+                      <TouchableOpacity
+                        key={b.id}
+                        testID={`branch-opt-${b.id}`}
+                        onPress={() => setBranchId(b.id)}
+                        style={[styles.branchChip, selected && styles.branchChipActive]}
+                      >
+                        <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={14} color={selected ? '#fff' : colors.brandPrimary} />
+                        <Text style={[styles.branchChipText, selected && styles.branchChipTextActive]}>
+                          {b.name}{b.is_head ? ' · HEAD' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                {(branches || []).length === 0 && (
+                  <Text style={styles.err}>No branches available. Please create one first.</Text>
+                )}
               </View>
               {err && <Text style={styles.err}>{err}</Text>}
               <TouchableOpacity testID="user-save-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
@@ -243,6 +300,15 @@ const styles = StyleSheet.create({
   roleChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   roleChipText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
   roleChipTextActive: { color: '#fff' },
+  branchChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 10, paddingHorizontal: 12, borderRadius: radius.sm,
+    backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border,
+    marginBottom: 6,
+  },
+  branchChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  branchChipText: { fontSize: 13, fontWeight: '600', color: colors.onSurfaceSecondary, flex: 1 },
+  branchChipTextActive: { color: '#fff', fontWeight: '700' },
   infoBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#E9F1E7', borderWidth: 1, borderColor: '#C8DDC4', padding: spacing.md, borderRadius: radius.sm },
   infoText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary },
   saveBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', marginTop: spacing.sm },

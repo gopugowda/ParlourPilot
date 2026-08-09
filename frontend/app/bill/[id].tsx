@@ -15,11 +15,19 @@ export default function BillDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, tenant } = useAuth();
+  const { user, tenant, branches } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [bill, setBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
+
+  // Branch corresponding to this bill (for logo, address, tax overrides)
+  const billBranch = bill ? (branches || []).find((b: any) => b.id === bill.branch_id) : null;
+
+  // Compute effective member discount % applied on this bill
+  const memberDiscountPct = bill?.member_discount_pct_applied != null
+    ? bill.member_discount_pct_applied
+    : (tenant?.member_discount_pct ?? 10);
 
   useEffect(() => {
     (async () => {
@@ -46,7 +54,7 @@ export default function BillDetailScreen() {
     }).join('');
 
     const dt = new Date(bill.created_at).toLocaleString('en-IN');
-    const memberBadge = bill.is_member ? `<div style="display:inline-block;background:#C42032;color:#fff;padding:4px 10px;border-radius:999px;font-weight:700;font-size:11px;margin-left:8px">★ MEMBER</div>` : '';
+    const memberBadge = bill.is_member ? `<div style="display:inline-block;background:#C42032;color:#fff;padding:4px 10px;border-radius:999px;font-weight:700;font-size:11px;margin-left:8px">★ MEMBER · ${memberDiscountPct}% OFF</div>` : '';
     const tipBlock = (bill.tip_amount || 0) > 0 ? `
       <div class="box">
         <h3>Tip</h3>
@@ -58,24 +66,56 @@ export default function BillDetailScreen() {
     ` : '';
     const servicesNet = bill.services_net ?? (bill.grand_total - (bill.tip_amount || 0));
 
-    // Dynamic tenant branding
+    // Prefer branch-level branding, fall back to tenant
     const bizName = (tenant?.business_name || 'ParlourPilot').toUpperCase();
-    const addrLines: string[] = [];
-    if (tenant?.address) addrLines.push(tenant.address);
-    const cityLine = [tenant?.city, tenant?.state].filter(Boolean).join(', ');
-    if (cityLine) addrLines.push(cityLine);
-    if (tenant?.phone) addrLines.push(`Ph: ${tenant.phone}`);
-    if (tenant?.email) addrLines.push(tenant.email);
-    if (tenant?.tax_enabled && tenant?.tax_number) addrLines.push(`GST/Tax: ${tenant.tax_number}`);
-    const addrHtml = addrLines.map(l => `<div>${l}</div>`).join('');
-    const headerLine = tenant?.receipt_header ? `<div class="header-line">${tenant.receipt_header}</div>` : '';
-    const footerText = tenant?.receipt_footer || 'Thank you! Powered by ParlourPilot';
+    const branchName = billBranch?.name || '';
+    const logoSrc = billBranch?.logo || tenant?.logo || null;
+    const logoHtml = logoSrc
+      ? `<img src="${logoSrc}" alt="logo" style="width:64px;height:64px;object-fit:contain;border-radius:8px;background:#fff;padding:4px;border:1px solid #E8E5DA"/>`
+      : '';
 
-    // Tax calculation (if enabled)
+    const addrLines: string[] = [];
+    // Branch address overrides tenant address if any branch address exists
+    const branchAddr = billBranch?.address || '';
+    const branchCity = [billBranch?.city, (billBranch as any)?.state].filter(Boolean).join(', ');
+    if (branchAddr) addrLines.push(branchAddr);
+    else if (tenant?.address) addrLines.push(tenant.address);
+    if (branchCity) addrLines.push(branchCity);
+    else {
+      const cityLine = [tenant?.city, tenant?.state].filter(Boolean).join(', ');
+      if (cityLine) addrLines.push(cityLine);
+    }
+    const branchPhone = billBranch?.phone;
+    if (branchPhone) addrLines.push(`Ph: ${branchPhone}`);
+    else if (tenant?.phone) addrLines.push(`Ph: ${tenant.phone}`);
+    const branchEmail = billBranch?.email;
+    if (branchEmail) addrLines.push(branchEmail);
+    else if (tenant?.email) addrLines.push(tenant.email);
+
+    // Tax settings prefer branch if enabled, else tenant
+    const branchTaxEnabled = !!billBranch?.tax_enabled;
+    const branchTaxPct = billBranch?.tax_percentage;
+    const branchTaxNum = billBranch?.tax_number;
+    const useBranchTax = branchTaxEnabled && (branchTaxPct || 0) > 0;
+    const useTenantTax = !useBranchTax && tenant?.tax_enabled && (tenant?.tax_percentage || 0) > 0;
+    const taxNum = useBranchTax ? branchTaxNum : (useTenantTax ? tenant?.tax_number : '');
+    if (taxNum) addrLines.push(`GST/Tax: ${taxNum}`);
+
+    const addrHtml = addrLines.map(l => `<div>${l}</div>`).join('');
+    const headerLine = (billBranch?.receipt_header || tenant?.receipt_header) ? `<div class="header-line">${billBranch?.receipt_header || tenant?.receipt_header}</div>` : '';
+    const footerText = billBranch?.receipt_footer || tenant?.receipt_footer || 'Thank you! Powered by ParlourPilot';
+
+    // Tax calculation
     let taxAmount = 0;
     let showTax = false;
-    if (tenant?.tax_enabled && tenant?.tax_percentage && tenant.tax_percentage > 0) {
-      taxAmount = servicesNet * (tenant.tax_percentage / 100);
+    let taxPctDisplay = 0;
+    if (useBranchTax) {
+      taxPctDisplay = branchTaxPct || 0;
+      taxAmount = servicesNet * (taxPctDisplay / 100);
+      showTax = true;
+    } else if (useTenantTax) {
+      taxPctDisplay = tenant?.tax_percentage || 0;
+      taxAmount = servicesNet * (taxPctDisplay / 100);
       showTax = true;
     }
     const displayGrandTotal = bill.grand_total + (showTax ? taxAmount : 0);
@@ -84,7 +124,9 @@ export default function BillDetailScreen() {
 <html><head><meta charset="utf-8"/>
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;color:#1A1A1A}
-.brand{color:#C42032;font-size:24px;font-weight:900;letter-spacing:1px}
+.brand-row{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.brand{color:#C42032;font-size:24px;font-weight:900;letter-spacing:1px;line-height:1.1}
+.branch{color:#3A3937;font-size:13px;font-weight:600;margin-top:2px}
 .sub{color:#6B6862;font-size:12px;margin-bottom:8px;letter-spacing:0.5px;line-height:1.6}
 .header-line{background:#FDECEE;color:#8A0E1D;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:600;margin-top:8px;text-align:center}
 .box{border:1px solid #E8E5DA;border-radius:12px;padding:14px;margin-top:14px}
@@ -98,7 +140,13 @@ th{background:#FDECEE;color:#8A0E1D;font-size:11px;text-transform:uppercase}
 .footer{margin-top:24px;text-align:center;color:#6B6862;font-size:11px}
 .pm{display:inline-block;background:#FDECEE;color:#8A0E1D;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px}
 </style></head><body>
-<div class="brand">${bizName}</div>
+<div class="brand-row">
+  ${logoHtml}
+  <div>
+    <div class="brand">${bizName}</div>
+    ${branchName ? `<div class="branch">${branchName}</div>` : ''}
+  </div>
+</div>
 <div class="sub">${addrHtml}</div>
 ${headerLine}
 
@@ -124,7 +172,7 @@ ${tipBlock}
     <div class="row"><span>Subtotal</span><span>₹${bill.subtotal.toFixed(2)}</span></div>
     <div class="row"><span>Discount</span><span>- ₹${bill.discount.toFixed(2)}</span></div>
     <div class="row"><span>Services Net</span><span>₹${servicesNet.toFixed(2)}</span></div>
-    ${showTax ? `<div class="row"><span>Tax (${tenant?.tax_percentage}%)</span><span>+ ₹${taxAmount.toFixed(2)}</span></div>` : ''}
+    ${showTax ? `<div class="row"><span>Tax (${taxPctDisplay}%)</span><span>+ ₹${taxAmount.toFixed(2)}</span></div>` : ''}
     ${(bill.tip_amount || 0) > 0 ? `<div class="row"><span>Tip</span><span>+ ₹${bill.tip_amount.toFixed(2)}</span></div>` : ''}
     <div class="row"><span><b>Grand Total</b></span><span class="grand">₹${displayGrandTotal.toFixed(2)}</span></div>
   </div>
@@ -215,7 +263,7 @@ ${tipBlock}
             {bill.is_member && (
               <View style={styles.memberBadge}>
                 <Ionicons name="star" size={10} color="#fff" />
-                <Text style={styles.memberBadgeText}>MEMBER · 10% off</Text>
+                <Text style={styles.memberBadgeText}>MEMBER · {memberDiscountPct}% off</Text>
               </View>
             )}
           </View>

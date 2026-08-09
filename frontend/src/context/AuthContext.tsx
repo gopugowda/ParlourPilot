@@ -221,7 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const selectBranch = useCallback(async (branchId: string | null) => {
     if (branchId) await currentBranchStore.set(branchId);
-    else await currentBranchStore.clear();
+    else await currentBranchStore.set('__all__');  // Sentinel: owner viewing aggregate
     setCurrentBranchIdState(branchId);
   }, []);
 

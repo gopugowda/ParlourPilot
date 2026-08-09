@@ -101,3 +101,129 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Iteration 10 UI fixes:
+  1. Members screen: Add explicit Active / Expired filter chips (staff can also view/filter members by status)
+  2. Bill detail badge: fix hardcoded "MEMBER · 10% off". Must reflect the actual per-member discount %
+     (e.g. show "MEMBER · 20% off" when a member has a 20% override, or the salon default otherwise)
+  3. Shared bill PDF: show the salon/branch logo on the invoice
+  4. Branches management: allow uploading a logo per branch
+  5. Salon Settings: split into Company (tenant-level) + Branch (per-branch with dropdown selector).
+     Branch dropdown must switch the form context and let admin save per-branch: logo, address,
+     phone, email, tax, invoice prefix, receipt header/footer
+  6. Users management: admin can assign a specific branch to each user/staff during create/edit
+
+frontend:
+  - task: "Members Active/Expired/Expiring filter chips"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/members.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added Active/Expiring/Expired chips with counts; filter logic updated. Backend already returns computed status for each member."
+
+  - task: "Bill detail badge dynamic member discount %"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/bill/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Replaced hardcoded '10% off' with bill.member_discount_pct_applied ?? tenant.member_discount_pct. Applied to both the in-app badge and the PDF header badge."
+
+  - task: "Bill PDF shows salon/branch logo + branch-specific branding"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/bill/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "PDF now includes logo (branch logo -> tenant logo fallback), branch name subtitle, and prefers branch-level address/phone/email/tax/receipt header+footer over tenant."
+
+  - task: "Branch logo upload in Branches management"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/branches.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added ImagePicker-based logo upload to the create/edit branch modal. Logo is sent to POST/PUT /api/branches which already accepts 'logo' field (base64 data URI). Row also shows a thumbnail."
+
+  - task: "Branch-level Salon Settings with branch dropdown"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/salon-settings.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Rewrote screen: Company (tenant) section for business_name/owner/website/default logo/member discount; Branch section with modal dropdown selector to switch between branches — per-branch: logo, address, city, state, postal, phone, email, tax, invoice_prefix, receipt header/footer. Save calls PUT /branches/{id}."
+
+  - task: "Users: assign branch to staff/admin"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manage/users.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Add/Edit user modal now shows branch selector list. Staff MUST have a branch (validated client-side); admins can be All Branches or a specific home branch. User row also shows the assigned branch name. Uses existing backend fields UserCreate.branch_id & UserUpdate.branch_id."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 10
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Members Active/Expired/Expiring filter chips"
+    - "Bill detail badge dynamic member discount %"
+    - "Bill PDF shows salon/branch logo + branch-specific branding"
+    - "Branch logo upload in Branches management"
+    - "Branch-level Salon Settings with branch dropdown"
+    - "Users: assign branch to staff/admin"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Iteration 10 UI-focused changes are in. All fixes are frontend-only; the backend
+      already exposed the fields (branch.logo, branch tax/address/prefix/receipt fields,
+      UserCreate/UserUpdate.branch_id, bill.member_discount_pct_applied).
+      Please verify:
+        1) Members screen shows 4 chips (All/Active/Expiring/Expired) and filters correctly.
+           Staff role (staff@glowup.com/staff123) should also see and use these filters.
+        2) Create a bill for a member with a 20% override — the bill detail badge should read
+           "MEMBER · 20% off" (not 10%). Share → PDF should also show 20%.
+        3) The shared PDF must render the logo. Configure a branch logo via Manage → Branches
+           edit and verify it appears. If branch logo empty, tenant logo should show.
+        4) Manage → Branches modal has a logo picker; saving persists via PUT /branches/{id}.
+        5) Salon Settings screen: Company section saves via PUT /tenants/me. Branch section
+           has a dropdown to pick a branch; changing branch loads fresh values; Save Branch
+           calls PUT /branches/{id} and updates fields (logo, address, tax, prefix, footer).
+        6) Users screen: creating/editing a user now shows a branch chooser. Staff role must
+           require a branch; admin can be 'All Branches'. Persisted via /auth/register &
+           /auth/users/{id}.
+      Test credentials: /app/memory/test_credentials.md — Glow Up owner (admin@glowup.com/admin123)
+      and staff (staff@glowup.com/staff123).

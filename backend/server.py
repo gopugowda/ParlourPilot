@@ -167,7 +167,9 @@ def _extract_branch_id_header(x_branch_id: Optional[str]) -> Optional[str]:
 async def resolve_branch_id(user: dict, x_branch_id: Optional[str] = None, required: bool = False) -> Optional[str]:
     """Resolve the branch context for a request.
     - Staff: always their assigned user.branch_id (header ignored).
-    - Owner/admin: header value if provided & belongs to tenant; else user.branch_id; else None (all branches).
+    - Owner/admin: header value if provided & belongs to tenant.
+       If header == "__all__" → None (view all branches aggregate).
+       Else fall back to user.branch_id; else None.
     - Platform admin: never branch-scoped.
     If `required=True` and no branch context → 400.
     """
@@ -180,19 +182,28 @@ async def resolve_branch_id(user: dict, x_branch_id: Optional[str] = None, requi
             raise HTTPException(status_code=400, detail="Staff account has no branch assigned. Please contact admin.")
         return bid
     # admin / owner
-    header_bid = _extract_branch_id_header(x_branch_id)
-    if header_bid:
-        # Verify branch belongs to tenant
-        br = await db.branches.find_one({"id": header_bid, "tenant_id": tenant_id_of(user)}, {"_id": 0, "id": 1})
+    raw = (x_branch_id or "").strip()
+    # Explicit "all branches" sentinel
+    if raw.lower() in ("__all__", "all"):
+        if required:
+            # Aggregate context but a specific branch is required → use user's default or first
+            default_bid = user.get("branch_id")
+            if default_bid:
+                return default_bid
+            first_br = await db.branches.find_one({"tenant_id": tenant_id_of(user)}, sort=[("created_at", 1)])
+            if first_br:
+                return first_br["id"]
+            raise HTTPException(status_code=400, detail="No branch available.")
+        return None
+    if raw:
+        br = await db.branches.find_one({"id": raw, "tenant_id": tenant_id_of(user)}, {"_id": 0, "id": 1})
         if not br:
             raise HTTPException(status_code=400, detail="Invalid branch")
-        return header_bid
-    # No header: fall back to user's default branch if set
+        return raw
     default_bid = user.get("branch_id")
     if default_bid:
         return default_bid
     if required:
-        # Try to auto-select the first branch of the tenant
         first_br = await db.branches.find_one({"tenant_id": tenant_id_of(user)}, sort=[("created_at", 1)])
         if first_br:
             return first_br["id"]

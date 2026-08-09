@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 10 verification of ParlourPilot UI changes (multi-tenant SaaS). Ran targeted pytest suite (17 tests) covering all 6 tasks against the live public URL and did a Playwright mobile smoke test (390x844). Result: 16/17 backend tests pass. Frontend verified: Members chips (All/Active/Expiring/Expired) with counts render + filter works (screenshot iter10_04/05), Manage entries present (Branches, Salon Settings, Users), Branches screen shows 2 branches with logo placeholder + subscription pricing (iter10_06). One critical bug found: PUT /api/auth/users/{uid} with body {branch_id: null} does NOT clear the branch — server code at server.py:921 uses `if body.branch_id is not None`, which silently drops the null and leaves the previous value. This directly breaks the Users screen 'All Branches (Owner)' toggle described in task 6 for existing users being edited. Assigning a specific branch works (register + update). Everything else (member 20% override -> bill.member_discount_pct_applied=20, branch logo PUT, branch invoice_prefix/tax/receipt_footer PUT preserves head branch, tenant PUT with website/discount/min-price) passed.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/auth/users/{uid}",
+        "issue": "Sending {branch_id: null} does NOT clear branch_id — server keeps the previous value. Root cause: server.py:921 `if body.branch_id is not None: ... updates['branch_id'] = body.branch_id or None` never fires when the client sends null. Impact: admin cannot be switched to 'All Branches (Owner)' via the Users edit modal — the branch chip UI toggles visually but the persisted value stays unchanged. Fix: switch the guard to `if 'branch_id' in body.model_fields_set:` (Pydantic v2) or accept model_dump(exclude_unset=True) so nulls flow through.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Users → Edit admin → All Branches toggle → Save",
+        "issue": "UI sends branch_id: null but backend silently drops it; on next refresh the row still shows the old branch name. Same root cause as the backend critical bug above.",
+        "affected_testIDs": ["branch-all", "user-save-btn"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_ui_changes.py",
+    "/app/test_reports/pytest/pytest_iter10.xml",
+    "/app/test_reports/screenshots/iter10_02_home.png",
+    "/app/test_reports/screenshots/iter10_03_manage.png",
+    "/app/test_reports/screenshots/iter10_04_members.png",
+    "/app/test_reports/screenshots/iter10_05_members_expired.png",
+    "/app/test_reports/screenshots/iter10_06_branches.png",
+    "/app/test_reports/screenshots/iter10_09_users.png",
+    "/app/test_reports/screenshots/iter10_10_add_user.png"
+  ],
+  "action_items": [
+    "FIX backend PUT /auth/users/{uid}: change the branch_id guard from `if body.branch_id is not None` to `if 'branch_id' in body.model_fields_set` (or use `body.model_dump(exclude_unset=True)`) so that {branch_id: null} actually clears the field. Otherwise the new Users → 'All Branches (Owner)' toggle is a no-op on existing users.",
+    "Consider server-side enforcement of the 'staff must have branch_id' rule — currently only validated client-side in users.tsx:69."
+  ],
+  "critical_code_review_comments": [
+    "server.py:921 — asymmetric handling of Optional fields: `if body.branch_id is not None` prevents nulling. Same pattern likely exists on other Optional[str] user/tenant fields (e.g. logo removal on tenant) — audit all Optional fields where clearing to null is a valid user action.",
+    "salon-settings.tsx saveBranch payload includes `name` (required) and preserves is_head/active manually — safe but brittle; using a partial-update API on the branch endpoint would be cleaner.",
+    "bill/[id].tsx builds PDF HTML with data URI images (branch.logo). Very large logos (>1 MB base64) will bloat every /branches response — consider a size cap in the upload picker or a separate /branches/{id}/logo endpoint returning a URL.",
+    "server.py is 2329 lines — same recommendation as iter9: split into routers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter10_ui_changes.py (new — 17 tests covering all 6 tasks with class-scoped fixtures + TEST_ prefix cleanup)"
+  ],
+  "success_rate": {
+    "backend": "94% (16/17 iter10)",
+    "frontend": "100% for Members/Branches/Users smoke; Salon Settings navigation was flaky in Playwright but code + testIDs verified via source review"
+  },
+  "seed_data_creation": "Ephemeral only: 1 test member (TEST Twenty Iter10, phone 9999xxxxxx) + 1 associated bill + 1 test user (test_iter10_*@example.com). All cleaned up in teardown tests. Head-branch fields (logo/prefix/receipt_footer/tax) temporarily overwritten and restored to original values.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter10 test suite at /app/backend/tests/test_iter10_ui_changes.py — reusable. Login response uses key `token` (NOT `access_token`) — the `_login` helper handles both. PUT /tenants/me returns wrapped {tenant, subscription}. PUT /branches/{id} requires the full Branch model (name is required). Bill creation requires each item to have service_id, service_name, beautician_id, beautician_name, price. The critical branch_id-null clearing bug was confirmed via test_update_user_branch_null and needs a Pydantic-fields-set fix (server.py:921).",
+  "rca_of_issue": "BUG: 'All Branches (Owner)' toggle no-op on edit.\nReproduction: 1) Login admin@glowup.com. 2) Manage → Users → edit any user with branch_id set. 3) Toggle 'All Branches (Owner)' (branch_id becomes null). 4) Save → API PUT /auth/users/{id} body includes branch_id:null. 5) Reload list → row still shows old branch.\nRoot cause: server.py update_user() line 921 `if body.branch_id is not None: ...` — because Pydantic parses JSON null as Python None, the whole branch update block is skipped and updates dict has no branch_id key, so $set doesn't touch the field.\nMitigation (recommended patch):\n```python\nfields_set = body.model_fields_set  # Pydantic v2\nif 'branch_id' in fields_set:\n    if body.branch_id:\n        br = await db.branches.find_one({'id': body.branch_id, 'tenant_id': tid})\n        if not br: raise HTTPException(400, 'Invalid branch')\n    updates['branch_id'] = body.branch_id  # None allowed\n```\nApplies analogously to any other Optional field where 'clear to null' is a legitimate operation."
+}

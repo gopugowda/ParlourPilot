@@ -2,11 +2,13 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
   Modal, Pressable, TextInput, KeyboardAvoidingView, Platform, Switch, Alert,
+  Image as RNImage,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
@@ -27,6 +29,7 @@ export default function BranchesScreen() {
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [isHead, setIsHead] = useState(false);
   const [active, setActive] = useState(true);
+  const [logo, setLogo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -40,12 +43,41 @@ export default function BranchesScreen() {
 
   const openAdd = () => {
     setEditing(null); setName(''); setAddress(''); setCity('');
-    setPhone(''); setInvoicePrefix(''); setIsHead(false); setActive(true); setErr(null); setEditOpen(true);
+    setPhone(''); setInvoicePrefix(''); setIsHead(false); setActive(true); setLogo(null); setErr(null); setEditOpen(true);
   };
   const openEdit = (b: Branch) => {
     setEditing(b); setName(b.name || ''); setAddress(b.address || ''); setCity(b.city || '');
     setPhone(b.phone || ''); setInvoicePrefix(b.invoice_prefix || '');
-    setIsHead(!!b.is_head); setActive(b.active !== false); setErr(null); setEditOpen(true);
+    setIsHead(!!b.is_head); setActive(b.active !== false); setLogo(b.logo || null); setErr(null); setEditOpen(true);
+  };
+
+  const pickLogo = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        if (!perm.canAskAgain) {
+          Alert.alert('Permission needed', 'Photos permission is required to upload a logo. Please enable it in Settings.');
+        }
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        base64: true,
+        quality: 0.6,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const a = result.assets[0];
+        if (a.base64) {
+          const dataUri = `data:image/${a.uri.endsWith('.png') ? 'png' : 'jpeg'};base64,${a.base64}`;
+          setLogo(dataUri);
+          Haptics.selectionAsync();
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not pick image');
+    }
   };
 
   const save = async () => {
@@ -56,7 +88,7 @@ export default function BranchesScreen() {
       const body = {
         name: name.trim(), address: address.trim(), city: city.trim(),
         phone: phone.replace(/\D/g, ''), invoice_prefix: invoicePrefix.trim(),
-        is_head: isHead, active,
+        is_head: isHead, active, logo,
       };
       if (editing) await branchApi.update(editing.id, body);
       else await branchApi.create(body);
@@ -109,6 +141,11 @@ export default function BranchesScreen() {
           )}
           {list.map(b => (
             <View key={b.id} style={styles.row}>
+              {b.logo ? (
+                <RNImage source={{ uri: b.logo }} style={styles.rowLogo} resizeMode="contain" />
+              ) : (
+                <View style={styles.rowLogoPh}><Ionicons name="business-outline" size={18} color={colors.onSurfaceTertiary} /></View>
+              )}
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Text style={styles.rowName}>{b.name}</Text>
@@ -153,6 +190,32 @@ export default function BranchesScreen() {
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>{editing ? 'Edit Branch' : 'Add Branch'}</Text>
+
+              {/* Branch logo */}
+              <View style={styles.logoBlock}>
+                <View style={styles.logoRow}>
+                  {logo ? (
+                    <RNImage source={{ uri: logo }} style={styles.logoImg} resizeMode="contain" />
+                  ) : (
+                    <View style={styles.logoPlaceholder}>
+                      <Ionicons name="image-outline" size={26} color={colors.onSurfaceTertiary} />
+                    </View>
+                  )}
+                  <View style={{ flex: 1, gap: 6 }}>
+                    <TouchableOpacity onPress={pickLogo} style={styles.logoBtn}>
+                      <Ionicons name="camera-outline" size={14} color={colors.brandPrimary} />
+                      <Text style={styles.logoBtnText}>{logo ? 'Change Logo' : 'Upload Branch Logo'}</Text>
+                    </TouchableOpacity>
+                    {logo && (
+                      <TouchableOpacity onPress={() => setLogo(null)} style={[styles.logoBtn, { backgroundColor: '#FEE' }]}>
+                        <Ionicons name="trash-outline" size={14} color={colors.error} />
+                        <Text style={[styles.logoBtnText, { color: colors.error }]}>Remove</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                <Text style={styles.help}>Shown on invoices for this branch. Falls back to salon logo if empty.</Text>
+              </View>
 
               <View style={styles.field}><Text style={styles.label}>Branch Name *</Text>
                 <TextInput value={name} onChangeText={setName} style={styles.input} placeholder="e.g. Bangalore Branch" placeholderTextColor={colors.onSurfaceTertiary} />
@@ -206,6 +269,8 @@ const styles = StyleSheet.create({
   rowName: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
   rowMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   smallBtn: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
+  rowLogo: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
+  rowLogoPh: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
 
   headBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   headBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
@@ -235,4 +300,10 @@ const styles = StyleSheet.create({
   err: { color: colors.error, fontSize: 13 },
   saveBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center' },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  logoBlock: { gap: 6 },
+  logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  logoImg: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  logoPlaceholder: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  logoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.sm, paddingVertical: 8, paddingHorizontal: 12 },
+  logoBtnText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
 });

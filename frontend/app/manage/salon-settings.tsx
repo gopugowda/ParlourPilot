@@ -1,14 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Switch, Alert, Image as RNImage,
+  KeyboardAvoidingView, Platform, Switch, Alert, Image as RNImage, Modal, Pressable,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import { tenantApi } from '@/src/api/client';
+import { tenantApi, branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
@@ -16,68 +16,108 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SalonSettingsScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { tenant, refreshTenant } = useAuth();
+  const { tenant, refreshTenant, branches, refreshBranches } = useAuth();
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [savingBranch, setSavingBranch] = useState(false);
 
+  // Company (tenant-level) fields
   const [businessName, setBusinessName] = useState('');
   const [ownerName, setOwnerName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [companyEmail, setCompanyEmail] = useState('');
+  const [companyPhone, setCompanyPhone] = useState('');
   const [website, setWebsite] = useState('');
+  const [country, setCountry] = useState('India');
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null); // fallback logo
+  const [memberDiscount, setMemberDiscount] = useState('10');
+  const [memberMinPrice, setMemberMinPrice] = useState('100');
+
+  // Branch selector
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+  const selectedBranch = useMemo(
+    () => (branches || []).find((b: any) => b.id === selectedBranchId) || null,
+    [branches, selectedBranchId]
+  );
+
+  // Branch-level fields
+  const [branchLogo, setBranchLogo] = useState<string | null>(null);
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
-  const [state, setState] = useState('');
+  const [stateName, setStateName] = useState('');
   const [postalCode, setPostalCode] = useState('');
-  const [country, setCountry] = useState('India');
-  const [logo, setLogo] = useState<string | null>(null);
+  const [branchPhone, setBranchPhone] = useState('');
+  const [branchEmail, setBranchEmail] = useState('');
   const [taxEnabled, setTaxEnabled] = useState(false);
   const [taxNumber, setTaxNumber] = useState('');
   const [taxPercentage, setTaxPercentage] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [receiptHeader, setReceiptHeader] = useState('');
   const [receiptFooter, setReceiptFooter] = useState('');
-  const [memberDiscount, setMemberDiscount] = useState('10');
-  const [memberMinPrice, setMemberMinPrice] = useState('100');
 
   useEffect(() => {
     (async () => {
-      await refreshTenant();
+      await Promise.all([refreshTenant(), refreshBranches()]);
       setLoading(false);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Populate company fields when tenant loads
   useEffect(() => {
     if (!tenant) return;
     setBusinessName(tenant.business_name || '');
     setOwnerName(tenant.owner_name || '');
-    setEmail(tenant.email || '');
-    setPhone(tenant.phone || '');
+    setCompanyEmail(tenant.email || '');
+    setCompanyPhone(tenant.phone || '');
     setWebsite(tenant.website || '');
-    setAddress(tenant.address || '');
-    setCity(tenant.city || '');
-    setState(tenant.state || '');
-    setPostalCode(tenant.postal_code || '');
     setCountry(tenant.country || 'India');
-    setLogo(tenant.logo || null);
-    setTaxEnabled(!!tenant.tax_enabled);
-    setTaxNumber(tenant.tax_number || '');
-    setTaxPercentage(String(tenant.tax_percentage ?? ''));
-    setInvoicePrefix(tenant.invoice_prefix || '');
-    setReceiptHeader(tenant.receipt_header || '');
-    setReceiptFooter(tenant.receipt_footer || '');
+    setCompanyLogo(tenant.logo || null);
     setMemberDiscount(String(tenant.member_discount_pct ?? 10));
     setMemberMinPrice(String(tenant.member_min_price ?? 100));
   }, [tenant]);
 
-  const pickLogo = async () => {
+  // Default-select head branch when branches load
+  useEffect(() => {
+    if (!branches || branches.length === 0) return;
+    if (selectedBranchId && branches.find((b: any) => b.id === selectedBranchId)) return;
+    const head = branches.find((b: any) => b.is_head) || branches[0];
+    setSelectedBranchId(head?.id || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches]);
+
+  // Populate branch fields when selection changes
+  useEffect(() => {
+    const b: any = selectedBranch;
+    if (!b) {
+      setBranchLogo(null); setAddress(''); setCity(''); setStateName(''); setPostalCode('');
+      setBranchPhone(''); setBranchEmail('');
+      setTaxEnabled(false); setTaxNumber(''); setTaxPercentage('');
+      setInvoicePrefix(''); setReceiptHeader(''); setReceiptFooter('');
+      return;
+    }
+    setBranchLogo(b.logo || null);
+    setAddress(b.address || '');
+    setCity(b.city || '');
+    setStateName(b.state || '');
+    setPostalCode(b.postal_code || '');
+    setBranchPhone(b.phone || '');
+    setBranchEmail(b.email || '');
+    setTaxEnabled(!!b.tax_enabled);
+    setTaxNumber(b.tax_number || '');
+    setTaxPercentage(String(b.tax_percentage ?? ''));
+    setInvoicePrefix(b.invoice_prefix || '');
+    setReceiptHeader(b.receipt_header || '');
+    setReceiptFooter(b.receipt_footer || '');
+  }, [selectedBranch]);
+
+  const pickImage = async (target: 'company' | 'branch') => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
         if (!perm.canAskAgain) {
-          Alert.alert('Permission needed', 'Photos permission is required to upload a logo. Please enable it in Settings.', [{ text: 'OK' }]);
+          Alert.alert('Permission needed', 'Photos permission is required to upload a logo. Please enable it in Settings.');
         }
         return;
       }
@@ -92,7 +132,8 @@ export default function SalonSettingsScreen() {
         const a = result.assets[0];
         if (a.base64) {
           const dataUri = `data:image/${a.uri.endsWith('.png') ? 'png' : 'jpeg'};base64,${a.base64}`;
-          setLogo(dataUri);
+          if (target === 'company') setCompanyLogo(dataUri);
+          else setBranchLogo(dataUri);
           Haptics.selectionAsync();
         }
       }
@@ -101,63 +142,91 @@ export default function SalonSettingsScreen() {
     }
   };
 
-  const save = async () => {
-    // Validate
-    if (email.trim() && !EMAIL_RE.test(email.trim())) {
-      Alert.alert('Invalid email', 'Please enter a valid email address');
-      return;
+  const saveCompany = async () => {
+    if (companyEmail.trim() && !EMAIL_RE.test(companyEmail.trim())) {
+      Alert.alert('Invalid email', 'Please enter a valid email address'); return;
     }
-    if (phone.trim()) {
-      const digits = phone.replace(/\D/g, '');
+    if (companyPhone.trim()) {
+      const digits = companyPhone.replace(/\D/g, '');
       if (digits.length < 6 || digits.length > 15) {
-        Alert.alert('Invalid phone', 'Phone number must be 6-15 digits');
-        return;
-      }
-    }
-    if (taxEnabled && taxPercentage) {
-      const t = parseFloat(taxPercentage);
-      if (!Number.isFinite(t) || t < 0 || t > 100) {
-        Alert.alert('Invalid tax %', 'Tax percentage must be between 0 and 100');
-        return;
+        Alert.alert('Invalid phone', 'Phone number must be 6-15 digits'); return;
       }
     }
     const md = parseFloat(memberDiscount);
     if (!Number.isFinite(md) || md < 0 || md > 100) {
-      Alert.alert('Invalid discount %', 'Member discount % must be between 0 and 100');
-      return;
+      Alert.alert('Invalid discount %', 'Member discount % must be between 0 and 100'); return;
     }
-    setSaving(true);
+    setSavingCompany(true);
     try {
       const payload: any = {
         business_name: businessName.trim(),
         owner_name: ownerName.trim(),
-        email: email.trim().toLowerCase() || undefined,
-        phone: phone.replace(/\D/g, ''),
+        email: companyEmail.trim().toLowerCase() || undefined,
+        phone: companyPhone.replace(/\D/g, ''),
         website: website.trim(),
-        address: address.trim(),
-        city: city.trim(),
-        state: state.trim(),
-        postal_code: postalCode.trim(),
         country: country.trim(),
-        logo: logo,
-        tax_enabled: taxEnabled,
-        tax_number: taxNumber.trim(),
-        tax_percentage: parseFloat(taxPercentage) || 0,
-        invoice_prefix: invoicePrefix.trim(),
-        receipt_header: receiptHeader.trim(),
-        receipt_footer: receiptFooter.trim(),
+        logo: companyLogo,
         member_discount_pct: parseFloat(memberDiscount) || 10,
         member_min_price: parseFloat(memberMinPrice) || 100,
       };
       await tenantApi.updateMine(payload);
       await refreshTenant();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Saved', 'Salon settings updated');
+      Alert.alert('Saved', 'Company info updated');
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Failed', e.message || String(e));
     } finally {
-      setSaving(false);
+      setSavingCompany(false);
+    }
+  };
+
+  const saveBranch = async () => {
+    if (!selectedBranch) { Alert.alert('No branch', 'Select a branch first'); return; }
+    if (branchEmail.trim() && !EMAIL_RE.test(branchEmail.trim())) {
+      Alert.alert('Invalid email', 'Enter a valid branch email'); return;
+    }
+    if (branchPhone.trim()) {
+      const digits = branchPhone.replace(/\D/g, '');
+      if (digits.length < 6 || digits.length > 15) {
+        Alert.alert('Invalid phone', 'Branch phone must be 6-15 digits'); return;
+      }
+    }
+    if (taxEnabled && taxPercentage) {
+      const t = parseFloat(taxPercentage);
+      if (!Number.isFinite(t) || t < 0 || t > 100) {
+        Alert.alert('Invalid tax %', 'Tax percentage must be between 0 and 100'); return;
+      }
+    }
+    setSavingBranch(true);
+    try {
+      const payload: any = {
+        name: (selectedBranch as any).name, // required by backend model
+        logo: branchLogo,
+        address: address.trim(),
+        city: city.trim(),
+        state: stateName.trim(),
+        postal_code: postalCode.trim(),
+        phone: branchPhone.replace(/\D/g, ''),
+        email: branchEmail.trim().toLowerCase(),
+        tax_enabled: taxEnabled,
+        tax_number: taxNumber.trim(),
+        tax_percentage: parseFloat(taxPercentage) || 0,
+        invoice_prefix: invoicePrefix.trim(),
+        receipt_header: receiptHeader.trim(),
+        receipt_footer: receiptFooter.trim(),
+        is_head: (selectedBranch as any).is_head, // preserve
+        active: (selectedBranch as any).active !== false,
+      };
+      await branchApi.update((selectedBranch as any).id, payload);
+      await refreshBranches();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Saved', `Branch settings updated for ${(selectedBranch as any).name}`);
+    } catch (e: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Failed', e.message || String(e));
+    } finally {
+      setSavingBranch(false);
     }
   };
 
@@ -175,7 +244,7 @@ export default function SalonSettingsScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.replace("/(tabs)")} style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: 4 }}>
+        <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
           <Ionicons name="home-outline" size={20} color="#3A3937" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Salon Settings</Text>
@@ -185,103 +254,211 @@ export default function SalonSettingsScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={80}>
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
 
-          {/* Logo Section */}
+          {/* ------ Company (tenant) section ------ */}
+          <View style={styles.sectionHeader}>
+            <Ionicons name="briefcase-outline" size={16} color={colors.brandPrimary} />
+            <Text style={styles.sectionTitle}>Company Info</Text>
+          </View>
+          <Text style={styles.sectionHint}>Applies to your whole salon. Used as fallback for invoices.</Text>
+
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Salon Logo</Text>
+            <Text style={styles.cardTitle}>Default Logo</Text>
             <View style={styles.logoRow}>
-              {logo ? (
-                <RNImage source={{ uri: logo }} style={styles.logoImg} resizeMode="contain" />
+              {companyLogo ? (
+                <RNImage source={{ uri: companyLogo }} style={styles.logoImg} resizeMode="contain" />
               ) : (
                 <View style={styles.logoPlaceholder}>
-                  <Ionicons name="image-outline" size={32} color={colors.onSurfaceTertiary} />
+                  <Ionicons name="image-outline" size={30} color={colors.onSurfaceTertiary} />
                   <Text style={styles.placeholderText}>No logo</Text>
                 </View>
               )}
               <View style={{ flex: 1, gap: spacing.sm }}>
-                <TouchableOpacity style={styles.actionBtn} onPress={pickLogo}>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => pickImage('company')}>
                   <Ionicons name="camera-outline" size={16} color={colors.brandPrimary} />
-                  <Text style={styles.actionText}>{logo ? 'Change Logo' : 'Upload Logo'}</Text>
+                  <Text style={styles.actionText}>{companyLogo ? 'Change' : 'Upload'}</Text>
                 </TouchableOpacity>
-                {logo && (
-                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#FEE' }]} onPress={() => setLogo(null)}>
+                {companyLogo && (
+                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#FEE' }]} onPress={() => setCompanyLogo(null)}>
                     <Ionicons name="trash-outline" size={16} color={colors.error} />
                     <Text style={[styles.actionText, { color: colors.error }]}>Remove</Text>
                   </TouchableOpacity>
                 )}
               </View>
             </View>
-            <Text style={styles.helpText}>Logo will appear on invoices and receipts.</Text>
+            <Text style={styles.helpText}>Used on invoices when a branch has no logo of its own.</Text>
           </View>
 
-          {/* Business Info */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Business Information</Text>
+            <Text style={styles.cardTitle}>Business Details</Text>
             <LabeledInput label="Business Name" value={businessName} onChangeText={setBusinessName} />
             <LabeledInput label="Owner Name" value={ownerName} onChangeText={setOwnerName} />
-            <LabeledInput label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-            <LabeledInput label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            <LabeledInput label="Company Email" value={companyEmail} onChangeText={setCompanyEmail} keyboardType="email-address" autoCapitalize="none" />
+            <LabeledInput label="Company Phone" value={companyPhone} onChangeText={setCompanyPhone} keyboardType="phone-pad" />
             <LabeledInput label="Website (optional)" value={website} onChangeText={setWebsite} autoCapitalize="none" />
+            <LabeledInput label="Country" value={country} onChangeText={setCountry} />
           </View>
 
-          {/* Address */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Address</Text>
-            <LabeledInput label="Street / Locality" value={address} onChangeText={setAddress} multiline />
-            <View style={{ flexDirection: 'row', gap: spacing.md }}>
-              <View style={{ flex: 1 }}><LabeledInput label="City" value={city} onChangeText={setCity} /></View>
-              <View style={{ flex: 1 }}><LabeledInput label="State" value={state} onChangeText={setState} /></View>
-            </View>
-            <View style={{ flexDirection: 'row', gap: spacing.md }}>
-              <View style={{ flex: 1 }}><LabeledInput label="Postal Code" value={postalCode} onChangeText={setPostalCode} keyboardType="numeric" /></View>
-              <View style={{ flex: 1 }}><LabeledInput label="Country" value={country} onChangeText={setCountry} /></View>
-            </View>
-          </View>
-
-          {/* Tax Settings */}
-          <View style={styles.card}>
-            <View style={styles.switchRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Enable Tax / GST</Text>
-                <Text style={styles.helpText}>Show tax on invoices</Text>
-              </View>
-              <Switch value={taxEnabled} onValueChange={setTaxEnabled} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={taxEnabled ? colors.brandPrimary : '#f4f3f4'} />
-            </View>
-            {taxEnabled && (
-              <>
-                <LabeledInput label="GST/Tax Number" value={taxNumber} onChangeText={setTaxNumber} autoCapitalize="characters" />
-                <LabeledInput label="Tax %" value={taxPercentage} onChangeText={(v) => setTaxPercentage(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" />
-              </>
-            )}
-          </View>
-
-          {/* Invoice / Receipt */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Invoice & Receipt</Text>
-            <LabeledInput label="Invoice Prefix (e.g. INV, GLOW)" value={invoicePrefix} onChangeText={setInvoicePrefix} autoCapitalize="characters" />
-            <LabeledInput label="Receipt Header" value={receiptHeader} onChangeText={setReceiptHeader} placeholder="Optional tagline" />
-            <LabeledInput label="Receipt Footer" value={receiptFooter} onChangeText={setReceiptFooter} placeholder="Thank you! Powered by ParlourPilot" />
-          </View>
-
-          {/* Member Discount */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Membership Discount</Text>
             <View style={{ flexDirection: 'row', gap: spacing.md }}>
-              <View style={{ flex: 1 }}><LabeledInput label="Discount %" value={memberDiscount} onChangeText={(v) => setMemberDiscount(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" /></View>
-              <View style={{ flex: 1 }}><LabeledInput label="Min Service Price ₹" value={memberMinPrice} onChangeText={(v) => setMemberMinPrice(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" /></View>
+              <View style={{ flex: 1 }}><LabeledInput label="Discount %" value={memberDiscount} onChangeText={(v: string) => setMemberDiscount(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" /></View>
+              <View style={{ flex: 1 }}><LabeledInput label="Min Service ₹" value={memberMinPrice} onChangeText={(v: string) => setMemberMinPrice(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" /></View>
             </View>
-            <Text style={styles.helpText}>Auto discount applied to member bills on services above this price.</Text>
+            <Text style={styles.helpText}>Auto-applied on member bills. Per-member overrides can be set on the Members screen.</Text>
           </View>
 
-          <TouchableOpacity testID="save-settings-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" /> : (
+          <TouchableOpacity testID="save-company-btn" style={styles.saveBtn} onPress={saveCompany} disabled={savingCompany}>
+            {savingCompany ? <ActivityIndicator color="#fff" /> : (
               <>
                 <Ionicons name="save-outline" size={18} color="#fff" />
-                <Text style={styles.saveText}>Save Settings</Text>
+                <Text style={styles.saveText}>Save Company Info</Text>
               </>
             )}
           </TouchableOpacity>
+
+          {/* ------ Branch section ------ */}
+          <View style={[styles.sectionHeader, { marginTop: spacing.xl }]}>
+            <Ionicons name="business-outline" size={16} color={colors.brandPrimary} />
+            <Text style={styles.sectionTitle}>Branch Settings</Text>
+          </View>
+          <Text style={styles.sectionHint}>Overrides the company defaults for the chosen branch. Applied to bills of that branch.</Text>
+
+          {/* Branch picker */}
+          <TouchableOpacity style={styles.branchPicker} onPress={() => setBranchPickerOpen(true)} testID="branch-picker">
+            <Ionicons name="git-branch-outline" size={16} color={colors.brandPrimary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.branchPickerLabel}>Editing Branch</Text>
+              <Text style={styles.branchPickerValue}>
+                {selectedBranch ? (selectedBranch as any).name : 'Select a branch'}
+                {selectedBranch && (selectedBranch as any).is_head ? '  · HEAD' : ''}
+              </Text>
+            </View>
+            <Ionicons name="chevron-down" size={20} color={colors.onSurfaceTertiary} />
+          </TouchableOpacity>
+
+          {selectedBranch && (
+            <>
+              {/* Branch logo */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Branch Logo</Text>
+                <View style={styles.logoRow}>
+                  {branchLogo ? (
+                    <RNImage source={{ uri: branchLogo }} style={styles.logoImg} resizeMode="contain" />
+                  ) : (
+                    <View style={styles.logoPlaceholder}>
+                      <Ionicons name="image-outline" size={30} color={colors.onSurfaceTertiary} />
+                      <Text style={styles.placeholderText}>No logo</Text>
+                    </View>
+                  )}
+                  <View style={{ flex: 1, gap: spacing.sm }}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => pickImage('branch')} testID="pick-branch-logo">
+                      <Ionicons name="camera-outline" size={16} color={colors.brandPrimary} />
+                      <Text style={styles.actionText}>{branchLogo ? 'Change' : 'Upload'}</Text>
+                    </TouchableOpacity>
+                    {branchLogo && (
+                      <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#FEE' }]} onPress={() => setBranchLogo(null)}>
+                        <Ionicons name="trash-outline" size={16} color={colors.error} />
+                        <Text style={[styles.actionText, { color: colors.error }]}>Remove</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                <Text style={styles.helpText}>Shown on invoices for this branch. If empty, the company default logo is used.</Text>
+              </View>
+
+              {/* Branch address */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Branch Address & Contact</Text>
+                <LabeledInput label="Street / Locality" value={address} onChangeText={setAddress} multiline />
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <View style={{ flex: 1 }}><LabeledInput label="City" value={city} onChangeText={setCity} /></View>
+                  <View style={{ flex: 1 }}><LabeledInput label="State" value={stateName} onChangeText={setStateName} /></View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <View style={{ flex: 1 }}><LabeledInput label="Postal Code" value={postalCode} onChangeText={setPostalCode} keyboardType="numeric" /></View>
+                  <View style={{ flex: 1 }}><LabeledInput label="Branch Phone" value={branchPhone} onChangeText={setBranchPhone} keyboardType="phone-pad" /></View>
+                </View>
+                <LabeledInput label="Branch Email" value={branchEmail} onChangeText={setBranchEmail} keyboardType="email-address" autoCapitalize="none" />
+              </View>
+
+              {/* Branch tax */}
+              <View style={styles.card}>
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardTitle}>Enable Tax / GST for this branch</Text>
+                    <Text style={styles.helpText}>Show tax on invoices generated for this branch</Text>
+                  </View>
+                  <Switch value={taxEnabled} onValueChange={setTaxEnabled} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={taxEnabled ? colors.brandPrimary : '#f4f3f4'} />
+                </View>
+                {taxEnabled && (
+                  <>
+                    <LabeledInput label="GST/Tax Number" value={taxNumber} onChangeText={setTaxNumber} autoCapitalize="characters" />
+                    <LabeledInput label="Tax %" value={taxPercentage} onChangeText={(v: string) => setTaxPercentage(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" />
+                  </>
+                )}
+              </View>
+
+              {/* Branch invoice */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Invoice & Receipt (Branch)</Text>
+                <LabeledInput label="Invoice Prefix (e.g. INV, B1)" value={invoicePrefix} onChangeText={setInvoicePrefix} autoCapitalize="characters" />
+                <LabeledInput label="Receipt Header" value={receiptHeader} onChangeText={setReceiptHeader} placeholder="Optional tagline" />
+                <LabeledInput label="Receipt Footer" value={receiptFooter} onChangeText={setReceiptFooter} placeholder="Thank you! Powered by ParlourPilot" />
+              </View>
+
+              <TouchableOpacity testID="save-branch-btn" style={styles.saveBtn} onPress={saveBranch} disabled={savingBranch}>
+                {savingBranch ? <ActivityIndicator color="#fff" /> : (
+                  <>
+                    <Ionicons name="save-outline" size={18} color="#fff" />
+                    <Text style={styles.saveText}>Save Branch Settings</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
+
+          {(!branches || branches.length === 0) && (
+            <View style={styles.card}>
+              <Text style={styles.helpText}>No branches found. Go to Manage → Branches to add one.</Text>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Branch picker modal */}
+      <Modal visible={branchPickerOpen} transparent animationType="fade" onRequestClose={() => setBranchPickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setBranchPickerOpen(false)}>
+          <Pressable style={styles.pickerSheet} onPress={() => {}}>
+            <Text style={styles.pickerTitle}>Choose a branch</Text>
+            <ScrollView style={{ maxHeight: 400 }}>
+              {(branches || []).map((b: any) => {
+                const isSelected = b.id === selectedBranchId;
+                return (
+                  <TouchableOpacity
+                    key={b.id}
+                    style={[styles.pickerItem, isSelected && styles.pickerItemActive]}
+                    onPress={() => { setSelectedBranchId(b.id); setBranchPickerOpen(false); Haptics.selectionAsync(); }}
+                    testID={`branch-opt-${b.id}`}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.pickerItemText, isSelected && { color: colors.brandPrimary, fontWeight: '800' }]}>
+                        {b.name} {b.is_head ? '· HEAD' : ''}
+                      </Text>
+                      {(b.address || b.city) ? (
+                        <Text style={styles.pickerItemMeta}>{[b.address, b.city].filter(Boolean).join(', ')}</Text>
+                      ) : null}
+                    </View>
+                    {isSelected && <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity style={[styles.actionBtn, { alignSelf: 'stretch', justifyContent: 'center' }]} onPress={() => setBranchPickerOpen(false)}>
+              <Text style={styles.actionText}>Close</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -310,6 +487,18 @@ const styles = StyleSheet.create({
   backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 16, fontWeight: '800', color: colors.onSurface },
 
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 4, marginTop: spacing.sm },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.brandPrimary, letterSpacing: 0.4 },
+  sectionHint: { fontSize: 11, color: colors.onSurfaceTertiary, marginBottom: spacing.md },
+
+  branchPicker: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary,
+    borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md,
+  },
+  branchPickerLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.5 },
+  branchPickerValue: { fontSize: 15, fontWeight: '800', color: colors.brandPrimary, marginTop: 2 },
+
   card: { backgroundColor: '#FFFFFF', padding: spacing.lg, borderRadius: radius.md, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.card },
   cardTitle: { fontSize: 14, fontWeight: '800', color: colors.onSurface, marginBottom: spacing.md },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },
@@ -330,4 +519,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 14, marginTop: spacing.md, ...shadows.card,
   },
   saveText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
+  pickerSheet: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, width: '100%', maxWidth: 420, gap: spacing.md },
+  pickerTitle: { fontSize: 16, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
+  pickerItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, marginBottom: 8 },
+  pickerItemActive: { backgroundColor: colors.brandTertiary, borderColor: colors.brandSecondary },
+  pickerItemText: { fontSize: 14, fontWeight: '600', color: colors.onSurface },
+  pickerItemMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
 });

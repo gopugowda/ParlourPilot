@@ -26,7 +26,12 @@ export default function MembersScreen() {
   const [list, setList] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'expiring'>((params?.filter === 'expiring' ? 'expiring' : 'all'));
+  const [filter, setFilter] = useState<'all' | 'active' | 'expiring' | 'expired'>(
+    params?.filter === 'expiring' ? 'expiring'
+    : params?.filter === 'active' ? 'active'
+    : params?.filter === 'expired' ? 'expired'
+    : 'all'
+  );
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
@@ -100,12 +105,16 @@ export default function MembersScreen() {
 
   const filtered = list.filter(m => {
     if (filter === 'expiring' && !(m.status === 'expiring_soon' || m.status === 'expired')) return false;
+    if (filter === 'active' && !(m.status === 'active' || m.status === 'expiring_soon')) return false;
+    if (filter === 'expired' && m.status !== 'expired') return false;
     const s = search.toLowerCase();
     if (!s) return true;
     return m.name.toLowerCase().includes(s) || m.phone.includes(s);
   });
 
   const expiringCount = list.filter(m => m.status === 'expiring_soon' || m.status === 'expired').length;
+  const activeCount = list.filter(m => m.status === 'active' || m.status === 'expiring_soon').length;
+  const expiredCount = list.filter(m => m.status === 'expired').length;
 
   const sendWhatsApp = async (m: Member) => {
     let phoneNum = (m.phone || '').replace(/[^0-9]/g, '');
@@ -163,7 +172,12 @@ export default function MembersScreen() {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow} style={{ flexGrow: 0 }}>
-        {[{ k: 'all', label: `All (${list.length})` }, { k: 'expiring', label: `Expiring (${expiringCount})` }].map(c => {
+        {[
+          { k: 'all', label: `All (${list.length})` },
+          { k: 'active', label: `Active (${activeCount})` },
+          { k: 'expiring', label: `Expiring (${expiringCount})` },
+          { k: 'expired', label: `Expired (${expiredCount})` },
+        ].map(c => {
           const active = filter === c.k;
           return (
             <TouchableOpacity
