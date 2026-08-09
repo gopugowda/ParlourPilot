@@ -168,6 +168,9 @@ ${tipBlock}
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn} testID="bill-back">
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.iconBtn} testID="bill-home">
+          <Ionicons name="home-outline" size={20} color={colors.onSurface} />
+        </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Bill #{bill.bill_no}</Text>
           <Text style={styles.headerSub}>

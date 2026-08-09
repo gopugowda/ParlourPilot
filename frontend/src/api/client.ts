@@ -65,6 +65,14 @@ export const subscriptionStore = {
   clear: () => storage.removeItem(SUBSCRIPTION_KEY),
 };
 
+// Current branch selector (owner can switch, staff is pinned)
+const BRANCH_KEY = 'parlourpilot_current_branch_id';
+export const currentBranchStore = {
+  get: () => storage.getItem(BRANCH_KEY),
+  set: (b: string) => storage.setItem(BRANCH_KEY, b),
+  clear: () => storage.removeItem(BRANCH_KEY),
+};
+
 // Global listener for subscription-expired responses (402)
 let subscriptionExpiredListener: (() => void) | null = null;
 export function setSubscriptionExpiredListener(fn: () => void) {
@@ -89,13 +97,16 @@ export class ApiError extends Error {
 
 export async function api<T = any>(
   path: string,
-  opts: { method?: string; body?: any; auth?: boolean } = {}
+  opts: { method?: string; body?: any; auth?: boolean; branchId?: string | null } = {}
 ): Promise<T> {
-  const { method = 'GET', body, auth = true } = opts;
+  const { method = 'GET', body, auth = true, branchId } = opts;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (auth) {
     const token = await tokenStore.get();
     if (token) headers['Authorization'] = `Bearer ${token}`;
+    // Include current branch header if set (opt-in via branchId param or global store)
+    const bid = branchId !== undefined ? branchId : await currentBranchStore.get();
+    if (bid) headers['X-Branch-Id'] = bid;
   }
   const res = await fetch(`${BASE_URL}/api${path}`, {
     method,
@@ -132,11 +143,19 @@ export const authApi = {
 };
 
 export const tenantApi = {
-  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string }) =>
+  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string; num_branches?: number; branch_names?: string[] }) =>
     api('/tenants/signup', { method: 'POST', body: data, auth: false }),
   getMine: () => api('/tenants/me'),
   updateMine: (data: any) => api('/tenants/me', { method: 'PUT', body: data }),
   subscription: () => api('/tenants/me/subscription'),
+  plans: () => api('/subscription/plans', { auth: false }),
+};
+
+export const branchApi = {
+  list: () => api('/branches'),
+  create: (data: any) => api('/branches', { method: 'POST', body: data }),
+  update: (bid: string, data: any) => api(`/branches/${bid}`, { method: 'PUT', body: data }),
+  remove: (bid: string) => api(`/branches/${bid}`, { method: 'DELETE' }),
 };
 
 export const platformApi = {

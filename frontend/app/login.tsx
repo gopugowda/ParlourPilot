@@ -174,7 +174,7 @@ export default function LoginScreen() {
             onPress={() => router.push('/signup')}
             style={styles.signupBtn}
           >
-            <Text style={styles.signupText}>Create your salon account · 7-day free trial</Text>
+            <Text style={styles.signupText}>Create your salon account · 15-day free trial</Text>
             <Ionicons name="arrow-forward" size={16} color={colors.brandPrimary} />
           </TouchableOpacity>
         </View>

@@ -24,6 +24,7 @@ export default function SignupScreen() {
   const [city, setCity] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
+  const [numBranches, setNumBranches] = useState('1');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -38,6 +39,7 @@ export default function SignupScreen() {
       if (digits.length < 6 || digits.length > 15) return setErr('Phone must be 6-15 digits');
     }
     if (password.length < 6) return setErr('Password must be at least 6 characters');
+    const nb = Math.max(1, Math.min(20, parseInt(numBranches || '1', 10) || 1));
 
     setLoading(true);
     try {
@@ -48,9 +50,9 @@ export default function SignupScreen() {
         password,
         phone: phone.trim(),
         city: city.trim(),
+        num_branches: nb,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Navigation handled by AuthGate; but push explicitly for safety
       router.replace('/(tabs)');
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -88,7 +90,7 @@ export default function SignupScreen() {
           <Text style={styles.brandName}>ParlourPilot</Text>
           <View style={styles.trialBanner}>
             <Ionicons name="gift-outline" size={16} color={colors.brandPrimary} />
-            <Text style={styles.trialText}>7-day free trial · No credit card required</Text>
+            <Text style={styles.trialText}>15-day free trial · No credit card required</Text>
           </View>
         </View>
 
@@ -177,6 +179,25 @@ export default function SignupScreen() {
               returnKeyType="next"
             />
           </View>
+        </View>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Number of Branches</Text>
+          <View style={styles.inputWrap}>
+            <Ionicons name="business-outline" size={18} color={colors.onSurfaceTertiary} />
+            <TextInput
+              testID="signup-branches-input"
+              value={numBranches}
+              onChangeText={(v) => setNumBranches(v.replace(/[^0-9]/g, ''))}
+              keyboardType="numeric"
+              placeholder="1"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              style={styles.input}
+            />
+          </View>
+          <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
+            Start with 1 branch (Main). You can add more branches anytime. ₹999/month or ₹9999/year per branch.
+          </Text>
         </View>
 
         <View style={styles.field}>

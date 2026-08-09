@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator,
+  Modal, Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,10 +15,11 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 const LOGO = require('../../assets/images/parlourpilot-logo.png');
 
 export default function DashboardScreen() {
-  const { user, tenant, subscription, logout } = useAuth();
+  const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout } = useAuth();
   const router = useRouter();
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [showBranchPicker, setShowBranchPicker] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
@@ -29,6 +31,8 @@ export default function DashboardScreen() {
 
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
   useFocusEffect(useCallback(() => { load(); }, []));
+  // Refetch when branch selection changes
+  useEffect(() => { load(); }, [currentBranchId]);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
@@ -80,6 +84,27 @@ export default function DashboardScreen() {
                       ? `  · ${subscription.days_left}d trial left`
                       : ''}
                   </Text>
+                  {branches.length > 0 && isAdmin && (
+                    <TouchableOpacity
+                      testID="branch-switcher"
+                      onPress={() => setShowBranchPicker(true)}
+                      style={styles.branchSwitcher}
+                    >
+                      <Ionicons name="business-outline" size={12} color="#FFFFFF" />
+                      <Text style={styles.branchSwitcherText} numberOfLines={1}>
+                        {branches.find(b => b.id === currentBranchId)?.name || 'All Branches'}
+                      </Text>
+                      <Ionicons name="chevron-down" size={12} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  )}
+                  {branches.length > 0 && !isAdmin && currentBranchId && (
+                    <View style={styles.branchStatic}>
+                      <Ionicons name="business-outline" size={11} color="#FFFFFF" />
+                      <Text style={styles.branchSwitcherText} numberOfLines={1}>
+                        {branches.find(b => b.id === currentBranchId)?.name || ''}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               </View>
               <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
@@ -241,9 +266,58 @@ export default function DashboardScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Branch Picker Modal */}
+      <Modal visible={showBranchPicker} transparent animationType="fade" onRequestClose={() => setShowBranchPicker(false)}>
+        <Pressable style={brancherStyles.backdrop} onPress={() => setShowBranchPicker(false)}>
+          <Pressable style={brancherStyles.sheet} onPress={() => {}}>
+            <Text style={brancherStyles.title}>Switch Branch</Text>
+            <ScrollView style={{ maxHeight: 400 }}>
+              <TouchableOpacity
+                style={[brancherStyles.item, currentBranchId === null && brancherStyles.itemActive]}
+                onPress={async () => { await selectBranch(null); setShowBranchPicker(false); }}
+              >
+                <Ionicons name="globe-outline" size={18} color={colors.brandPrimary} />
+                <Text style={brancherStyles.itemName}>All Branches (Aggregate)</Text>
+                {currentBranchId === null && <Ionicons name="checkmark" size={18} color={colors.brandPrimary} />}
+              </TouchableOpacity>
+              {branches.map(b => (
+                <TouchableOpacity
+                  key={b.id}
+                  style={[brancherStyles.item, currentBranchId === b.id && brancherStyles.itemActive]}
+                  onPress={async () => { await selectBranch(b.id); setShowBranchPicker(false); }}
+                >
+                  <Ionicons name="business-outline" size={18} color={colors.brandPrimary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={brancherStyles.itemName}>{b.name}</Text>
+                    {b.is_head && <Text style={brancherStyles.itemBadge}>HEAD BRANCH</Text>}
+                  </View>
+                  {currentBranchId === b.id && <Ionicons name="checkmark" size={18} color={colors.brandPrimary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity onPress={() => router.push('/manage/branches')} style={brancherStyles.manageBtn}>
+              <Ionicons name="settings-outline" size={16} color={colors.brandPrimary} />
+              <Text style={brancherStyles.manageText}>Manage Branches</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
+
+const brancherStyles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  sheet: { width: '100%', maxWidth: 400, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, gap: spacing.md },
+  title: { fontSize: 16, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
+  item: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, marginBottom: 6 },
+  itemActive: { backgroundColor: colors.brandTertiary, borderColor: colors.brandSecondary },
+  itemName: { fontSize: 14, fontWeight: '600', color: colors.onSurface, flex: 1 },
+  itemBadge: { fontSize: 9, fontWeight: '900', color: colors.brandPrimary, letterSpacing: 0.5 },
+  manageBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: radius.sm, backgroundColor: colors.brandTertiary },
+  manageText: { color: colors.brandPrimary, fontWeight: '700', fontSize: 13 },
+});
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
@@ -258,6 +332,16 @@ const styles = StyleSheet.create({
   heroLogo: { width: 38, height: 38 },
   heroBrandName: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 0.3 },
   heroBrandSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2, fontWeight: '600' },
+  branchSwitcher: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginTop: 6, alignSelf: 'flex-start',
+    paddingHorizontal: 8, paddingVertical: 4,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    maxWidth: 200,
+  },
+  branchStatic: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start' },
+  branchSwitcherText: { color: '#fff', fontSize: 11, fontWeight: '700', flexShrink: 1 },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
   heroLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 12, letterSpacing: 1, fontWeight: '700' },
   heroValue: { color: '#FFFFFF', fontSize: 44, fontWeight: '900', marginTop: spacing.xs },

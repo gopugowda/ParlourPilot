@@ -75,6 +75,9 @@ export default function ServicesScreen() {
         <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.replace("/(tabs)")} style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: 4 }}>
+          <Ionicons name="home-outline" size={20} color="#3A3937" />
+        </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Services</Text>
           <Text style={styles.headerSub}>{list.length} services</Text>

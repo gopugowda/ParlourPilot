@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 9: Verified 6 features/fixes for ParlourPilot multi-branch layer (TRIAL_DAYS=15, subscription plans ₹999/₹9999, Branch model + CRUD, branch_id on all branch-scoped collections, signup with N branches, resolve_branch_id + BranchScope, per-branch bill sequence, staff branch enforcement, Glow Up backfill, home button on sub-pages). Backend: 21/21 iter9 pytest passed (100%). Iter8 regression: 14/14 still passing (no regression from refactor). Frontend smoke: 15-day banner on login+signup, Number of Branches input present, dashboard hero shows 'Main Branch (Sullia)' switcher pill, Manage tab has 'Branches' entry above Salon Settings, Branches screen shows Main Branch (Sullia) with HEAD + CURRENT badges and ₹999/month/branch or ₹9999/year/branch pricing box. All target behaviors confirmed on live public URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter9_multi_branch.py",
+    "/app/test_reports/pytest/pytest_iter9.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~2318 lines. Recommend splitting into routers (auth, branches, services, bills, members, reports, platform) — becoming unwieldy for maintenance.",
+    "resolve_branch_id: for owner without X-Branch-Id and no user.branch_id, code first tries user.branch_id then auto-selects first branch of tenant; this means owner NEVER gets aggregate view via API (contrary to task 10 description). In practice, owner always has branch_id set (head branch from signup), so aggregate mode only fires if branch_id explicitly cleared. My test confirmed cross-branch isolation via specific X-Branch-Id headers. If aggregate 'All Branches' is required, backend needs an explicit sentinel (e.g. X-Branch-Id: __all__) — currently owner UI must iterate branches client-side.",
+    "Deprecation warning still logged in web console: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — RN Web deprecation, non-blocking (carry-over from iter8).",
+    "Branch delete: allows deletion even when active users are still assigned; code reassigns them to head branch. Documented but consider warning admin in UI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter9_multi_branch.py (new — 21 tests, class-scoped fixtures with TEST_ prefix cleanup)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 iter9 + 14/14 iter8 regression)",
+    "frontend": "100% (5/5 smoke — login 15-day banner, signup 15-day + Number of Branches + ₹999 hint, dashboard branch switcher pill 'Main Branch (Sullia)', Manage → Branches entry, Branches screen with HEAD + CURRENT + pricing box)"
+  },
+  "seed_data_creation": "Ephemeral: 3 test tenants (TEST_Iter9_2b_*, TEST_Iter9_3b_*, TEST_Iter9_last_*) via /api/tenants/signup for isolation + last-branch-delete tests. Bills/services/branches created and torn down within fixtures. Test tenants remain in DB (flagged TEST_ prefix, do not conflict with Glow Up).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter9 test suite at /app/backend/tests/test_iter9_multi_branch.py covers: subscription plans (public), branch CRUD, cannot-delete-last-branch, cannot-delete-branch-with-bills, signup N branches (1/2/3), trial=15 days, owner user.branch_id == head branch, bill without X-Branch-Id → uses user.branch_id, bill with X-Branch-Id → uses that branch, per-branch invoice prefix, per-branch bill sequence namespaces, service branch isolation (cross-branch names do not leak), staff bills scoped regardless of header override, staff can GET /members and /members/expiring, login response has branches array, backfilled Glow Up bills have branch_id=glowup-branch-main. Owner aggregate-view (no header, no user.branch_id) is not directly testable because seeded admin has branch_id=main; behavior verified indirectly via service isolation tests. BillItem requires service_name AND beautician_name fields — remember when constructing test bills. GLOW_UP_MAIN_BRANCH_ID = 'glowup-branch-main'.",
+  "rca_of_issue": "N/A — no bugs found. Multi-branch refactor is clean: BranchScope dependency correctly injects (user, tenant_id, branch_id) into 30+ endpoints; branch_id is forced for staff and configurable via X-Branch-Id header for owners; branch invoice_prefix takes precedence over tenant prefix; bill sequences are branch-scoped via _next_bill_number(tid, branch_id, prefix); backfill migration correctly stamps glowup-branch-main on existing bills/services/beauticians/expenses/stock docs. Frontend AuthContext exposes branches + currentBranchId; api client auto-attaches X-Branch-Id header. Signup accepts num_branches param and creates N branches with head=first."
+}

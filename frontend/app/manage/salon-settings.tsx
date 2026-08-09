@@ -175,6 +175,9 @@ export default function SalonSettingsScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.replace("/(tabs)")} style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: 4 }}>
+          <Ionicons name="home-outline" size={20} color="#3A3937" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Salon Settings</Text>
         <View style={{ width: 36 }} />
       </SafeAreaView>

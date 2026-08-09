@@ -5,7 +5,7 @@ Backend API (FastAPI + MongoDB)
 Every tenant-owned collection is scoped by `tenant_id`. All authenticated
 requests derive the tenant from the JWT — never from the request body.
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -38,9 +38,29 @@ JWT_ALG = 'HS256'
 JWT_EXP_HOURS = 24 * 7  # 7 days
 
 # SaaS defaults
-TRIAL_DAYS = 7
+TRIAL_DAYS = 15
 DEFAULT_MEMBER_DISCOUNT_PCT = 10.0
 DEFAULT_MEMBER_MIN_PRICE = 100.0
+
+# Subscription Plans (₹999/month/branch, ₹9999/year/branch — all features included)
+SUBSCRIPTION_PLANS: List[Dict[str, Any]] = [
+    {
+        "id": "monthly",
+        "name": "Monthly",
+        "billing_period": "month",
+        "price_per_branch": 999,
+        "currency": "INR",
+        "features": ["All features included", "Unlimited bills", "Unlimited staff", "All reports", "WhatsApp reminders", "Multi-branch"],
+    },
+    {
+        "id": "yearly",
+        "name": "Yearly",
+        "billing_period": "year",
+        "price_per_branch": 9999,
+        "currency": "INR",
+        "features": ["All features included", "Unlimited bills", "Unlimited staff", "All reports", "WhatsApp reminders", "Multi-branch", "2 months free"],
+    },
+]
 
 app = FastAPI(title="ParlourPilot SaaS API")
 api_router = APIRouter(prefix="/api")
@@ -129,8 +149,62 @@ def tenant_id_of(user: dict) -> str:
 
 
 def tq(user: dict, extra: Optional[dict] = None) -> dict:
-    """Build a tenant-scoped Mongo query filter. Always includes tenant_id."""
+    """Build a tenant-scoped Mongo query filter. Always includes tenant_id.
+    Does NOT include branch filter — use `bq()` for branch-scoped collections."""
     q = {"tenant_id": tenant_id_of(user)}
+    if extra:
+        q.update(extra)
+    return q
+
+
+def _extract_branch_id_header(x_branch_id: Optional[str]) -> Optional[str]:
+    v = (x_branch_id or "").strip()
+    if not v or v.lower() == "all":
+        return None
+    return v
+
+
+async def resolve_branch_id(user: dict, x_branch_id: Optional[str] = None, required: bool = False) -> Optional[str]:
+    """Resolve the branch context for a request.
+    - Staff: always their assigned user.branch_id (header ignored).
+    - Owner/admin: header value if provided & belongs to tenant; else user.branch_id; else None (all branches).
+    - Platform admin: never branch-scoped.
+    If `required=True` and no branch context → 400.
+    """
+    role = user.get("role")
+    if role == "platform_admin":
+        return None
+    if role == "staff":
+        bid = user.get("branch_id")
+        if not bid and required:
+            raise HTTPException(status_code=400, detail="Staff account has no branch assigned. Please contact admin.")
+        return bid
+    # admin / owner
+    header_bid = _extract_branch_id_header(x_branch_id)
+    if header_bid:
+        # Verify branch belongs to tenant
+        br = await db.branches.find_one({"id": header_bid, "tenant_id": tenant_id_of(user)}, {"_id": 0, "id": 1})
+        if not br:
+            raise HTTPException(status_code=400, detail="Invalid branch")
+        return header_bid
+    # No header: fall back to user's default branch if set
+    default_bid = user.get("branch_id")
+    if default_bid:
+        return default_bid
+    if required:
+        # Try to auto-select the first branch of the tenant
+        first_br = await db.branches.find_one({"tenant_id": tenant_id_of(user)}, sort=[("created_at", 1)])
+        if first_br:
+            return first_br["id"]
+        raise HTTPException(status_code=400, detail="No branch available. Please create a branch first.")
+    return None
+
+
+def bq_from(tid: str, branch_id: Optional[str], extra: Optional[dict] = None) -> dict:
+    """Build tenant+branch scoped filter from raw params."""
+    q: dict = {"tenant_id": tid}
+    if branch_id:
+        q["branch_id"] = branch_id
     if extra:
         q.update(extra)
     return q
@@ -194,6 +268,45 @@ async def require_admin_active(user=Depends(require_admin)):
     return user
 
 
+class BranchScope:
+    def __init__(self, user: dict, tenant_id: str, branch_id: Optional[str]):
+        self.user = user
+        self.tenant_id = tenant_id
+        self.branch_id = branch_id
+
+    def filter(self, extra: Optional[dict] = None) -> dict:
+        q: dict = {"tenant_id": self.tenant_id}
+        if self.branch_id:
+            q["branch_id"] = self.branch_id
+        if extra:
+            q.update(extra)
+        return q
+
+
+async def branch_scope(
+    user=Depends(get_current_user_active),
+    x_branch_id: Optional[str] = Header(default=None, alias="X-Branch-Id"),
+) -> BranchScope:
+    bid = await resolve_branch_id(user, x_branch_id, required=False)
+    return BranchScope(user, tenant_id_of(user), bid)
+
+
+async def branch_scope_required(
+    user=Depends(get_current_user_active),
+    x_branch_id: Optional[str] = Header(default=None, alias="X-Branch-Id"),
+) -> BranchScope:
+    bid = await resolve_branch_id(user, x_branch_id, required=True)
+    return BranchScope(user, tenant_id_of(user), bid)
+
+
+async def branch_scope_admin(
+    user=Depends(require_admin_active),
+    x_branch_id: Optional[str] = Header(default=None, alias="X-Branch-Id"),
+) -> BranchScope:
+    bid = await resolve_branch_id(user, x_branch_id, required=True)
+    return BranchScope(user, tenant_id_of(user), bid)
+
+
 # ============ Models ============
 class TenantSignup(BaseModel):
     business_name: str
@@ -203,6 +316,29 @@ class TenantSignup(BaseModel):
     phone: Optional[str] = ""
     city: Optional[str] = ""
     country: Optional[str] = "India"
+    num_branches: Optional[int] = 1  # create N branches upfront
+    branch_names: Optional[List[str]] = None  # optional custom names
+
+
+class BranchIn(BaseModel):
+    name: str
+    address: Optional[str] = ""
+    city: Optional[str] = ""
+    state: Optional[str] = ""
+    country: Optional[str] = "India"
+    postal_code: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    logo: Optional[str] = None
+    tax_enabled: Optional[bool] = False
+    tax_number: Optional[str] = ""
+    tax_percentage: Optional[float] = 0.0
+    invoice_prefix: Optional[str] = ""
+    receipt_header: Optional[str] = ""
+    receipt_footer: Optional[str] = ""
+    is_head: Optional[bool] = False
+    parent_branch_id: Optional[str] = None
+    active: Optional[bool] = True
 
 
 class TenantUpdate(BaseModel):
@@ -234,12 +370,14 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: Literal["admin", "owner", "staff"] = "staff"
+    branch_id: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     role: Optional[Literal["admin", "owner", "staff"]] = None
+    branch_id: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -401,7 +539,7 @@ def compute_bill_totals(items_effective: List[dict]):
 # ============ Tenant / Signup Routes ============
 @api_router.post("/tenants/signup")
 async def signup_tenant(body: TenantSignup):
-    """Public endpoint. Creates a new tenant + owner user + 7-day trial."""
+    """Public endpoint. Creates a new tenant + owner user + N branches + 15-day trial."""
     email = body.email.lower().strip()
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
@@ -414,7 +552,6 @@ async def signup_tenant(body: TenantSignup):
     trial_end = now + timedelta(days=TRIAL_DAYS)
     tenant_id = str(uuid.uuid4())
     slug = slugify(body.business_name)
-    # Ensure unique slug
     base_slug = slug
     i = 1
     while await db.tenants.find_one({"slug": slug}):
@@ -457,13 +594,53 @@ async def signup_tenant(body: TenantSignup):
     }
     await db.tenants.insert_one(tenant_doc)
 
+    # Create branches
+    n_branches = max(1, int(body.num_branches or 1))
+    branch_names = body.branch_names or []
+    head_branch_id: Optional[str] = None
+    created_branches: List[dict] = []
+    for idx in range(n_branches):
+        bname = branch_names[idx] if idx < len(branch_names) and branch_names[idx].strip() else (
+            "Head Branch" if idx == 0 else f"Branch {idx + 1}"
+        )
+        br_doc = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "name": bname.strip(),
+            "address": "",
+            "city": body.city or "",
+            "state": "",
+            "country": body.country or "India",
+            "postal_code": "",
+            "phone": body.phone or "" if idx == 0 else "",
+            "email": email if idx == 0 else "",
+            "logo": None,
+            "tax_enabled": False,
+            "tax_number": "",
+            "tax_percentage": 0.0,
+            "invoice_prefix": "" if idx == 0 else f"B{idx + 1}",
+            "receipt_header": "",
+            "receipt_footer": "",
+            "is_head": idx == 0,
+            "parent_branch_id": None if idx == 0 else head_branch_id,
+            "active": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.branches.insert_one(br_doc)
+        if idx == 0:
+            head_branch_id = br_doc["id"]
+        created_branches.append({k: v for k, v in br_doc.items() if k != "_id"})
+
+    # Owner user (admin) — assigned to head branch by default but can switch
     user_doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": tenant_id,
+        "branch_id": head_branch_id,
         "name": body.owner_name.strip(),
         "email": email,
         "password_hash": hash_password(body.password),
-        "role": "admin",  # owner (using "admin" for backward-compat with frontend role checks)
+        "role": "admin",
         "is_active": True,
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -476,11 +653,13 @@ async def signup_tenant(body: TenantSignup):
         "user": {
             "id": user_doc["id"],
             "tenant_id": tenant_id,
+            "branch_id": head_branch_id,
             "name": user_doc["name"],
             "email": user_doc["email"],
             "role": user_doc["role"],
         },
         "tenant": {k: v for k, v in tenant_doc.items() if k != "_id"},
+        "branches": created_branches,
         "subscription": tenant_status(tenant_doc),
     }
 
@@ -519,7 +698,98 @@ async def my_subscription(user=Depends(get_current_user)):
     tenant = await load_tenant(tenant_id_of(user))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant_status(tenant)
+    # include branch count for pricing
+    n_branches = await db.branches.count_documents({"tenant_id": tenant["id"], "active": True})
+    st = tenant_status(tenant)
+    st["branch_count"] = n_branches
+    st["plans"] = SUBSCRIPTION_PLANS
+    return st
+
+
+# ============ Branches ============
+@api_router.get("/branches")
+async def list_branches(user=Depends(get_current_user)):
+    """List branches for current tenant. Staff also sees list (needed for readonly identify)."""
+    if user.get("role") == "platform_admin":
+        raise HTTPException(status_code=403, detail="Platform admin does not have branches")
+    docs = await db.branches.find({"tenant_id": tenant_id_of(user)}, {"_id": 0}).sort("is_head", -1).to_list(500)
+    return docs
+
+
+@api_router.post("/branches")
+async def create_branch(body: BranchIn, user=Depends(require_admin_active)):
+    tid = tenant_id_of(user)
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Branch name required")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tenant_id": tid,
+        "name": body.name.strip(),
+        "address": body.address or "",
+        "city": body.city or "",
+        "state": body.state or "",
+        "country": body.country or "India",
+        "postal_code": body.postal_code or "",
+        "phone": body.phone or "",
+        "email": body.email or "",
+        "logo": body.logo,
+        "tax_enabled": bool(body.tax_enabled),
+        "tax_number": body.tax_number or "",
+        "tax_percentage": float(body.tax_percentage or 0),
+        "invoice_prefix": body.invoice_prefix or "",
+        "receipt_header": body.receipt_header or "",
+        "receipt_footer": body.receipt_footer or "",
+        "is_head": bool(body.is_head),
+        "parent_branch_id": body.parent_branch_id,
+        "active": True if body.active is None else bool(body.active),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.branches.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.put("/branches/{bid}")
+async def update_branch(bid: str, body: BranchIn, user=Depends(require_admin_active)):
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "name" in updates:
+        updates["name"] = updates["name"].strip()
+    updates["updated_at"] = now_iso()
+    result = await db.branches.find_one_and_update(
+        tq(user, {"id": bid}), {"$set": updates},
+        return_document=True, projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    return result
+
+
+@api_router.delete("/branches/{bid}")
+async def delete_branch(bid: str, user=Depends(require_admin_active)):
+    tid = tenant_id_of(user)
+    br = await db.branches.find_one({"id": bid, "tenant_id": tid})
+    if not br:
+        raise HTTPException(status_code=404, detail="Not found")
+    # Cannot delete if it's the last active branch
+    n_active = await db.branches.count_documents({"tenant_id": tid, "active": True, "id": {"$ne": bid}})
+    if n_active == 0:
+        raise HTTPException(status_code=400, detail="Cannot delete the last branch. Tenant must have at least one branch.")
+    # Cannot delete if it has bills
+    n_bills = await db.bills.count_documents({"tenant_id": tid, "branch_id": bid})
+    if n_bills > 0:
+        raise HTTPException(status_code=400, detail=f"Cannot delete: this branch has {n_bills} bills. You can deactivate it instead.")
+    await db.branches.delete_one({"id": bid, "tenant_id": tid})
+    # Also cleanup users assigned to this branch → reassign to head or unset
+    head = await db.branches.find_one({"tenant_id": tid, "is_head": True})
+    new_bid = head["id"] if head else None
+    await db.users.update_many({"tenant_id": tid, "branch_id": bid}, {"$set": {"branch_id": new_bid}})
+    return {"ok": True}
+
+
+@api_router.get("/subscription/plans")
+async def get_plans():
+    """Public — list of subscription plans."""
+    return SUBSCRIPTION_PLANS
 
 
 # ============ Auth Routes ============
@@ -532,9 +802,20 @@ async def register(body: UserCreate, user=Depends(require_admin)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered in this salon")
     role = "admin" if body.role in ("admin", "owner") else "staff"
+    # Validate branch_id belongs to tenant if provided
+    branch_id = body.branch_id
+    if branch_id:
+        br = await db.branches.find_one({"id": branch_id, "tenant_id": tid})
+        if not br:
+            raise HTTPException(status_code=400, detail="Invalid branch")
+    # Staff must have a branch — default to first branch if not specified
+    if role == "staff" and not branch_id:
+        head = await db.branches.find_one({"tenant_id": tid, "is_head": True})
+        branch_id = head["id"] if head else None
     user_doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": tid,
+        "branch_id": branch_id,
         "name": body.name,
         "email": email,
         "password_hash": hash_password(body.password),
@@ -550,7 +831,6 @@ async def register(body: UserCreate, user=Depends(require_admin)):
 @api_router.post("/auth/login")
 async def login(body: LoginReq):
     email = body.email.lower()
-    # Platform admin has no tenant_id — allow login
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -561,21 +841,25 @@ async def login(body: LoginReq):
 
     subscription = None
     tenant = None
+    branches: List[dict] = []
     if user.get("tenant_id"):
         tenant = await load_tenant(user["tenant_id"])
         if tenant:
             subscription = tenant_status(tenant)
+        branches = await db.branches.find({"tenant_id": user["tenant_id"], "active": True}, {"_id": 0}).sort("is_head", -1).to_list(500)
 
     return {
         "token": token,
         "user": {
             "id": user["id"],
             "tenant_id": user.get("tenant_id"),
+            "branch_id": user.get("branch_id"),
             "name": user["name"],
             "email": user["email"],
             "role": user["role"],
         },
         "tenant": tenant,
+        "branches": branches,
         "subscription": subscription,
     }
 
@@ -584,11 +868,13 @@ async def login(body: LoginReq):
 async def me(user=Depends(get_current_user)):
     tenant = None
     subscription = None
+    branches: List[dict] = []
     if user.get("tenant_id"):
         tenant = await load_tenant(user["tenant_id"])
         if tenant:
             subscription = tenant_status(tenant)
-    return {"user": user, "tenant": tenant, "subscription": subscription}
+        branches = await db.branches.find({"tenant_id": user["tenant_id"], "active": True}, {"_id": 0}).sort("is_head", -1).to_list(500)
+    return {"user": user, "tenant": tenant, "branches": branches, "subscription": subscription}
 
 
 @api_router.get("/auth/users")
@@ -621,6 +907,12 @@ async def update_user(uid: str, body: UserUpdate, user=Depends(require_admin)):
             if admin_count <= 1:
                 raise HTTPException(status_code=400, detail="Cannot demote the last owner/admin")
         updates["role"] = new_role
+    if body.branch_id is not None:
+        if body.branch_id:
+            br = await db.branches.find_one({"id": body.branch_id, "tenant_id": tid})
+            if not br:
+                raise HTTPException(status_code=400, detail="Invalid branch")
+        updates["branch_id"] = body.branch_id or None
     if body.is_active is not None:
         updates["is_active"] = bool(body.is_active)
     if not updates:
@@ -724,16 +1016,17 @@ async def reset_password(body: ResetPasswordReq):
 
 # ============ Beauticians ============
 @api_router.get("/beauticians")
-async def list_beauticians(user=Depends(get_current_user_active)):
-    docs = await db.beauticians.find(tq(user), {"_id": 0}).sort("name", 1).to_list(500)
+async def list_beauticians(scope: BranchScope = Depends(branch_scope)):
+    docs = await db.beauticians.find(scope.filter(), {"_id": 0}).sort("name", 1).to_list(500)
     return docs
 
 
 @api_router.post("/beauticians")
-async def create_beautician(body: BeauticianIn, user=Depends(require_admin_active)):
+async def create_beautician(body: BeauticianIn, scope: BranchScope = Depends(branch_scope_admin)):
     doc = {
         "id": str(uuid.uuid4()),
-        "tenant_id": tenant_id_of(user),
+        "tenant_id": scope.tenant_id,
+        "branch_id": scope.branch_id,
         "name": body.name,
         "role": body.role or "Stylist",
         "phone": body.phone or "",
@@ -745,9 +1038,9 @@ async def create_beautician(body: BeauticianIn, user=Depends(require_admin_activ
 
 
 @api_router.put("/beauticians/{bid}")
-async def update_beautician(bid: str, body: BeauticianIn, user=Depends(require_admin_active)):
+async def update_beautician(bid: str, body: BeauticianIn, scope: BranchScope = Depends(branch_scope_admin)):
     result = await db.beauticians.find_one_and_update(
-        tq(user, {"id": bid}),
+        scope.filter({"id": bid}),
         {"$set": {"name": body.name, "role": body.role, "phone": body.phone or "", "active": body.active}},
         return_document=True, projection={"_id": 0},
     )
@@ -757,8 +1050,8 @@ async def update_beautician(bid: str, body: BeauticianIn, user=Depends(require_a
 
 
 @api_router.delete("/beauticians/{bid}")
-async def delete_beautician(bid: str, user=Depends(require_admin_active)):
-    result = await db.beauticians.delete_one(tq(user, {"id": bid}))
+async def delete_beautician(bid: str, scope: BranchScope = Depends(branch_scope_admin)):
+    result = await db.beauticians.delete_one(scope.filter({"id": bid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -766,16 +1059,17 @@ async def delete_beautician(bid: str, user=Depends(require_admin_active)):
 
 # ============ Services ============
 @api_router.get("/services")
-async def list_services(user=Depends(get_current_user_active)):
-    docs = await db.services.find(tq(user), {"_id": 0}).sort("name", 1).to_list(500)
+async def list_services(scope: BranchScope = Depends(branch_scope)):
+    docs = await db.services.find(scope.filter(), {"_id": 0}).sort("name", 1).to_list(500)
     return docs
 
 
 @api_router.post("/services")
-async def create_service(body: ServiceIn, user=Depends(require_admin_active)):
+async def create_service(body: ServiceIn, scope: BranchScope = Depends(branch_scope_admin)):
     doc = {
         "id": str(uuid.uuid4()),
-        "tenant_id": tenant_id_of(user),
+        "tenant_id": scope.tenant_id,
+        "branch_id": scope.branch_id,
         "name": body.name,
         "price": float(body.price),
         "category": body.category or "General",
@@ -788,9 +1082,9 @@ async def create_service(body: ServiceIn, user=Depends(require_admin_active)):
 
 
 @api_router.put("/services/{sid}")
-async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin_active)):
+async def update_service(sid: str, body: ServiceIn, scope: BranchScope = Depends(branch_scope_admin)):
     result = await db.services.find_one_and_update(
-        tq(user, {"id": sid}),
+        scope.filter({"id": sid}),
         {"$set": {
             "name": body.name, "price": float(body.price),
             "category": body.category,
@@ -805,18 +1099,21 @@ async def update_service(sid: str, body: ServiceIn, user=Depends(require_admin_a
 
 
 @api_router.delete("/services/{sid}")
-async def delete_service(sid: str, user=Depends(require_admin_active)):
-    result = await db.services.delete_one(tq(user, {"id": sid}))
+async def delete_service(sid: str, scope: BranchScope = Depends(branch_scope_admin)):
+    result = await db.services.delete_one(scope.filter({"id": sid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
 
 
 # ============ Bills ============
-async def _next_bill_number(tid: str, prefix_override: Optional[str] = None) -> str:
+async def _next_bill_number(tid: str, branch_id: Optional[str], prefix_override: Optional[str] = None) -> str:
     now = datetime.now(timezone.utc)
     date_prefix = now.strftime("%Y%m%d")
-    count = await db.bills.count_documents({"tenant_id": tid, "bill_no": {"$regex": f".*{date_prefix}"}})
+    q: dict = {"tenant_id": tid, "bill_no": {"$regex": f".*{date_prefix}"}}
+    if branch_id:
+        q["branch_id"] = branch_id
+    count = await db.bills.count_documents(q)
     inv_prefix = (prefix_override or "").strip()
     if inv_prefix:
         return f"{inv_prefix}-{date_prefix}-{count + 1:04d}"
@@ -824,13 +1121,14 @@ async def _next_bill_number(tid: str, prefix_override: Optional[str] = None) -> 
 
 
 @api_router.post("/bills")
-async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
+async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scope_required)):
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one service required")
-    tid = tenant_id_of(user)
+    tid = scope.tenant_id
     tenant = await load_tenant(tid)
+    branch = await db.branches.find_one({"id": scope.branch_id, "tenant_id": tid}, {"_id": 0}) if scope.branch_id else None
 
-    # If is_member, look up the member's own discount override
+    # If is_member, look up the member's own discount override (members are tenant-scoped)
     member_disc_override: Optional[float] = None
     if body.is_member and body.customer_phone:
         m = await db.members.find_one({"tenant_id": tid, "phone": body.customer_phone.strip(), "active": True})
@@ -844,7 +1142,6 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
     line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
     line_tip_cash = line_tip_total - line_tip_qr
 
-    # payable amount BEFORE tips = services_net + tax
     payable = round(services_net + tax_total, 2)
 
     if body.payment_mode == "cash":
@@ -866,11 +1163,13 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
     total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
     grand_total = round(services_net + tax_total + total_tip_amount, 2)
 
-    inv_prefix = (tenant or {}).get("invoice_prefix") or ""
+    # Prefer branch-level invoice prefix, then tenant
+    inv_prefix = (branch or {}).get("invoice_prefix") or (tenant or {}).get("invoice_prefix") or ""
     bill = {
         "id": str(uuid.uuid4()),
         "tenant_id": tid,
-        "bill_no": await _next_bill_number(tid, inv_prefix),
+        "branch_id": scope.branch_id,
+        "bill_no": await _next_bill_number(tid, scope.branch_id, inv_prefix),
         "customer_name": body.customer_name or "Walk-in",
         "customer_phone": body.customer_phone or "",
         "items": items_eff,
@@ -891,8 +1190,8 @@ async def create_bill(body: BillCreate, user=Depends(get_current_user_active)):
         "cash_amount": cash_amt,
         "qr_amount": qr_amt,
         "notes": body.notes or "",
-        "created_by": user["id"],
-        "created_by_name": user["name"],
+        "created_by": scope.user["id"],
+        "created_by_name": scope.user["name"],
         "created_at": now_iso(),
     }
     await db.bills.insert_one(bill)
@@ -904,10 +1203,10 @@ async def list_bills(
     limit: int = 100,
     date: Optional[str] = None,
     payment_mode: Optional[str] = None,
-    user=Depends(get_current_user_active),
+    scope: BranchScope = Depends(branch_scope),
 ):
-    query: dict = tq(user)
-    if user.get("role") == "staff":
+    query: dict = scope.filter()
+    if scope.user.get("role") == "staff":
         t = today_str()
         query["created_at"] = {"$gte": f"{t}T00:00:00", "$lt": f"{t}T23:59:59.999999+00:00"}
     elif date:
@@ -919,10 +1218,10 @@ async def list_bills(
 
 
 @api_router.put("/bills/{bid}")
-async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin_active)):
-    tid = tenant_id_of(user)
+async def update_bill(bid: str, body: BillCreate, scope: BranchScope = Depends(branch_scope_admin)):
+    tid = scope.tenant_id
     tenant = await load_tenant(tid)
-    existing = await db.bills.find_one({"id": bid, "tenant_id": tid}, {"_id": 0})
+    existing = await db.bills.find_one(scope.filter({"id": bid}), {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Bill not found")
     if not body.items:
@@ -979,23 +1278,23 @@ async def update_bill(bid: str, body: BillCreate, user=Depends(require_admin_act
         "cash_amount": cash_amt,
         "qr_amount": qr_amt,
         "notes": body.notes or "",
-        "edited_by": user["id"],
-        "edited_by_name": user["name"],
+        "edited_by": scope.user["id"],
+        "edited_by_name": scope.user["name"],
         "edited_at": now_iso(),
     }
     result = await db.bills.find_one_and_update(
-        {"id": bid, "tenant_id": tid}, {"$set": update},
+        scope.filter({"id": bid}), {"$set": update},
         return_document=True, projection={"_id": 0},
     )
     return result
 
 
 @api_router.get("/bills/{bid}")
-async def get_bill(bid: str, user=Depends(get_current_user_active)):
-    doc = await db.bills.find_one(tq(user, {"id": bid}), {"_id": 0})
+async def get_bill(bid: str, scope: BranchScope = Depends(branch_scope)):
+    doc = await db.bills.find_one(scope.filter({"id": bid}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Bill not found")
-    if user.get("role") == "staff":
+    if scope.user.get("role") == "staff":
         t = today_str()
         if not doc["created_at"].startswith(t):
             raise HTTPException(status_code=403, detail="Staff can only view today's bills")
@@ -1003,8 +1302,8 @@ async def get_bill(bid: str, user=Depends(get_current_user_active)):
 
 
 @api_router.delete("/bills/{bid}")
-async def delete_bill(bid: str, user=Depends(require_admin_active)):
-    result = await db.bills.delete_one(tq(user, {"id": bid}))
+async def delete_bill(bid: str, scope: BranchScope = Depends(branch_scope_admin)):
+    result = await db.bills.delete_one(scope.filter({"id": bid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -1035,6 +1334,7 @@ def _member_status(m: dict) -> dict:
 
 @api_router.get("/members")
 async def list_members(user=Depends(get_current_user_active)):
+    """Members are tenant-scoped (shared across branches). Staff can view."""
     docs = await db.members.find(tq(user), {"_id": 0}).sort("name", 1).to_list(1000)
     return [_member_status(m) for m in docs]
 
@@ -1112,7 +1412,7 @@ async def delete_member(mid: str, user=Depends(require_admin_active)):
 
 
 @api_router.get("/members/expiring")
-async def members_expiring(days: int = 30, user=Depends(require_admin_active)):
+async def members_expiring(days: int = 30, user=Depends(get_current_user_active)):
     docs = await db.members.find(tq(user, {"active": True}), {"_id": 0}).to_list(1000)
     result = []
     for m in docs:
@@ -1134,10 +1434,10 @@ async def list_expenses(
     date: Optional[str] = None,
     month: Optional[str] = None,
     limit: int = 200,
-    user=Depends(get_current_user_active),
+    scope: BranchScope = Depends(branch_scope),
 ):
-    query: dict = tq(user)
-    if user.get("role") == "staff":
+    query: dict = scope.filter()
+    if scope.user.get("role") == "staff":
         query["date"] = today_str()
     elif date:
         query["date"] = date
@@ -1148,7 +1448,7 @@ async def list_expenses(
 
 
 @api_router.post("/expenses")
-async def create_expense(body: ExpenseIn, user=Depends(get_current_user_active)):
+async def create_expense(body: ExpenseIn, scope: BranchScope = Depends(branch_scope_required)):
     if not (body.amount and body.amount > 0):
         raise HTTPException(status_code=400, detail="Amount must be > 0")
     if not body.description.strip():
@@ -1157,14 +1457,15 @@ async def create_expense(body: ExpenseIn, user=Depends(get_current_user_active))
     d = body.date or today_str()
     doc = {
         "id": str(uuid.uuid4()),
-        "tenant_id": tenant_id_of(user),
+        "tenant_id": scope.tenant_id,
+        "branch_id": scope.branch_id,
         "category": cat,
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
         "date": d,
         "notes": body.notes or "",
-        "created_by": user["id"],
-        "created_by_name": user["name"],
+        "created_by": scope.user["id"],
+        "created_by_name": scope.user["name"],
         "created_at": now_iso(),
     }
     await db.expenses.insert_one(doc)
@@ -1172,12 +1473,12 @@ async def create_expense(body: ExpenseIn, user=Depends(get_current_user_active))
 
 
 @api_router.put("/expenses/{eid}")
-async def update_expense(eid: str, body: ExpenseIn, user=Depends(require_admin_active)):
+async def update_expense(eid: str, body: ExpenseIn, scope: BranchScope = Depends(branch_scope_admin)):
     if not (body.amount and body.amount > 0):
         raise HTTPException(status_code=400, detail="Amount must be > 0")
     cat = body.category if body.category in EXPENSE_CATEGORIES else "Other"
     result = await db.expenses.find_one_and_update(
-        tq(user, {"id": eid}),
+        scope.filter({"id": eid}),
         {"$set": {
             "category": cat, "description": body.description.strip(),
             "amount": round(float(body.amount), 2),
@@ -1192,8 +1493,8 @@ async def update_expense(eid: str, body: ExpenseIn, user=Depends(require_admin_a
 
 
 @api_router.delete("/expenses/{eid}")
-async def delete_expense(eid: str, user=Depends(require_admin_active)):
-    result = await db.expenses.delete_one(tq(user, {"id": eid}))
+async def delete_expense(eid: str, scope: BranchScope = Depends(branch_scope_admin)):
+    result = await db.expenses.delete_one(scope.filter({"id": eid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -1206,27 +1507,27 @@ async def stock_units(user=Depends(get_current_user_active)):
 
 
 @api_router.get("/stock")
-async def list_stock(user=Depends(get_current_user_active)):
-    docs = await db.stock_items.find(tq(user), {"_id": 0}).sort("name", 1).to_list(500)
+async def list_stock(scope: BranchScope = Depends(branch_scope)):
+    docs = await db.stock_items.find(scope.filter(), {"_id": 0}).sort("name", 1).to_list(500)
     for d in docs:
         d["low_stock"] = d.get("current_qty", 0) <= d.get("min_qty", 0)
     return docs
 
 
 @api_router.get("/stock/low")
-async def list_low_stock(user=Depends(get_current_user_active)):
-    docs = await db.stock_items.find(tq(user), {"_id": 0}).to_list(500)
+async def list_low_stock(scope: BranchScope = Depends(branch_scope)):
+    docs = await db.stock_items.find(scope.filter(), {"_id": 0}).to_list(500)
     return [d for d in docs if d.get("current_qty", 0) <= d.get("min_qty", 0)]
 
 
 @api_router.post("/stock")
-async def create_stock(body: StockItemIn, user=Depends(require_admin_active)):
-    tid = tenant_id_of(user)
-    if await db.stock_items.find_one({"tenant_id": tid, "name": body.name.strip()}):
+async def create_stock(body: StockItemIn, scope: BranchScope = Depends(branch_scope_admin)):
+    if await db.stock_items.find_one(scope.filter({"name": body.name.strip()})):
         raise HTTPException(status_code=400, detail="Item with this name already exists")
     doc = {
         "id": str(uuid.uuid4()),
-        "tenant_id": tid,
+        "tenant_id": scope.tenant_id,
+        "branch_id": scope.branch_id,
         "name": body.name.strip(),
         "unit": body.unit if body.unit in STOCK_UNITS else "piece",
         "current_qty": round(float(body.current_qty or 0), 2),
@@ -1240,9 +1541,9 @@ async def create_stock(body: StockItemIn, user=Depends(require_admin_active)):
 
 
 @api_router.put("/stock/{sid}")
-async def update_stock(sid: str, body: StockItemIn, user=Depends(require_admin_active)):
+async def update_stock(sid: str, body: StockItemIn, scope: BranchScope = Depends(branch_scope_admin)):
     result = await db.stock_items.find_one_and_update(
-        tq(user, {"id": sid}),
+        scope.filter({"id": sid}),
         {"$set": {
             "name": body.name.strip(),
             "unit": body.unit if body.unit in STOCK_UNITS else "piece",
@@ -1259,19 +1560,18 @@ async def update_stock(sid: str, body: StockItemIn, user=Depends(require_admin_a
 
 
 @api_router.delete("/stock/{sid}")
-async def delete_stock(sid: str, user=Depends(require_admin_active)):
-    tid = tenant_id_of(user)
-    result = await db.stock_items.delete_one({"id": sid, "tenant_id": tid})
+async def delete_stock(sid: str, scope: BranchScope = Depends(branch_scope_admin)):
+    result = await db.stock_items.delete_one(scope.filter({"id": sid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
-    await db.stock_movements.delete_many({"item_id": sid, "tenant_id": tid})
+    await db.stock_movements.delete_many(scope.filter({"item_id": sid}))
     return {"ok": True}
 
 
 @api_router.post("/stock/movement")
-async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_user_active)):
-    tid = tenant_id_of(user)
-    item = await db.stock_items.find_one({"id": body.item_id, "tenant_id": tid}, {"_id": 0})
+async def create_stock_movement(body: StockMovementIn, scope: BranchScope = Depends(branch_scope_required)):
+    tid = scope.tenant_id
+    item = await db.stock_items.find_one(scope.filter({"id": body.item_id}), {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Stock item not found")
     if not (body.qty and body.qty > 0):
@@ -1293,12 +1593,13 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
     update = {"current_qty": new_qty}
     if body.type == "purchase" and unit_cost > 0:
         update["unit_cost"] = unit_cost
-    await db.stock_items.update_one({"id": body.item_id, "tenant_id": tid}, {"$set": update})
+    await db.stock_items.update_one(scope.filter({"id": body.item_id}), {"$set": update})
 
     today = today_str()
     mv = {
         "id": str(uuid.uuid4()),
         "tenant_id": tid,
+        "branch_id": scope.branch_id,
         "item_id": body.item_id,
         "item_name": item["name"],
         "unit": item["unit"],
@@ -1309,8 +1610,8 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
         "resulting_qty": new_qty,
         "notes": body.notes or "",
         "date": today,
-        "created_by": user["id"],
-        "created_by_name": user["name"],
+        "created_by": scope.user["id"],
+        "created_by_name": scope.user["name"],
         "created_at": now_iso(),
     }
     await db.stock_movements.insert_one(mv)
@@ -1320,13 +1621,14 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
         exp = {
             "id": str(uuid.uuid4()),
             "tenant_id": tid,
+            "branch_id": scope.branch_id,
             "category": "Material",
             "description": f"{item['name']} x{body.qty}{item['unit']}",
             "amount": total_cost,
             "date": today,
             "notes": f"Auto from stock purchase",
-            "created_by": user["id"],
-            "created_by_name": user["name"],
+            "created_by": scope.user["id"],
+            "created_by_name": scope.user["name"],
             "created_at": now_iso(),
             "stock_movement_id": mv["id"],
         }
@@ -1337,23 +1639,24 @@ async def create_stock_movement(body: StockMovementIn, user=Depends(get_current_
 
 
 @api_router.get("/stock/{sid}/movements")
-async def list_movements(sid: str, limit: int = 50, user=Depends(get_current_user_active)):
-    docs = await db.stock_movements.find(tq(user, {"item_id": sid}), {"_id": 0}).sort("created_at", -1).to_list(limit)
+async def list_movements(sid: str, limit: int = 50, scope: BranchScope = Depends(branch_scope)):
+    docs = await db.stock_movements.find(scope.filter({"item_id": sid}), {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
 
 
 # ============ Cash Closing ============
-async def _compute_day_totals(tid: str, d: str):
-    bills = await db.bills.find(
-        {"tenant_id": tid, "created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}},
-        {"_id": 0},
-    ).to_list(3000)
+async def _compute_day_totals(tid: str, branch_id: Optional[str], d: str):
+    q_bills: dict = {"tenant_id": tid, "created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}}
+    if branch_id: q_bills["branch_id"] = branch_id
+    bills = await db.bills.find(q_bills, {"_id": 0}).to_list(3000)
     services_net = sum(b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0)) for b in bills)
     tip_total = sum(b.get("tip_amount", 0) for b in bills)
     tip_qr = sum(b.get("tip_qr_total", b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0) for b in bills)
     cash_sales = sum(b.get("cash_amount", 0) for b in bills) - tip_qr
     upi_sales = sum(b.get("qr_amount", 0) for b in bills) + tip_qr
-    exps = await db.expenses.find({"tenant_id": tid, "date": d}, {"_id": 0}).to_list(500)
+    q_exp: dict = {"tenant_id": tid, "date": d}
+    if branch_id: q_exp["branch_id"] = branch_id
+    exps = await db.expenses.find(q_exp, {"_id": 0}).to_list(500)
     total_expenses = sum(e["amount"] for e in exps)
     return {
         "bills_count": len(bills),
@@ -1366,21 +1669,24 @@ async def _compute_day_totals(tid: str, d: str):
 
 
 @api_router.get("/cash-closing/summary")
-async def cash_closing_summary(date: Optional[str] = None, user=Depends(get_current_user_active)):
-    tid = tenant_id_of(user)
+async def cash_closing_summary(date: Optional[str] = None, scope: BranchScope = Depends(branch_scope_required)):
+    tid = scope.tenant_id
     d = date or today_str()
-    totals = await _compute_day_totals(tid, d)
-    prev = await db.cash_closings.find_one({"tenant_id": tid, "date": {"$lt": d}}, sort=[("date", -1)], projection={"_id": 0})
+    totals = await _compute_day_totals(tid, scope.branch_id, d)
+    prev = await db.cash_closings.find_one(
+        {"tenant_id": tid, "branch_id": scope.branch_id, "date": {"$lt": d}},
+        sort=[("date", -1)], projection={"_id": 0},
+    )
     suggested_opening = prev["actual_closing"] if prev else 0
-    existing = await db.cash_closings.find_one({"tenant_id": tid, "date": d}, projection={"_id": 0})
+    existing = await db.cash_closings.find_one({"tenant_id": tid, "branch_id": scope.branch_id, "date": d}, projection={"_id": 0})
     return {"date": d, **totals, "suggested_opening": round(suggested_opening, 2), "existing_closing": existing}
 
 
 @api_router.post("/cash-closing")
-async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user_active)):
-    tid = tenant_id_of(user)
+async def create_cash_closing(body: CashClosingIn, scope: BranchScope = Depends(branch_scope_required)):
+    tid = scope.tenant_id
     d = body.date or today_str()
-    totals = await _compute_day_totals(tid, d)
+    totals = await _compute_day_totals(tid, scope.branch_id, d)
 
     opening = round(float(body.opening_balance or 0), 2)
     cash_exp = round(float(body.cash_expenses or 0), 2)
@@ -1391,6 +1697,7 @@ async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user
     doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": tid,
+        "branch_id": scope.branch_id,
         "date": d,
         "opening_balance": opening,
         "cash_sales": totals["cash_sales"],
@@ -1404,23 +1711,23 @@ async def create_cash_closing(body: CashClosingIn, user=Depends(get_current_user
         "actual_closing": actual,
         "difference": difference,
         "notes": body.notes or "",
-        "submitted_by": user["id"],
-        "submitted_by_name": user["name"],
+        "submitted_by": scope.user["id"],
+        "submitted_by_name": scope.user["name"],
         "submitted_at": now_iso(),
     }
-    await db.cash_closings.replace_one({"tenant_id": tid, "date": d}, doc, upsert=True)
+    await db.cash_closings.replace_one({"tenant_id": tid, "branch_id": scope.branch_id, "date": d}, doc, upsert=True)
     return doc
 
 
 @api_router.get("/cash-closing")
-async def list_cash_closings(limit: int = 30, user=Depends(get_current_user_active)):
-    docs = await db.cash_closings.find(tq(user), {"_id": 0}).sort("date", -1).to_list(limit)
+async def list_cash_closings(limit: int = 30, scope: BranchScope = Depends(branch_scope)):
+    docs = await db.cash_closings.find(scope.filter(), {"_id": 0}).sort("date", -1).to_list(limit)
     return docs
 
 
 @api_router.delete("/cash-closing/{cid}")
-async def delete_cash_closing(cid: str, user=Depends(require_admin_active)):
-    result = await db.cash_closings.delete_one(tq(user, {"id": cid}))
+async def delete_cash_closing(cid: str, scope: BranchScope = Depends(branch_scope_admin)):
+    result = await db.cash_closings.delete_one(scope.filter({"id": cid}))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -1428,12 +1735,13 @@ async def delete_cash_closing(cid: str, user=Depends(require_admin_active)):
 
 # ============ Reports ============
 @api_router.get("/reports/summary")
-async def reports_summary(user=Depends(get_current_user_active)):
-    tid = tenant_id_of(user)
+async def reports_summary(scope: BranchScope = Depends(branch_scope)):
+    tid = scope.tenant_id
     today = today_str()
     month = datetime.now(timezone.utc).strftime("%Y-%m")
 
-    all_bills = await db.bills.find({"tenant_id": tid}, {"_id": 0}).to_list(10000)
+    q_bills = scope.filter()
+    all_bills = await db.bills.find(q_bills, {"_id": 0}).to_list(10000)
 
     def revenue(b):
         return b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
@@ -1478,7 +1786,7 @@ async def reports_summary(user=Depends(get_current_user_active)):
         key=lambda x: x["amount"] + x["tips"], reverse=True
     )
 
-    all_exp = await db.expenses.find({"tenant_id": tid}, {"_id": 0}).to_list(20000)
+    all_exp = await db.expenses.find(scope.filter(), {"_id": 0}).to_list(20000)
     today_exp = sum(e["amount"] for e in all_exp if e["date"] == today)
     month_exp = sum(e["amount"] for e in all_exp if e["date"].startswith(month))
     exp_by_cat_today: dict = {}
@@ -1486,24 +1794,24 @@ async def reports_summary(user=Depends(get_current_user_active)):
         if e["date"] != today: continue
         exp_by_cat_today[e["category"]] = exp_by_cat_today.get(e["category"], 0) + e["amount"]
 
-    stock_docs = await db.stock_items.find({"tenant_id": tid}, {"_id": 0}).to_list(500)
+    stock_docs = await db.stock_items.find(scope.filter(), {"_id": 0}).to_list(500)
     low_stock = [
         {"id": s["id"], "name": s["name"], "current_qty": s.get("current_qty", 0), "min_qty": s.get("min_qty", 0), "unit": s.get("unit", "piece")}
         for s in stock_docs if s.get("current_qty", 0) <= s.get("min_qty", 0)
     ]
 
     expiring_members = []
-    if user.get("role") in ("admin", "owner"):
-        mem_docs = await db.members.find({"tenant_id": tid, "active": True}, {"_id": 0}).to_list(1000)
-        for m in mem_docs:
-            m2 = _member_status(m)
-            if m2["status"] in ("expiring_soon", "expired"):
-                expiring_members.append({
-                    "id": m2["id"], "name": m2["name"], "phone": m2["phone"],
-                    "status": m2["status"], "days_left": m2.get("days_left"),
-                    "expires_at": m2.get("expires_at"),
-                })
-        expiring_members.sort(key=lambda x: x.get("days_left") if x.get("days_left") is not None else 9999)
+    # Members are tenant-scoped — any role can see expiring list
+    mem_docs = await db.members.find({"tenant_id": tid, "active": True}, {"_id": 0}).to_list(1000)
+    for m in mem_docs:
+        m2 = _member_status(m)
+        if m2["status"] in ("expiring_soon", "expired"):
+            expiring_members.append({
+                "id": m2["id"], "name": m2["name"], "phone": m2["phone"],
+                "status": m2["status"], "days_left": m2.get("days_left"),
+                "expires_at": m2.get("expires_at"),
+            })
+    expiring_members.sort(key=lambda x: x.get("days_left") if x.get("days_left") is not None else 9999)
 
     return {
         "today": {
@@ -1528,12 +1836,11 @@ async def reports_summary(user=Depends(get_current_user_active)):
 
 
 @api_router.get("/reports/daily")
-async def reports_daily(days: int = 30, user=Depends(get_current_user_active)):
-    tid = tenant_id_of(user)
-    if user.get("role") == "staff":
+async def reports_daily(days: int = 30, scope: BranchScope = Depends(branch_scope)):
+    if scope.user.get("role") == "staff":
         days = min(days, 2)
-    all_bills = await db.bills.find({"tenant_id": tid}, {"_id": 0}).to_list(20000)
-    all_exp = await db.expenses.find({"tenant_id": tid}, {"_id": 0}).to_list(20000)
+    all_bills = await db.bills.find(scope.filter(), {"_id": 0}).to_list(20000)
+    all_exp = await db.expenses.find(scope.filter(), {"_id": 0}).to_list(20000)
     by_day: dict = {}
     for b in all_bills:
         day = b["created_at"][:10]
@@ -1566,9 +1873,9 @@ async def reports_range(
     preset: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    user=Depends(get_current_user_active),
+    scope: BranchScope = Depends(branch_scope),
 ):
-    tid = tenant_id_of(user)
+    tid = scope.tenant_id
     today = datetime.now(timezone.utc).date()
 
     if preset == "today":
@@ -1593,7 +1900,7 @@ async def reports_range(
     if d_from > d_to:
         d_from, d_to = d_to, d_from
 
-    if user.get("role") == "staff":
+    if scope.user.get("role") == "staff":
         earliest = today - timedelta(days=1)
         if d_from < earliest: d_from = earliest
         if d_to < earliest: d_to = earliest
@@ -1602,11 +1909,11 @@ async def reports_range(
     to_str = d_to.strftime("%Y-%m-%d")
 
     bills = await db.bills.find(
-        {"tenant_id": tid, "created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}},
+        scope.filter({"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}}),
         {"_id": 0},
     ).to_list(20000)
     exps = await db.expenses.find(
-        {"tenant_id": tid, "date": {"$gte": from_str, "$lte": to_str}},
+        scope.filter({"date": {"$gte": from_str, "$lte": to_str}}),
         {"_id": 0},
     ).to_list(20000)
 
@@ -1755,29 +2062,33 @@ async def ensure_indexes():
     try:
         await db.tenants.create_index("id", unique=True)
         await db.tenants.create_index("slug", unique=True)
+        await db.branches.create_index("id", unique=True)
+        await db.branches.create_index([("tenant_id", 1), ("name", 1)])
         await db.users.create_index("id", unique=True)
         await db.users.create_index([("email", 1)])
         await db.users.create_index([("tenant_id", 1), ("email", 1)])
-        await db.bills.create_index([("tenant_id", 1), ("created_at", -1)])
-        await db.bills.create_index([("tenant_id", 1), ("bill_no", 1)])
-        await db.services.create_index([("tenant_id", 1), ("name", 1)])
-        await db.beauticians.create_index([("tenant_id", 1), ("name", 1)])
+        await db.bills.create_index([("tenant_id", 1), ("branch_id", 1), ("created_at", -1)])
+        await db.bills.create_index([("tenant_id", 1), ("branch_id", 1), ("bill_no", 1)])
+        await db.services.create_index([("tenant_id", 1), ("branch_id", 1), ("name", 1)])
+        await db.beauticians.create_index([("tenant_id", 1), ("branch_id", 1), ("name", 1)])
         await db.members.create_index([("tenant_id", 1), ("phone", 1)])
-        await db.expenses.create_index([("tenant_id", 1), ("date", -1)])
-        await db.stock_items.create_index([("tenant_id", 1), ("name", 1)])
-        await db.stock_movements.create_index([("tenant_id", 1), ("created_at", -1)])
-        await db.cash_closings.create_index([("tenant_id", 1), ("date", -1)])
+        await db.expenses.create_index([("tenant_id", 1), ("branch_id", 1), ("date", -1)])
+        await db.stock_items.create_index([("tenant_id", 1), ("branch_id", 1), ("name", 1)])
+        await db.stock_movements.create_index([("tenant_id", 1), ("branch_id", 1), ("created_at", -1)])
+        await db.cash_closings.create_index([("tenant_id", 1), ("branch_id", 1), ("date", -1)])
         logger.info("Indexes ensured")
     except Exception as e:
         logger.warning(f"Index creation warning: {e}")
 
 
+GLOW_UP_MAIN_BRANCH_ID = "glowup-branch-main"
+
+
 async def ensure_glow_up_tenant():
-    """Create the default 'Glow Up Unisex Salon' tenant and backfill existing data."""
+    """Create the default 'Glow Up Unisex Salon' tenant + Main Branch and backfill existing data."""
     existing = await db.tenants.find_one({"id": GLOW_UP_TENANT_ID})
     if not existing:
         now = datetime.now(timezone.utc)
-        # Give the Glow Up tenant a long grace period (so existing users don't hit trial expiry)
         far_future = (now + timedelta(days=365 * 10)).isoformat()
         doc = {
             "id": GLOW_UP_TENANT_ID,
@@ -1816,17 +2127,64 @@ async def ensure_glow_up_tenant():
         await db.tenants.insert_one(doc)
         logger.info("Created default Glow Up tenant")
 
-    # Backfill tenant_id on all existing docs that lack it
-    collections = [
-        "users", "bills", "services", "beauticians", "members",
-        "expenses", "stock_items", "stock_movements", "cash_closings",
-    ]
-    for c in collections:
+    # Ensure Main Branch exists for Glow Up
+    if not await db.branches.find_one({"id": GLOW_UP_MAIN_BRANCH_ID}):
+        await db.branches.insert_one({
+            "id": GLOW_UP_MAIN_BRANCH_ID,
+            "tenant_id": GLOW_UP_TENANT_ID,
+            "name": "Main Branch (Sullia)",
+            "address": "Sullia",
+            "city": "Sullia",
+            "state": "Karnataka",
+            "country": "India",
+            "postal_code": "",
+            "phone": "",
+            "email": "admin@glowup.com",
+            "logo": None,
+            "tax_enabled": False,
+            "tax_number": "",
+            "tax_percentage": 0.0,
+            "invoice_prefix": "GLOW",
+            "receipt_header": "",
+            "receipt_footer": "",
+            "is_head": True,
+            "parent_branch_id": None,
+            "active": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        })
+        logger.info("Created default Main Branch for Glow Up")
+
+    # Backfill tenant_id + branch_id on existing docs
+    collections_tenant = ["users", "members", "password_resets"]
+    for c in collections_tenant:
         res = await db[c].update_many({"tenant_id": {"$exists": False}}, {"$set": {"tenant_id": GLOW_UP_TENANT_ID}})
         if res.modified_count:
             logger.info(f"Backfilled tenant_id on {res.modified_count} docs in {c}")
 
-    # Ensure users are_active flag set
+    # Branch-scoped collections
+    branch_collections = ["bills", "services", "beauticians", "expenses", "stock_items", "stock_movements", "cash_closings"]
+    for c in branch_collections:
+        res = await db[c].update_many(
+            {"tenant_id": {"$exists": False}}, {"$set": {"tenant_id": GLOW_UP_TENANT_ID, "branch_id": GLOW_UP_MAIN_BRANCH_ID}}
+        )
+        if res.modified_count:
+            logger.info(f"Backfilled tenant_id+branch_id on {res.modified_count} docs in {c}")
+        # Also add branch_id where missing (for docs that already had tenant_id)
+        res2 = await db[c].update_many(
+            {"tenant_id": GLOW_UP_TENANT_ID, "branch_id": {"$exists": False}},
+            {"$set": {"branch_id": GLOW_UP_MAIN_BRANCH_ID}},
+        )
+        if res2.modified_count:
+            logger.info(f"Backfilled branch_id on {res2.modified_count} docs in {c}")
+
+    # Backfill user.branch_id for users lacking it
+    await db.users.update_many(
+        {"tenant_id": GLOW_UP_TENANT_ID, "branch_id": {"$exists": False}, "role": {"$ne": "platform_admin"}},
+        {"$set": {"branch_id": GLOW_UP_MAIN_BRANCH_ID}},
+    )
+
+    # Ensure users have is_active flag
     await db.users.update_many({"is_active": {"$exists": False}}, {"$set": {"is_active": True}})
 
 
@@ -1841,6 +2199,7 @@ async def seed_initial_users():
         await db.users.insert_one({
             "id": str(uuid.uuid4()),
             "tenant_id": GLOW_UP_TENANT_ID,
+            "branch_id": GLOW_UP_MAIN_BRANCH_ID,
             "name": "Salon Admin",
             "email": "admin@glowup.com",
             "password_hash": hash_password(admin_pw),
@@ -1853,6 +2212,7 @@ async def seed_initial_users():
         await db.users.insert_one({
             "id": str(uuid.uuid4()),
             "tenant_id": GLOW_UP_TENANT_ID,
+            "branch_id": GLOW_UP_MAIN_BRANCH_ID,
             "name": "Front Desk",
             "email": "staff@glowup.com",
             "password_hash": hash_password(staff_pw),
