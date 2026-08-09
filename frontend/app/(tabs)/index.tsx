@@ -37,6 +37,11 @@ export default function DashboardScreen() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+
+  // Compute effective logo: current branch's logo → tenant logo → app default
+  const currentBranch = branches.find(b => b.id === currentBranchId);
+  const effectiveLogoUri = currentBranch?.logo || tenant?.logo || null;
+
   const adminActions = [
     { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
     { key: 'hist', label: 'History', icon: 'receipt', route: '/(tabs)/history', color: colors.success },
@@ -69,7 +74,7 @@ export default function DashboardScreen() {
               <View style={styles.heroBrand}>
                 <View style={styles.heroLogoWrap}>
                   <Image
-                    source={tenant?.logo ? { uri: tenant.logo } : LOGO}
+                    source={effectiveLogoUri ? { uri: effectiveLogoUri } : LOGO}
                     style={styles.heroLogo}
                     contentFit="contain"
                   />

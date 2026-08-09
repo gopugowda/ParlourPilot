@@ -22,7 +22,8 @@ type Member = {
 export default function MembersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ filter?: string }>();
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -154,8 +155,8 @@ export default function MembersScreen() {
           <Text style={styles.headerTitle}>Members</Text>
           <Text style={styles.headerSub}>{list.length} · {list.filter(m => m.status === 'active' || m.status === 'expiring_soon').length} active</Text>
         </View>
-        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={styles.headerBtn}>
-          <Ionicons name="add" size={20} color="#fff" />
+        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={styles.headerBtn} disabled={!isAdmin}>
+          {isAdmin ? <Ionicons name="add" size={20} color="#fff" /> : <Ionicons name="lock-closed" size={16} color="rgba(255,255,255,0.6)" />}
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -211,8 +212,8 @@ export default function MembersScreen() {
             return (
               <View key={m.id} style={styles.row} testID={`member-row-${m.id}`}>
                 <TouchableOpacity
-                  onPress={() => openEdit(m)}
-                  activeOpacity={0.85}
+                  onPress={() => isAdmin && openEdit(m)}
+                  activeOpacity={isAdmin ? 0.85 : 1}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 }}
                 >
                   <View style={styles.avatar}>
