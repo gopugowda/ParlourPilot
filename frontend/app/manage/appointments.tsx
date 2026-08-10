@@ -2,8 +2,9 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
   RefreshControl, Alert, TextInput, Modal, Pressable, KeyboardAvoidingView, Platform,
+  useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -236,6 +237,9 @@ function AppointmentEditor({
   beauticians: Beautician[];
   services: Service[];
 }) {
+  const insets = useSafeAreaInsets();
+  const { height: winH } = useWindowDimensions();
+  const sheetMaxHeight = Math.min(winH * 0.92, winH - 40);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [beauticianId, setBeauticianId] = useState<string | null>(null);
@@ -334,13 +338,23 @@ function AppointmentEditor({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
+      <View style={styles.backdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+          style={{ width: '100%' }}
+        >
+          <View style={[styles.sheet, { maxHeight: sheetMaxHeight, paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
             <View style={styles.handle} />
             <Text style={styles.sheetTitle}>{editing ? 'Edit Booking' : 'New Booking'}</Text>
 
-            <ScrollView style={{ maxHeight: 540 }} contentContainerStyle={{ gap: spacing.md }} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              style={{ flexGrow: 0, flexShrink: 1 }}
+              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={true}
+            >
               <LabeledInput label="Customer Name *" value={customerName} onChangeText={setCustomerName} testID="apt-cust-name" />
               <LabeledInput label="Customer Phone" value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" testID="apt-cust-phone" />
 
@@ -435,9 +449,9 @@ function AppointmentEditor({
                 {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Book'}</Text>}
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </View>
         </KeyboardAvoidingView>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
@@ -486,7 +500,10 @@ const styles = StyleSheet.create({
 
   // Editor
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md },
+  sheet: {
+    backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingTop: spacing.md, paddingHorizontal: spacing.lg, gap: spacing.md,
+  },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
   sheetTitle: { fontSize: 18, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
   label: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600', marginBottom: 6 },
