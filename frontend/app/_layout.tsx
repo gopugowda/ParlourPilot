@@ -2,7 +2,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { LogBox } from 'react-native';
+import { LogBox, Platform, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -73,7 +73,7 @@ export default function RootLayout() {
 
   if (!loaded && !error) return null;
 
-  return (
+  const content = (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar style="auto" />
@@ -83,4 +83,36 @@ export default function RootLayout() {
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
+
+  if (Platform.OS === 'web') {
+    // On web, constrain the app to a phone-sized column and center it.
+    return (
+      <View style={webStyles.pageWrap}>
+        <View style={webStyles.phoneCol}>{content}</View>
+      </View>
+    );
+  }
+
+  return content;
 }
+
+const webStyles = StyleSheet.create({
+  pageWrap: {
+    flex: 1,
+    backgroundColor: '#EFEBE2', // neutral surrounding
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as any,
+  phoneCol: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 480,
+    backgroundColor: '#FDFCF9',
+    // subtle side borders on wide screens for a phone-frame feel
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#E8E5DA',
+    // Use viewport height on web so the layout does not overflow the browser
+    ...(Platform.OS === 'web' ? ({ height: '100vh' as any }) : {}),
+  } as any,
+});

@@ -240,7 +240,9 @@ function AppointmentEditor({
 }) {
   const insets = useSafeAreaInsets();
   const { height: winH } = useWindowDimensions();
-  const sheetMaxHeight = Math.min(winH * 0.92, winH - 40);
+  // Real phones with tall status bars/notches need us to subtract insets.top
+  // otherwise the sheet content overlaps the system UI and pushes buttons off-screen.
+  const sheetMaxHeight = Math.max(320, Math.min(winH * 0.88, winH - insets.top - 24));
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [beauticianId, setBeauticianId] = useState<string | null>(null);
@@ -614,6 +616,7 @@ const styles = StyleSheet.create({
   sheet: {
     backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
     paddingTop: spacing.md, paddingHorizontal: spacing.lg, gap: spacing.md,
+    width: '100%', maxWidth: 480, alignSelf: 'center',
   },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
   sheetTitle: { fontSize: 18, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
