@@ -9,13 +9,23 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { api, appointmentApi } from '@/src/api/client';
-import { useAuth } from '@/src/context/AuthContext';
+import { useAuth, useBrand } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
 const LOGO = require('../../assets/images/parlourpilot-logo.png');
 
 export default function DashboardScreen() {
   const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout } = useAuth();
+  const { brandColor, brandTextColor } = useBrand();
+  // Compute a darker shade for the hero gradient
+  const hexToRgb = (h: string) => { const n = parseInt(h.replace('#', ''), 16); return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }; };
+  const shade = (h: string, f: number) => {
+    const { r, g, b } = hexToRgb(h);
+    const c = (v: number) => Math.max(0, Math.min(255, Math.round(f >= 0 ? v + (255 - v) * f : v * (1 + f))));
+    return `#${[c(r), c(g), c(b)].map(x => x.toString(16).padStart(2, '0')).join('')}`;
+  };
+  const brandDark = shade(brandColor, -0.35);
+  const brandLight = shade(brandColor, 0.15);
   const router = useRouter();
   const [summary, setSummary] = useState<any>(null);
   const [aptStats, setAptStats] = useState<{ today: number; week: number; upcoming: any[] } | null>(null);
@@ -69,7 +79,7 @@ export default function DashboardScreen() {
         {/* Hero */}
         <View style={styles.heroWrap}>
           <LinearGradient
-            colors={['#8A0E1D', '#C42032', '#E43D50']}
+            colors={[brandDark, brandColor, brandLight]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
@@ -85,10 +95,10 @@ export default function DashboardScreen() {
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.heroBrandName} numberOfLines={1}>
+                  <Text style={[styles.heroBrandName, { color: brandTextColor }]} numberOfLines={1}>
                     {tenant?.business_name || 'ParlourPilot'}
                   </Text>
-                  <Text style={styles.heroBrandSub}>
+                  <Text style={[styles.heroBrandSub, { color: brandTextColor, opacity: 0.85 }]}>
                     Hi, {user?.name?.split(' ')[0] || 'there'}
                     {subscription?.status === 'trialing' && subscription?.days_left !== null && subscription?.days_left !== undefined
                       ? `  · ${subscription.days_left}d trial left`
@@ -100,17 +110,17 @@ export default function DashboardScreen() {
                       onPress={() => setShowBranchPicker(true)}
                       style={styles.branchSwitcher}
                     >
-                      <Ionicons name="business-outline" size={12} color="#FFFFFF" />
-                      <Text style={styles.branchSwitcherText} numberOfLines={1}>
+                      <Ionicons name="business-outline" size={12} color={brandTextColor} />
+                      <Text style={[styles.branchSwitcherText, { color: brandTextColor }]} numberOfLines={1}>
                         {branches.find(b => b.id === currentBranchId)?.name || 'All Branches'}
                       </Text>
-                      <Ionicons name="chevron-down" size={12} color="#FFFFFF" />
+                      <Ionicons name="chevron-down" size={12} color={brandTextColor} />
                     </TouchableOpacity>
                   )}
                   {branches.length > 0 && !isAdmin && currentBranchId && (
                     <View style={styles.branchStatic}>
-                      <Ionicons name="business-outline" size={11} color="#FFFFFF" />
-                      <Text style={styles.branchSwitcherText} numberOfLines={1}>
+                      <Ionicons name="business-outline" size={11} color={brandTextColor} />
+                      <Text style={[styles.branchSwitcherText, { color: brandTextColor }]} numberOfLines={1}>
                         {branches.find(b => b.id === currentBranchId)?.name || ''}
                       </Text>
                     </View>
@@ -118,40 +128,40 @@ export default function DashboardScreen() {
                 </View>
               </View>
               <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
-                <Ionicons name="log-out-outline" size={20} color="#fff" />
+                <Ionicons name="log-out-outline" size={20} color={brandTextColor} />
               </TouchableOpacity>
             </View>
 
             <View style={{ marginTop: spacing.xl }}>
-              <Text style={styles.heroLabel}>{"Today's Revenue"}</Text>
+              <Text style={[styles.heroLabel, { color: brandTextColor, opacity: 0.85 }]}>{"Today's Revenue"}</Text>
               {loading ? (
-                <ActivityIndicator color="#fff" style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
+                <ActivityIndicator color={brandTextColor} style={{ alignSelf: 'flex-start', marginTop: spacing.sm }} />
               ) : (
-                <Text style={styles.heroValue} testID="today-revenue">{fmtINR(summary?.today?.total || 0)}</Text>
+                <Text style={[styles.heroValue, { color: brandTextColor }]} testID="today-revenue">{fmtINR(summary?.today?.total || 0)}</Text>
               )}
               <View style={styles.heroStatsRow}>
-                <View style={styles.heroStatChip}>
-                  <Ionicons name="receipt-outline" size={14} color={colors.brandSecondary} />
-                  <Text style={styles.heroStatText}>{summary?.today?.count || 0} bills</Text>
+                <View style={[styles.heroStatChip, { backgroundColor: brandTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)' }]}>
+                  <Ionicons name="receipt-outline" size={14} color={brandTextColor} />
+                  <Text style={[styles.heroStatText, { color: brandTextColor }]}>{summary?.today?.count || 0} bills</Text>
                 </View>
-                <View style={styles.heroStatChip}>
-                  <Ionicons name="cash-outline" size={14} color={colors.brandSecondary} />
-                  <Text style={styles.heroStatText}>{fmtINR(summary?.today?.cash || 0)}</Text>
+                <View style={[styles.heroStatChip, { backgroundColor: brandTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)' }]}>
+                  <Ionicons name="cash-outline" size={14} color={brandTextColor} />
+                  <Text style={[styles.heroStatText, { color: brandTextColor }]}>{fmtINR(summary?.today?.cash || 0)}</Text>
                 </View>
-                <View style={styles.heroStatChip}>
-                  <Ionicons name="qr-code-outline" size={14} color={colors.brandSecondary} />
-                  <Text style={styles.heroStatText}>{fmtINR(summary?.today?.qr || 0)}</Text>
+                <View style={[styles.heroStatChip, { backgroundColor: brandTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)' }]}>
+                  <Ionicons name="qr-code-outline" size={14} color={brandTextColor} />
+                  <Text style={[styles.heroStatText, { color: brandTextColor }]}>{fmtINR(summary?.today?.qr || 0)}</Text>
                 </View>
                 {(summary?.today?.tips || 0) > 0 && (
-                  <View style={styles.heroStatChip}>
-                    <Ionicons name="heart-outline" size={14} color={colors.brandSecondary} />
-                    <Text style={styles.heroStatText}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
+                  <View style={[styles.heroStatChip, { backgroundColor: brandTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)' }]}>
+                    <Ionicons name="heart-outline" size={14} color={brandTextColor} />
+                    <Text style={[styles.heroStatText, { color: brandTextColor }]}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
                   </View>
                 )}
                 {(summary?.today?.expenses || 0) > 0 && (
-                  <View style={styles.heroStatChip}>
-                    <Ionicons name="wallet-outline" size={14} color={colors.brandSecondary} />
-                    <Text style={styles.heroStatText}>Exp {fmtINR(summary?.today?.expenses || 0)}</Text>
+                  <View style={[styles.heroStatChip, { backgroundColor: brandTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)' }]}>
+                    <Ionicons name="wallet-outline" size={14} color={brandTextColor} />
+                    <Text style={[styles.heroStatText, { color: brandTextColor }]}>Exp {fmtINR(summary?.today?.expenses || 0)}</Text>
                   </View>
                 )}
               </View>

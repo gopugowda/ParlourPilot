@@ -1,21 +1,23 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '@/src/theme';
+import { colors, contrastText } from '@/src/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBrand } from '@/src/context/AuthContext';
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { brandColor } = useBrand();
+  const onBrand = contrastText(brandColor || colors.brandPrimary);
+  const inactive = onBrand === '#FFFFFF' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.55)';
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: brandColor || colors.brandPrimary,
-        tabBarInactiveTintColor: colors.onSurfaceTertiary,
+        tabBarActiveTintColor: onBrand,
+        tabBarInactiveTintColor: inactive,
         tabBarStyle: {
-          backgroundColor: colors.surfaceSecondary,
-          borderTopColor: colors.border,
+          backgroundColor: brandColor || colors.brandPrimary,
+          borderTopColor: 'transparent',
           paddingBottom: insets.bottom + 4,
           paddingTop: 6,
           height: 56 + insets.bottom,

@@ -2,12 +2,15 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows } from '@/src/theme';
+import { useAuth, useBrand } from '@/src/context/AuthContext';
+import { colors, spacing, radius, shadows, contrastText } from '@/src/theme';
 
 export default function ManageScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
+  const { brandColor } = useBrand();
+  const onBrand = contrastText(brandColor || colors.brandPrimary);
+  const onBrandSoft = onBrand === '#FFFFFF' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)';
 
   const groups = (user?.role === 'admin' || user?.role === 'owner') ? [
     {
@@ -51,15 +54,15 @@ export default function ManageScreen() {
 
   return (
     <View style={styles.root} testID="manage-screen">
-      <SafeAreaView edges={['top']} style={styles.header}>
-        <Text style={styles.headerTitle}>Manage</Text>
-        <Text style={styles.headerSub}>Salon settings & reports</Text>
+      <SafeAreaView edges={['top']} style={[styles.header, { backgroundColor: brandColor || colors.brandPrimary, borderBottomColor: 'transparent' }]}>
+        <Text style={[styles.headerTitle, { color: onBrand }]}>Manage</Text>
+        <Text style={[styles.headerSub, { color: onBrandSoft }]}>Salon settings & reports</Text>
       </SafeAreaView>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
         <View style={styles.userCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{user?.name?.split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
+          <View style={[styles.avatar, { backgroundColor: brandColor ? `${brandColor}22` : colors.brandTertiary }]}>
+            <Text style={[styles.avatarText, { color: brandColor || colors.brandPrimary }]}>{user?.name?.split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.userName}>{user?.name}</Text>
@@ -78,8 +81,8 @@ export default function ManageScreen() {
                 onPress={() => router.push(it.route as any)}
                 activeOpacity={0.85}
               >
-                <View style={styles.rowIcon}>
-                  <Ionicons name={it.icon as any} size={20} color={colors.brandPrimary} />
+                <View style={[styles.rowIcon, { backgroundColor: brandColor ? `${brandColor}22` : colors.brandTertiary }]}>
+                  <Ionicons name={it.icon as any} size={20} color={brandColor || colors.brandPrimary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowLabel}>{it.label}</Text>
@@ -102,7 +105,7 @@ export default function ManageScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  header: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md, backgroundColor: colors.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: colors.border },
+  header: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm, paddingBottom: spacing.md, backgroundColor: colors.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: colors.border },
   headerTitle: { fontSize: 22, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   userCard: {
