@@ -366,15 +366,32 @@ function AppointmentEditor({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
-          style={{ width: '100%' }}
-        >
-          <View style={[styles.sheet, { maxHeight: sheetMaxHeight, paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent={true}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+        style={{ flex: 1 }}
+      >
+        <View style={styles.backdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <View
+            style={[
+              styles.sheet,
+              {
+                maxHeight: sheetMaxHeight,
+                // On Android with statusBarTranslucent, the modal covers the status bar,
+                // so we need explicit top padding to clear the notch/status bar.
+                paddingTop: Math.max(spacing.md, insets.top + 4),
+                paddingBottom: Math.max(insets.bottom, spacing.md),
+              },
+            ]}
+          >
             <View style={styles.handle} />
             <Text style={styles.sheetTitle}>{editing ? 'Edit Booking' : 'New Booking'}</Text>
 
@@ -383,6 +400,7 @@ function AppointmentEditor({
               contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={true}
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
             >
               <LabeledInput label="Customer Name *" value={customerName} onChangeText={setCustomerName} testID="apt-cust-name" />
               <LabeledInput label="Customer Phone" value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" testID="apt-cust-phone" />
@@ -563,8 +581,8 @@ function AppointmentEditor({
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
