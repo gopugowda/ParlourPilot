@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator,
   KeyboardAvoidingView, Platform, Switch, Alert, Image as RNImage, Modal, Pressable,
+  DevSettings,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +11,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { tenantApi, branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows, CURRENCY_CHOICES } from '@/src/theme';
+import { colors, spacing, radius, shadows, CURRENCY_CHOICES, BRAND_COLOR_PRESETS, contrastText } from '@/src/theme';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -31,6 +32,8 @@ export default function SalonSettingsScreen() {
   const [country, setCountry] = useState('India');
   const [currencyCode, setCurrencyCode] = useState('INR');
   const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
+  const [brandColor, setBrandColorState] = useState<string>('#C42032');
+  const [brandCustomHex, setBrandCustomHex] = useState<string>('');
   const [companyLogo, setCompanyLogo] = useState<string | null>(null); // fallback logo
   const [memberDiscount, setMemberDiscount] = useState('10');
   const [memberMinPrice, setMemberMinPrice] = useState('100');
@@ -76,6 +79,9 @@ export default function SalonSettingsScreen() {
     setWebsite(tenant.website || '');
     setCountry(tenant.country || 'India');
     setCurrencyCode((tenant.currency || 'INR').toUpperCase());
+    const brand = (tenant as any).brand_color || '#C42032';
+    setBrandColorState(brand);
+    setBrandCustomHex(brand);
     setCompanyLogo(tenant.logo || null);
     setMemberDiscount(String(tenant.member_discount_pct ?? 10));
     setMemberMinPrice(String(tenant.member_min_price ?? 100));
@@ -161,6 +167,9 @@ export default function SalonSettingsScreen() {
     }
     setSavingCompany(true);
     try {
+      const prevBrand = ((tenant as any)?.brand_color || '#C42032').toUpperCase();
+      const nextBrand = (brandColor || '#C42032').toUpperCase();
+      const brandChanged = prevBrand !== nextBrand;
       const payload: any = {
         business_name: businessName.trim(),
         owner_name: ownerName.trim(),
@@ -170,6 +179,7 @@ export default function SalonSettingsScreen() {
         country: country.trim(),
         currency: currencyCode,
         currency_symbol: (CURRENCY_CHOICES.find(c => c.code === currencyCode)?.symbol) || '₹',
+        brand_color: brandColor,
         logo: companyLogo,
         member_discount_pct: parseFloat(memberDiscount) || 10,
         member_min_price: parseFloat(memberMinPrice) || 100,
@@ -177,7 +187,26 @@ export default function SalonSettingsScreen() {
       await tenantApi.updateMine(payload);
       await refreshTenant();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Saved', 'Company info updated');
+      if (brandChanged) {
+        Alert.alert(
+          'Saved · Brand updated',
+          'A quick reload is needed for the new brand color to apply everywhere.',
+          [{
+            text: 'Reload now',
+            onPress: () => {
+              if (Platform.OS === 'web') {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                try { (globalThis as any).location?.reload?.(); } catch {}
+              } else {
+                try { DevSettings.reload(); } catch {}
+              }
+            },
+          }],
+          { cancelable: false },
+        );
+      } else {
+        Alert.alert('Saved', 'Company info updated');
+      }
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Failed', e.message || String(e));
@@ -313,6 +342,64 @@ export default function SalonSettingsScreen() {
                 <Ionicons name="chevron-down" size={18} color={colors.onSurfaceTertiary} />
               </TouchableOpacity>
               <Text style={styles.helpText}>Display-only. Amounts are not converted; you enter values in this currency.</Text>
+            </View>
+
+            {/* Brand Color */}
+            <View style={{ marginBottom: spacing.md }}>
+              <Text style={styles.label}>Brand Color</Text>
+              <View style={styles.brandPreviewRow}>
+                <View style={[styles.brandSwatchLg, { backgroundColor: brandColor }]}>
+                  <Text style={{ color: contrastText(brandColor), fontWeight: '800', fontSize: 12 }}>Sample</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.brandCode}>{brandColor.toUpperCase()}</Text>
+                  <Text style={styles.brandContrast}>Text on this color: <Text style={{ color: contrastText(brandColor), backgroundColor: brandColor, fontWeight: '800', paddingHorizontal: 6, borderRadius: 4 }}>Aa</Text></Text>
+                </View>
+              </View>
+              <View style={styles.swatchGrid}>
+                {BRAND_COLOR_PRESETS.map(hex => {
+                  const sel = hex.toLowerCase() === brandColor.toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      key={hex}
+                      onPress={() => { setBrandColorState(hex); setBrandCustomHex(hex); }}
+                      testID={`brand-swatch-${hex}`}
+                      style={[styles.swatch, { backgroundColor: hex }, sel && styles.swatchSelected]}
+                    >
+                      {sel && <Ionicons name="checkmark" size={16} color={contrastText(hex)} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={styles.customHexRow}>
+                <Text style={styles.label}>Custom hex</Text>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <TextInput
+                    value={brandCustomHex}
+                    onChangeText={setBrandCustomHex}
+                    placeholder="#RRGGBB"
+                    style={[styles.input, { flex: 1, textTransform: 'uppercase' }]}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={7}
+                    testID="brand-custom-hex"
+                  />
+                  <TouchableOpacity
+                    style={styles.applyHexBtn}
+                    onPress={() => {
+                      const val = brandCustomHex.trim();
+                      const withHash = val.startsWith('#') ? val : `#${val}`;
+                      if (!/^#[0-9a-fA-F]{6}$/.test(withHash)) {
+                        Alert.alert('Invalid hex', 'Please enter a 6-digit hex like #3B82F6'); return;
+                      }
+                      setBrandColorState(withHash.toUpperCase());
+                    }}
+                  >
+                    <Text style={styles.applyHexText}>Apply</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.helpText}>Used for buttons, chips, headers, and active nav items. Text auto-switches to black or white based on the background brightness for readability.</Text>
             </View>
           </View>
 
@@ -584,4 +671,14 @@ const styles = StyleSheet.create({
   },
   currencySymbol: { fontSize: 20, fontWeight: '800', color: colors.brandPrimary, minWidth: 32 },
   currencyLabel: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.onSurface },
+  brandPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },
+  brandSwatchLg: { width: 80, height: 80, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  brandCode: { fontSize: 16, fontWeight: '900', color: colors.onSurface, letterSpacing: 0.5 },
+  brandContrast: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 4 },
+  swatchGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
+  swatch: { width: 40, height: 40, borderRadius: 10, borderWidth: 2, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
+  swatchSelected: { borderColor: colors.onSurface },
+  customHexRow: { gap: 6, marginBottom: spacing.sm },
+  applyHexBtn: { backgroundColor: colors.brandPrimary, borderRadius: radius.sm, paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
+  applyHexText: { color: '#fff', fontWeight: '800', fontSize: 13 },
 });

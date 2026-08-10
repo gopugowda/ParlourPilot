@@ -7,7 +7,7 @@ export const colors = {
   onSurfaceTertiary: '#6B6862',
   surfaceInverse: '#1A1A1A',
   onSurfaceInverse: '#FDFCF9',
-  // ParlourPilot red palette
+  // ParlourPilot red palette (default — replaced per-tenant at runtime via applyBrandColor)
   brand: '#C42032',
   brandPrimary: '#C42032',
   onBrandPrimary: '#FFFFFF',
@@ -30,6 +30,82 @@ export const colors = {
   borderStrong: '#D1CCBE',
   divider: '#F0EDE3',
 };
+
+// -------- Brand color helpers (dynamic per tenant) --------
+// hex "#RRGGBB" → { r, g, b }
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace('#', '').trim();
+  const norm = h.length === 3
+    ? h.split('').map(c => c + c).join('')
+    : h;
+  const n = parseInt(norm.slice(0, 6), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+function rgbToHex(r: number, g: number, b: number): string {
+  const t = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  return `#${t(r)}${t(g)}${t(b)}`.toUpperCase();
+}
+// WCAG relative luminance (0..1). Higher = brighter.
+function relativeLuminance(hex: string): number {
+  const { r, g, b } = hexToRgb(hex);
+  const chan = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+}
+/** Return '#FFFFFF' or '#1A1A1A' depending on which has better contrast on the given bg. */
+export function contrastText(hex: string): string {
+  try { return relativeLuminance(hex) > 0.5 ? '#1A1A1A' : '#FFFFFF'; } catch { return '#FFFFFF'; }
+}
+/** Lighten or darken a hex color by factor (-1..1). Positive = lighter. */
+function shade(hex: string, factor: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  if (factor >= 0) {
+    return rgbToHex(r + (255 - r) * factor, g + (255 - g) * factor, b + (255 - b) * factor);
+  }
+  const f = 1 + factor; // e.g. -0.2 → *0.8
+  return rgbToHex(r * f, g * f, b * f);
+}
+/** Return the tinted surface color (very light shade) used for chips/backgrounds. */
+export function brandTintFor(hex: string): string { return shade(hex, 0.86); }
+/** Return a darker shade of the brand for pressed / emphasis states. */
+export function brandDarkFor(hex: string): string { return shade(hex, -0.30); }
+/** Return a lighter partner shade used for secondary highlights. */
+export function brandSoftFor(hex: string): string { return shade(hex, 0.55); }
+
+/** Curated palette of recommended brand colors (still allows custom hex). */
+export const BRAND_COLOR_PRESETS: string[] = [
+  '#C42032', // ParlourPilot red (default)
+  '#E43F5A', // rose
+  '#F97316', // orange
+  '#F59E0B', // amber
+  '#84CC16', // lime
+  '#22C55E', // green
+  '#14B8A6', // teal
+  '#0EA5E9', // sky
+  '#3B82F6', // blue
+  '#6366F1', // indigo
+  '#8B5CF6', // violet
+  '#D946EF', // fuchsia
+  '#EC4899', // pink
+  '#111827', // near-black
+  '#374151', // slate
+  '#A16207', // gold
+];
+
+/** Update the shared `colors` object in-place so all future StyleSheet reads pick up the new brand. */
+export function applyBrandColor(hex?: string | null) {
+  if (!hex || typeof hex !== 'string' || !/^#?[0-9a-fA-F]{3,8}$/.test(hex.trim())) return;
+  const primary = hex.startsWith('#') ? hex.toUpperCase() : `#${hex.toUpperCase()}`;
+  colors.brand = primary;
+  colors.brandPrimary = primary;
+  colors.brandDark = brandDarkFor(primary);
+  colors.brandSecondary = brandSoftFor(primary);
+  colors.brandTertiary = brandTintFor(primary);
+  colors.onBrandPrimary = contrastText(primary);
+  colors.onBrandTertiary = brandDarkFor(primary);
+}
 
 export const spacing = {
   xs: 4,

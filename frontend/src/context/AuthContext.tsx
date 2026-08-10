@@ -4,7 +4,7 @@ import {
   currentBranchStore,
   setSubscriptionExpiredListener, setUnauthorizedListener,
 } from '../api/client';
-import { setCurrencySymbol, CURRENCY_CHOICES } from '../theme';
+import { setCurrencySymbol, CURRENCY_CHOICES, applyBrandColor, colors as themeColors, contrastText } from '../theme';
 
 export type User = {
   id: string;
@@ -49,6 +49,7 @@ export type Tenant = {
   postal_code?: string;
   currency?: string;
   currency_symbol?: string;
+  brand_color?: string;
   timezone?: string;
   tax_enabled?: boolean;
   tax_number?: string;
@@ -91,6 +92,9 @@ type AuthCtx = {
   currentBranchId: string | null;
   loading: boolean;
   subscriptionExpired: boolean;
+  brandColor: string;
+  brandTextColor: string;
+  themeRev: number;
   login: (email: string, password: string) => Promise<void>;
   signup: (data: SignupData) => Promise<void>;
   logout: () => Promise<void>;
@@ -126,21 +130,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const applyTenantCurrency = (t: Tenant | null) => {
     if (!t) { setCurrencySymbol('₹', 'en-IN'); return; }
-    // If tenant has explicit currency_symbol set, honor it. Otherwise look up from code.
-    if (t.currency_symbol) {
-      setCurrencySymbol(t.currency_symbol);
-      return;
-    }
+    if (t.currency_symbol) { setCurrencySymbol(t.currency_symbol); return; }
     const code = (t.currency || 'INR').toUpperCase();
     const choice = CURRENCY_CHOICES.find(c => c.code === code);
     setCurrencySymbol(choice?.symbol || '₹', choice?.locale);
   };
 
+  const applyTenantBrand = (t: Tenant | null) => {
+    // Reset to default red if tenant has no brand color set.
+    applyBrandColor(t?.brand_color || '#C42032');
+    // bump revision so consumers using useBrand() re-render
+    setThemeRev(r => r + 1);
+  };
+
+  // Bumped whenever brand color changes so consumers re-render with new inline colors.
+  const [themeRev, setThemeRev] = useState(0);
+
   const applyLoginResponse = async (res: any) => {
     const u = res.user;
     setUser(u);
     await userStore.set(u);
-    if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); applyTenantCurrency(res.tenant); }
+    if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); applyTenantCurrency(res.tenant); applyTenantBrand(res.tenant); }
     else { setTenant(null); await tenantStore.clear(); }
     if (res.subscription) {
       setSubscription(res.subscription);
@@ -218,7 +228,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshTenant = useCallback(async () => {
     try {
       const res: any = await tenantApi.getMine();
-      if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); applyTenantCurrency(res.tenant); }
+      if (res.tenant) { setTenant(res.tenant); await tenantStore.set(res.tenant); applyTenantCurrency(res.tenant); applyTenantBrand(res.tenant); }
       if (res.subscription) {
         setSubscription(res.subscription);
         await subscriptionStore.set(res.subscription);
@@ -242,11 +252,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearSubscriptionExpired = useCallback(() => setSubscriptionExpired(false), []);
 
+  // Derived brand colors reflect the latest applied theme
+  const brandColor = themeColors.brandPrimary;
+  const brandTextColor = contrastText(brandColor);
+
   return (
-    <Ctx.Provider value={{ user, tenant, subscription, branches, currentBranchId, loading, subscriptionExpired, login, signup, logout, refreshTenant, refreshBranches, selectBranch, clearSubscriptionExpired }}>
+    <Ctx.Provider value={{ user, tenant, subscription, branches, currentBranchId, loading, subscriptionExpired, brandColor, brandTextColor, themeRev, login, signup, logout, refreshTenant, refreshBranches, selectBranch, clearSubscriptionExpired }}>
       {children}
     </Ctx.Provider>
   );
 }
 
 export const useAuth = () => useContext(Ctx);
+/** Convenience hook returning the tenant's brand color and its auto-contrast text color. */
+export const useBrand = () => {
+  const { brandColor, brandTextColor, themeRev } = useContext(Ctx);
+  return { brandColor, brandTextColor, themeRev };
+};

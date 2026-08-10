@@ -365,6 +365,7 @@ class TenantUpdate(BaseModel):
     postal_code: Optional[str] = None
     currency: Optional[str] = None
     currency_symbol: Optional[str] = None
+    brand_color: Optional[str] = None
     timezone: Optional[str] = None
     tax_enabled: Optional[bool] = None
     tax_number: Optional[str] = None
