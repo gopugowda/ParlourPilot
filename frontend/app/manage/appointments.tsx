@@ -8,6 +8,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Calendar } from 'react-native-calendars';
 import { api, appointmentApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtMoney } from '@/src/theme';
@@ -44,7 +45,7 @@ const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0);
 const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 
 const fmtTime = (iso: string) => {
-  try { return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }); }
+  try { return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }); }
   catch { return iso; }
 };
 const fmtDate = (iso: string) => {
@@ -245,13 +246,36 @@ function AppointmentEditor({
   const [beauticianId, setBeauticianId] = useState<string | null>(null);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [when, setWhen] = useState<Date>(new Date());
-  const [dateStr, setDateStr] = useState<string>('');
-  const [timeStr, setTimeStr] = useState<string>('');
+  const [dateStr, setDateStr] = useState<string>(''); // YYYY-MM-DD
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [hour12, setHour12] = useState(9); // 1..12
+  const [minute, setMinute] = useState(0); // 0,5,10,...55
+  const [ampm, setAmpm] = useState<'AM' | 'PM'>('AM');
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
   const [duration, setDuration] = useState('60');
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<Appointment['status']>('booked');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const fmtCalendarDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+
+  const to12h = (h24: number): { h: number; ampm: 'AM' | 'PM' } => {
+    const isPm = h24 >= 12;
+    let h = h24 % 12;
+    if (h === 0) h = 12;
+    return { h, ampm: isPm ? 'PM' : 'AM' };
+  };
+  const to24h = (h12: number, ampm: 'AM' | 'PM'): number => {
+    let h = h12 % 12; // 12 → 0
+    if (ampm === 'PM') h += 12;
+    return h;
+  };
 
   useEffect(() => {
     if (!visible) return;
@@ -268,30 +292,33 @@ function AppointmentEditor({
     } else {
       setCustomerName(''); setCustomerPhone(''); setBeauticianId(null);
       setSelectedServiceIds([]);
-      const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+      const d = new Date();
+      // round minutes to nearest 5, default 1 hour ahead
+      d.setMinutes(0, 0, 0);
+      d.setHours(d.getHours() + 1);
       start = d;
       setDuration('60'); setNotes(''); setStatus('booked');
     }
     setWhen(start);
-    const y = start.getFullYear();
-    const m = String(start.getMonth() + 1).padStart(2, '0');
-    const dd = String(start.getDate()).padStart(2, '0');
-    const hh = String(start.getHours()).padStart(2, '0');
-    const mm = String(start.getMinutes()).padStart(2, '0');
-    setDateStr(`${y}-${m}-${dd}`);
-    setTimeStr(`${hh}:${mm}`);
+    setDateStr(fmtCalendarDate(start));
+    const { h, ampm: ap } = to12h(start.getHours());
+    setHour12(h);
+    // round minute to nearest 5 for the picker
+    const roundedMin = Math.round(start.getMinutes() / 5) * 5;
+    setMinute(roundedMin >= 60 ? 0 : roundedMin);
+    setAmpm(ap);
     setErr(null);
+    setCalendarOpen(false);
+    setTimePickerOpen(false);
   }, [visible, editing]);
 
   const rebuildWhen = () => {
-    // Parse dateStr (YYYY-MM-DD) and timeStr (HH:mm), fall back to existing when
     try {
       const parts = dateStr.split('-').map(Number);
-      const tp = timeStr.split(':').map(Number);
-      if (parts.length === 3 && !parts.some(isNaN) && tp.length >= 2 && !tp.some(isNaN)) {
+      if (parts.length === 3 && !parts.some(isNaN)) {
         const nw = new Date(when);
         nw.setFullYear(parts[0], (parts[1] - 1), parts[2]);
-        nw.setHours(tp[0], tp[1], 0, 0);
+        nw.setHours(to24h(hour12, ampm), minute, 0, 0);
         return nw;
       }
     } catch {}
@@ -361,30 +388,114 @@ function AppointmentEditor({
               <View>
                 <Text style={styles.label}>Date & Time</Text>
                 <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-                  <View style={{ flex: 1.2 }}>
-                    <TextInput
-                      value={dateStr}
-                      onChangeText={setDateStr}
-                      placeholder="YYYY-MM-DD"
-                      style={styles.input}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      testID="apt-date"
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={timeStr}
-                      onChangeText={setTimeStr}
-                      placeholder="HH:MM"
-                      style={styles.input}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      testID="apt-time"
-                    />
-                  </View>
+                  <TouchableOpacity
+                    style={[styles.pickBtn, { flex: 1.3 }]}
+                    onPress={() => { setCalendarOpen(o => !o); setTimePickerOpen(false); }}
+                    testID="apt-date-btn"
+                  >
+                    <Ionicons name="calendar-outline" size={16} color={colors.brandPrimary} />
+                    <Text style={styles.pickBtnText}>
+                      {(() => {
+                        try {
+                          const [y, m, d] = dateStr.split('-').map(Number);
+                          const dt = new Date(y, m - 1, d);
+                          return dt.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+                        } catch { return dateStr || 'Select date'; }
+                      })()}
+                    </Text>
+                    <Ionicons name={calendarOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.onSurfaceTertiary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.pickBtn, { flex: 1 }]}
+                    onPress={() => { setTimePickerOpen(o => !o); setCalendarOpen(false); }}
+                    testID="apt-time-btn"
+                  >
+                    <Ionicons name="time-outline" size={16} color={colors.brandPrimary} />
+                    <Text style={styles.pickBtnText}>
+                      {`${hour12}:${String(minute).padStart(2, '0')} ${ampm}`}
+                    </Text>
+                    <Ionicons name={timePickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.onSurfaceTertiary} />
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.metaMuted}>Format: 2026-08-15 and 14:30 (24-hour)</Text>
+
+                {calendarOpen && (
+                  <View style={styles.calendarWrap} testID="apt-calendar">
+                    <Calendar
+                      current={dateStr || undefined}
+                      onDayPress={(day) => {
+                        setDateStr(day.dateString);
+                        setCalendarOpen(false);
+                        Haptics.selectionAsync();
+                      }}
+                      markedDates={dateStr ? { [dateStr]: { selected: true, selectedColor: colors.brandPrimary } } : {}}
+                      minDate={fmtCalendarDate(new Date(new Date().setDate(new Date().getDate() - 30)))}
+                      theme={{
+                        backgroundColor: colors.surface,
+                        calendarBackground: colors.surface,
+                        selectedDayBackgroundColor: colors.brandPrimary,
+                        selectedDayTextColor: '#ffffff',
+                        todayTextColor: colors.brandPrimary,
+                        dayTextColor: colors.onSurface,
+                        textDisabledColor: colors.onSurfaceTertiary,
+                        arrowColor: colors.brandPrimary,
+                        monthTextColor: colors.onSurface,
+                        textMonthFontWeight: '800',
+                        textDayFontWeight: '500',
+                        textDayHeaderFontWeight: '700',
+                      }}
+                    />
+                  </View>
+                )}
+
+                {timePickerOpen && (
+                  <View style={styles.timePickerWrap} testID="apt-time-picker">
+                    <View style={styles.timeRow}>
+                      <View style={styles.timeCol}>
+                        <Text style={styles.timeColLabel}>Hour</Text>
+                        <ScrollView style={styles.timeScroll} showsVerticalScrollIndicator={false}>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(h => {
+                            const sel = hour12 === h;
+                            return (
+                              <TouchableOpacity key={h} onPress={() => { setHour12(h); Haptics.selectionAsync(); }} style={[styles.timeCell, sel && styles.timeCellActive]} testID={`apt-hour-${h}`}>
+                                <Text style={[styles.timeCellText, sel && styles.timeCellTextActive]}>{h}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                      <View style={styles.timeCol}>
+                        <Text style={styles.timeColLabel}>Minute</Text>
+                        <ScrollView style={styles.timeScroll} showsVerticalScrollIndicator={false}>
+                          {[0,5,10,15,20,25,30,35,40,45,50,55].map(m => {
+                            const sel = minute === m;
+                            return (
+                              <TouchableOpacity key={m} onPress={() => { setMinute(m); Haptics.selectionAsync(); }} style={[styles.timeCell, sel && styles.timeCellActive]} testID={`apt-min-${m}`}>
+                                <Text style={[styles.timeCellText, sel && styles.timeCellTextActive]}>{String(m).padStart(2, '0')}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                      <View style={styles.timeCol}>
+                        <Text style={styles.timeColLabel}>AM/PM</Text>
+                        <View style={{ gap: 6, paddingTop: 4 }}>
+                          {(['AM', 'PM'] as const).map(t => {
+                            const sel = ampm === t;
+                            return (
+                              <TouchableOpacity key={t} onPress={() => { setAmpm(t); Haptics.selectionAsync(); }} style={[styles.ampmBtn, sel && styles.ampmBtnActive]} testID={`apt-ampm-${t}`}>
+                                <Text style={[styles.ampmText, sel && styles.ampmTextActive]}>{t}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    </View>
+                    <TouchableOpacity onPress={() => setTimePickerOpen(false)} style={styles.timeDoneBtn}>
+                      <Ionicons name="checkmark" size={16} color="#fff" />
+                      <Text style={styles.timeDoneText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
 
               <LabeledInput label="Duration (minutes)" value={duration} onChangeText={(v: string) => setDuration(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" testID="apt-duration" />
@@ -510,6 +621,38 @@ const styles = StyleSheet.create({
   input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.sm, fontSize: 15, color: colors.onSurface, minHeight: 44 },
   dateBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
   dateText: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  pickBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 12, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    backgroundColor: colors.surfaceTertiary,
+    minHeight: 44,
+  },
+  pickBtnText: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  calendarWrap: {
+    marginTop: spacing.sm,
+    borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.md,
+    overflow: 'hidden', backgroundColor: colors.surface,
+  },
+  timePickerWrap: {
+    marginTop: spacing.sm,
+    borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.md,
+    backgroundColor: colors.surface, padding: spacing.md,
+  },
+  timeRow: { flexDirection: 'row', gap: spacing.md, justifyContent: 'space-between' },
+  timeCol: { flex: 1, alignItems: 'center' },
+  timeColLabel: { fontSize: 11, fontWeight: '800', color: colors.brandPrimary, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 },
+  timeScroll: { maxHeight: 180, minWidth: 60 },
+  timeCell: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: radius.sm, marginBottom: 4, alignItems: 'center', backgroundColor: colors.surfaceTertiary },
+  timeCellActive: { backgroundColor: colors.brandPrimary },
+  timeCellText: { fontSize: 15, fontWeight: '700', color: colors.onSurface },
+  timeCellTextActive: { color: '#fff' },
+  ampmBtn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary, alignItems: 'center', minWidth: 60 },
+  ampmBtnActive: { backgroundColor: colors.brandPrimary },
+  ampmText: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
+  ampmTextActive: { color: '#fff' },
+  timeDoneBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandPrimary, borderRadius: radius.sm, paddingVertical: 10, marginTop: spacing.md },
+  timeDoneText: { color: '#fff', fontWeight: '800', fontSize: 13 },
   pill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
   pillActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   pillText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
