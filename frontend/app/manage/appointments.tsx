@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
-  RefreshControl, Alert, TextInput, Modal, Pressable, KeyboardAvoidingView, Platform,
+  RefreshControl, Alert, TextInput, Pressable, KeyboardAvoidingView, Platform,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -365,43 +365,42 @@ function AppointmentEditor({
     } finally { setSaving(false); }
   };
 
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      statusBarTranslucent={true}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
-        style={{ flex: 1 }}
-      >
-        <View style={styles.backdrop}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-          <View
-            style={[
-              styles.sheet,
-              {
-                maxHeight: sheetMaxHeight,
-                // On Android with statusBarTranslucent, the modal covers the status bar,
-                // so we need explicit top padding to clear the notch/status bar.
-                paddingTop: Math.max(spacing.md, insets.top + 4),
-                paddingBottom: Math.max(insets.bottom, spacing.md),
-              },
-            ]}
-          >
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>{editing ? 'Edit Booking' : 'New Booking'}</Text>
+  if (!visible) return null;
 
-            <ScrollView
-              style={{ flexGrow: 0, flexShrink: 1 }}
-              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={true}
-              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-            >
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* In-place overlay (NOT a native Modal) — this way, Android's
+          windowSoftInputMode=adjustResize on the parent screen shrinks the
+          sheet naturally when the keyboard opens, instead of pan-scrolling
+          the whole modal window up and off the top of the screen. */}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'flex-end' }}
+        pointerEvents="box-none"
+      >
+        <View
+          style={[
+            styles.sheet,
+            {
+              maxHeight: sheetMaxHeight,
+              paddingTop: Math.max(spacing.md, insets.top + 4),
+              paddingBottom: Math.max(insets.bottom, spacing.md),
+            },
+          ]}
+        >
+          <View style={styles.handle} />
+          <Text style={styles.sheetTitle}>{editing ? 'Edit Booking' : 'New Booking'}</Text>
+
+          <ScrollView
+            style={{ flexGrow: 0, flexShrink: 1 }}
+            contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={true}
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          >
               <LabeledInput label="Customer Name *" value={customerName} onChangeText={setCustomerName} testID="apt-cust-name" />
               <LabeledInput label="Customer Phone" value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" testID="apt-cust-phone" />
 
@@ -580,10 +579,9 @@ function AppointmentEditor({
                 {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Book'}</Text>}
               </TouchableOpacity>
             </View>
-          </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </View>
   );
 }
 
