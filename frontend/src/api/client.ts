@@ -180,4 +180,17 @@ export const platformApi = {
   resetPassword: (tid: string, data: { user_id?: string; email?: string; new_password: string }) =>
     api(`/platform/tenants/${tid}/reset-password`, { method: 'POST', body: data }),
   listTenantUsers: (tid: string) => api(`/platform/tenants/${tid}/users`),
+  // New: detailed view + delete + CSV export
+  tenantDetail: (tid: string) => api(`/platform/tenants/${tid}/detail`),
+  deleteTenant: (tid: string) => api(`/platform/tenants/${tid}`, { method: 'DELETE' }),
+  exportCsv: () => api('/platform/tenants/export'),
+  // Platform user management (admin only for mutations)
+  listPlatformUsers: () => api('/platform/users'),
+  createPlatformUser: (data: { name: string; email: string; password: string; role: 'platform_admin' | 'platform_staff' }) =>
+    api('/platform/users', { method: 'POST', body: data }),
+  updatePlatformUser: (uid: string, data: { name?: string; role?: 'platform_admin' | 'platform_staff'; is_active?: boolean }) =>
+    api(`/platform/users/${uid}`, { method: 'PUT', body: data }),
+  deletePlatformUser: (uid: string) => api(`/platform/users/${uid}`, { method: 'DELETE' }),
+  resetPlatformUserPassword: (uid: string, new_password: string) =>
+    api(`/platform/users/${uid}/reset-password`, { method: 'POST', body: { new_password } }),
 };

@@ -12,7 +12,7 @@ export type User = {
   branch_id?: string | null;
   name: string;
   email: string;
-  role: 'admin' | 'owner' | 'staff' | 'platform_admin';
+  role: 'admin' | 'owner' | 'staff' | 'platform_admin' | 'platform_staff';
 };
 
 export type Branch = {
@@ -66,7 +66,7 @@ export type Tenant = {
 };
 
 export type Subscription = {
-  status: 'trialing' | 'active' | 'expired' | 'suspended' | 'cancelled' | 'platform_admin';
+  status: 'trialing' | 'active' | 'expired' | 'suspended' | 'cancelled' | 'platform_admin' | 'platform_staff';
   days_left?: number | null;
   trial_end_date?: string | null;
   subscription_end_date?: string | null;

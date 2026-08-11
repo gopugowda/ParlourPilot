@@ -25,7 +25,7 @@ function AuthGate() {
     const isPublic = seg0 && publicRoutes.has(seg0);
 
     if (!user) {
-      if (inTabs || seg0 === 'subscription' || seg0 === 'platform') {
+      if (inTabs || seg0 === 'subscription' || seg0 === 'platform' || seg0 === 'platform-users' || seg0 === 'tenant-detail') {
         router.replace('/login');
       } else if (!isPublic && (segments.length === 0 || seg0 === undefined)) {
         router.replace('/login');
@@ -34,9 +34,9 @@ function AuthGate() {
     }
 
     // Logged in
-    // Platform admin has its own home
-    if (user.role === 'platform_admin') {
-      if (seg0 !== 'platform') router.replace('/platform');
+    // Platform admin/staff have their own home
+    if (user.role === 'platform_admin' || user.role === 'platform_staff') {
+      if (seg0 !== 'platform' && seg0 !== 'platform-users' && seg0 !== 'tenant-detail') router.replace('/platform');
       return;
     }
 
@@ -58,6 +58,8 @@ function AuthGate() {
       <Stack.Screen name="signup" />
       <Stack.Screen name="subscription" />
       <Stack.Screen name="platform" />
+      <Stack.Screen name="platform-users" />
+      <Stack.Screen name="tenant-detail" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="bill/[id]" options={{ presentation: 'card' }} />
     </Stack>

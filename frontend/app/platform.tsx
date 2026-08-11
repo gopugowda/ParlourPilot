@@ -6,18 +6,25 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useAuth } from '@/src/context/AuthContext';
 import { platformApi } from '@/src/api/client';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows } from '@/src/theme';
 
 type Tenant = any;
 
 export default function PlatformScreen() {
   const { user, logout } = useAuth();
+  const router = useRouter();
+  const isSuperAdmin = user?.role === 'platform_admin';
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [subEditor, setSubEditor] = useState<{ tenant: Tenant | null; visible: boolean }>({ tenant: null, visible: false });
   const [extendDays, setExtendDays] = useState('30');
@@ -110,6 +117,81 @@ export default function PlatformScreen() {
     } catch (e: any) { Alert.alert('Failed', e.message || String(e)); }
   };
 
+  const confirmDeleteTenant = (tenant: Tenant) => {
+    if (!isSuperAdmin) {
+      Alert.alert('Restricted', 'Only super admins can delete tenants');
+      return;
+    }
+    Alert.alert(
+      'Delete Tenant?',
+      `This will permanently delete "${tenant.business_name}" and ALL its data (branches, users, bills, appointments, etc). This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Forever',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingId(tenant.id);
+            try {
+              await platformApi.deleteTenant(tenant.id);
+              Alert.alert('Deleted', `Tenant "${tenant.business_name}" was permanently deleted.`);
+              await load();
+            } catch (e: any) {
+              Alert.alert('Failed', e.message || String(e));
+            } finally { setDeletingId(null); }
+          },
+        },
+      ],
+    );
+  };
+
+  const downloadCsvReport = async () => {
+    setExporting(true);
+    try {
+      const res: any = await platformApi.exportCsv();
+      const csv: string = res?.csv || '';
+      const filename: string = res?.filename || `parlourpilot_tenants_${Date.now()}.csv`;
+      if (!csv) {
+        Alert.alert('Empty', 'No tenants to export');
+        return;
+      }
+      if (Platform.OS === 'web') {
+        // Web: trigger browser download
+        try {
+          const w: any = typeof window !== 'undefined' ? window : null;
+          if (!w) throw new Error('No window');
+          const blob = new w.Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = w.URL.createObjectURL(blob);
+          const a = w.document.createElement('a');
+          a.href = url; a.download = filename;
+          w.document.body.appendChild(a);
+          a.click();
+          w.document.body.removeChild(a);
+          w.URL.revokeObjectURL(url);
+        } catch (e: any) {
+          Alert.alert('Download failed', e.message || String(e));
+        }
+      } else {
+        // Native (iOS/Android): use expo-file-system v19 File API, then share
+        try {
+          const file = new (FileSystem as any).File((FileSystem as any).Paths.cache, filename);
+          try { file.create({ overwrite: true }); } catch {}
+          file.write(csv);
+          const canShare = await Sharing.isAvailableAsync();
+          if (canShare) {
+            await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Export Tenants CSV', UTI: 'public.comma-separated-values-text' });
+          } else {
+            Alert.alert('Saved', `CSV saved to ${file.uri}`);
+          }
+        } catch (e: any) {
+          Alert.alert('Save failed', e.message || String(e));
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Export failed', e.message || String(e));
+    } finally { setExporting(false); }
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
@@ -125,7 +207,7 @@ export default function PlatformScreen() {
           <Image source={require('../assets/images/parlourpilot-logo.png')} style={{ width: 32, height: 32 }} contentFit="contain" />
           <View>
             <Text style={styles.brand}>ParlourPilot</Text>
-            <Text style={styles.brandSub}>Platform Admin</Text>
+            <Text style={styles.brandSub}>{isSuperAdmin ? 'Platform Admin' : 'Platform Staff'}</Text>
           </View>
         </View>
         <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
@@ -137,6 +219,30 @@ export default function PlatformScreen() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
+        {/* Toolbar */}
+        <View style={styles.toolbar}>
+          <TouchableOpacity
+            style={[styles.toolbarBtn, styles.toolbarPrimary]}
+            onPress={downloadCsvReport}
+            disabled={exporting}
+            testID="btn-download-csv"
+          >
+            {exporting ? <ActivityIndicator color="#fff" size="small" /> : (
+              <>
+                <Ionicons name="download-outline" size={16} color="#fff" />
+                <Text style={styles.toolbarPrimaryText}>Download Report</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.toolbarBtn}
+            onPress={() => router.push('/platform-users')}
+            testID="btn-manage-users"
+          >
+            <Ionicons name="people-outline" size={16} color={colors.brandPrimary} />
+            <Text style={styles.toolbarText}>{isSuperAdmin ? 'Manage Users' : 'View Users'}</Text>
+          </TouchableOpacity>
+        </View>
         {/* Stats */}
         {stats && (
           <View style={styles.statsGrid}>
@@ -190,6 +296,14 @@ export default function PlatformScreen() {
               <View style={styles.tenantActions}>
                 <TouchableOpacity
                   style={styles.actionBtn}
+                  onPress={() => router.push({ pathname: '/tenant-detail', params: { tid: t.id } })}
+                  testID={`view-details-${t.id}`}
+                >
+                  <Ionicons name="eye-outline" size={16} color={colors.brandPrimary} />
+                  <Text style={styles.actionText}>View Details</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionBtn}
                   onPress={() => { setSubEditor({ tenant: t, visible: true }); setExtendDays('30'); }}
                 >
                   <Ionicons name="calendar-outline" size={16} color={colors.brandPrimary} />
@@ -212,6 +326,21 @@ export default function PlatformScreen() {
                     {t.is_active ? 'Active' : 'Suspended'}
                   </Text>
                 </TouchableOpacity>
+                {isSuperAdmin && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionDanger]}
+                    onPress={() => confirmDeleteTenant(t)}
+                    disabled={deletingId === t.id}
+                    testID={`delete-tenant-${t.id}`}
+                  >
+                    {deletingId === t.id ? <ActivityIndicator color={colors.error} size="small" /> : (
+                      <>
+                        <Ionicons name="trash-outline" size={16} color={colors.error} />
+                        <Text style={[styles.actionText, { color: colors.error }]}>Delete</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           );
@@ -370,13 +499,24 @@ const styles = StyleSheet.create({
   tenantMetaRow: { flexDirection: 'row', marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider },
   metaLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '600', textTransform: 'uppercase' },
   metaVal: { fontSize: 13, color: colors.onSurface, fontWeight: '700', marginTop: 2 },
-  tenantActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  tenantActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
   actionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: colors.brandTertiary, paddingHorizontal: 10, paddingVertical: 6,
     borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brandSecondary,
   },
   actionText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
+  actionDanger: { backgroundColor: '#FEE2E2', borderColor: colors.error },
+
+  toolbar: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  toolbarBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#FFFFFF', paddingHorizontal: spacing.md, paddingVertical: 12,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, ...shadows.card,
+  },
+  toolbarPrimary: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  toolbarText: { fontSize: 13, fontWeight: '700', color: colors.brandPrimary },
+  toolbarPrimaryText: { fontSize: 13, fontWeight: '700', color: '#fff' },
 
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md, maxHeight: '92%', width: '100%', maxWidth: 480, alignSelf: 'center' },

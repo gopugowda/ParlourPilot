@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 12 — Super Admin Dashboard additions (Platform user CRUD, Detailed tenant view, CSV export, Delete tenant, Subscription audit trail). Backend: 24/24 pytest cases pass against the public URL. Frontend: 6 Playwright flows (mobile 390x844) all pass — verified toolbar buttons (Download Report + Manage Users), per-tenant View Details + role-gated Delete button, Tenant Detail screen (Business Info + Subscription History with 7 entries + Branches list with addresses), Manage Users screen (create staff user w/ role toggle + hint text), and staff-role restrictions (Delete/New-User buttons hidden). All 3 new features and the platform_staff role gating work end-to-end. Deprecated packages / RN issues detected: none functional-blocking. Console warnings observed (non-blocking): 'shadow*' style props deprecated (existing across StyleSheets since iter11), 'props.pointerEvents is deprecated' (RN-Web modal).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global", "issues": ["Console warning: 'shadow*' style props deprecated in React Native Web (repeat from iter11 — migrate to boxShadow)."]},
+      {"screen": "platform-users / platform (modals)", "issues": ["Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking; likely inside react-native-web Modal internals."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter12_platform_users.py",
+    "/app/test_reports/pytest/pytest_iter12.xml",
+    "/app/test_reports/screenshots/iter12_admin_platform.png",
+    "/app/test_reports/screenshots/iter12_tenant_detail.png",
+    "/app/test_reports/screenshots/iter12_users_admin.png",
+    "/app/test_reports/screenshots/iter12_user_created.png",
+    "/app/test_reports/screenshots/iter12_staff_platform.png",
+    "/app/test_reports/screenshots/iter12_staff_users.png"
+  ],
+  "action_items": [
+    "None P0/P1. Existing action items from iter11 (split server.py into routers; migrate shadow* -> boxShadow) still stand."
+  ],
+  "critical_code_review_comments": [
+    "Naming: `require_platform_admin` in fact allows BOTH platform_admin and platform_staff (used for read + non-destructive actions). Function is correctly used but the name is misleading — consider renaming to `require_any_platform_user` and keeping `require_platform_super` for admin-only.",
+    "server.py grew to 2885 lines (from 2607). Splitting into routers becomes more urgent (platform/tenants/branches/appointments modules).",
+    "In `platform_delete_tenant` the code does per-collection `delete_many` in a loop — not transactional. If a mid-loop failure occurs, tenant may end up partially purged. Acceptable for a mock/demo SaaS but flag for future robustness (bulk_write or explicit compensating logic).",
+    "PlatformUserUpdate: `name` field is currently updatable but no length/emptiness validation — an empty string would replace the display name.",
+    "CSV export: `docs = await db.tenants.find(...).to_list(2000)` uses hard cap 2000. Fine for now; consider streaming/pagination if tenant count grows.",
+    "tenant-detail.tsx does not surface a Delete button — good separation. But the screen also does not gate viewing by role client-side; backend guard (require_platform_admin allowing both roles) is the sole enforcement — this is intentional and correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter12_platform_users.py (new — 24 pytest cases across 5 groups: PlatformUsers CRUD, TenantDetail, SubscriptionHistoryAudit, DeleteTenant, CsvExport)"
+  ],
+  "success_rate": {
+    "backend": "100% (24/24 iter12 tests pass)",
+    "frontend": "100% for 6 flows exercised — admin platform toolbar & delete visibility, tenant detail page, manage-users list + create-user modal (role toggle + hint), staff-role restrictions on both /platform and /platform-users"
+  },
+  "seed_data_creation": "Ephemeral only. Created & cleaned up: (1) TEST_staff_<uuid>@parlourpilot.com platform_staff user via POST /platform/users — DELETE'd in session teardown. (2) TEST_biz_<uuid> tenant via /tenants/signup + then DELETE via /platform/tenants/{tid} — verified purge. (3) test_ui_<uuid>@pp.com platform_staff user via UI (Manage Users → New Platform User) — deleted via curl after test run. (4) One subscription_history audit row added to glowup-tenant-0001 (extend_days=1) to prove the audit trail — this is a permanent additive entry (subscription end shifted by 1 day, previously at 3648 days-left; now 3649 days-left, harmless for a 10-year demo tenant).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reusable pytest suite: /app/backend/tests/test_iter12_platform_users.py — must run with EXPO_PUBLIC_BACKEND_URL env set. All fixtures create+cleanup a TEST_staff platform user, so DB state is preserved. /api/auth/me returns { user, tenant, branches, subscription } — the user object is at body.user (NOT top-level; some earlier reports may say otherwise). Key testIDs for iter12: btn-download-csv, btn-manage-users, view-details-<tenantId>, delete-tenant-<tenantId>, reset-pwd-<tenantId>, btn-add-platform-user, pu-name, pu-email, pu-password, pu-role-platform_staff, pu-role-platform_admin, pu-submit, btn-back (tenant detail). Frontend routes: /platform (both roles), /platform-users (both roles, mutations gated by isSuperAdmin client-side + require_platform_super server-side), /tenant-detail?tid=<id>. Role rule: require_platform_admin dep allows BOTH platform_admin AND platform_staff; require_platform_super allows ONLY platform_admin. Seed tenant id: glowup-tenant-0001 — protected from DELETE (returns 400). Login response uses `token` key. Native builds needed for expo-file-system File API (CSV native save-and-share path); web path uses window.Blob download and was smoke-tested.",
+  "rca_of_issue": "N/A — no defects."
+}
