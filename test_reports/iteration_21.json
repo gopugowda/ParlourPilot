@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 21 — Staff Performance Dashboard endpoint (GET /api/reports/staff-performance). Comprehensive pytest suite (23 tests) covering RBAC, response shape, aggregation correctness, preset variants, custom range, and zero-performers. All 23 tests PASSED against seeded Glow Up tenant data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter21_staff_performance.py",
+    "/app/test_reports/pytest/pytest_iter21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reports.py:311 uses '$lt' with '.999999+00:00' upper bound — safe for normal usage but bills persisted with the exact microsecond suffix would be excluded. Not observed in seed data; leaving as informational.",
+    "reports.py:344 attributes revenue via it.get('total') or it.get('price'); this correctly maps to post-discount pre-tax line total set by compute_bill_totals, matching bills.py schema."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter21_staff_performance.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23)",
+    "frontend": "not tested (per request)"
+  },
+  "seed_data_creation": "None — used pre-existing Glow Up seed bills/beauticians. No writes performed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file at /app/backend/tests/test_iter21_staff_performance.py. Uses admin@glowup.com/admin123 (owner) and staff@glowup.com/staff123. Ground-truth aggregation test cross-checks /api/bills against /api/reports/staff-performance for the month. Seed expectation: preset=month → 11 rows, top_performer=Deepa Bhat.",
+  "rca_of_issue": "N/A — feature working as specified.",
+  "verified_behaviours": [
+    "RBAC: unauthenticated → 403, staff role → 403, owner → 200",
+    "Response shape: from/to/days/rows/totals/top_performer all present; trend length matches days list and preserves ordering",
+    "Aggregation: earnings == revenue + tips; avg_ticket == earnings/appointments (0 when appts=0); rows sorted by earnings desc",
+    "Top performer: matches first row with earnings > 0; null when all-zero (verified with future date range)",
+    "Cross-check against raw /api/bills for the month reproduces per-staff revenue/tips/services/appointments exactly",
+    "Presets: today (1 day), yesterday, week (7 days), month (from 1st to today), last_month (prev full calendar month)",
+    "Custom range with from_date/to_date works; invalid date → 400; swapped range gets normalised (not an error)",
+    "Zero-performers: every active beautician appears in rows even for date ranges with no bills",
+    "Seed sanity: preset=month returns exactly 11 rows and top_performer.beautician_name == 'Deepa Bhat'"
+  ]
+}

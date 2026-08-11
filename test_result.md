@@ -488,3 +488,40 @@ agent_communication:
           All other happy paths and edge cases pass. Test report:
           /app/test_reports/iteration_20.json, JUnit:
           /app/test_reports/pytest/pytest_iter20.xml.
+
+
+  - task: "Staff Performance Dashboard — iteration_21"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/reports.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Wrote 23 pytest cases in /app/backend/tests/test_iter21_staff_performance.py.
+          23/23 PASS against Glow Up seed data. Coverage for GET /api/reports/staff-performance:
+            • RBAC: unauthenticated → 403, staff role → 403, owner/admin → 200.
+            • Response shape: from, to, days[], rows[], totals{}, top_performer all present.
+              Trend array length equals days length and preserves date ordering.
+            • Aggregation:
+                - earnings == revenue + tips per row (rounded)
+                - avg_ticket == earnings / appointments (0.0 if appts=0)
+                - rows sorted by earnings desc
+                - top_performer == first row with earnings > 0 (null when all zero)
+                - Cross-checked full per-staff aggregate against raw /api/bills for the month
+                  (revenue, tips, services count, DISTINCT bill appointments) — exact match.
+                - Totals equal sum of row values.
+                - Seed sanity: preset=month → 11 rows, top_performer="Deepa Bhat".
+            • Presets: today (1 day), yesterday, week (7 days), month (from 1st→today,
+              days=today.day), last_month (previous full calendar month).
+            • Custom range: from_date/to_date works; invalid date → 400; swapped range is
+              normalised internally (not an error).
+            • Zero-performers: every active beautician in /api/beauticians appears in rows
+              for a "yesterday" range even when no bills exist; future-date range yields
+              all-zero rows and top_performer=null.
+          No writes performed against DB; no seed data modified.
+          Report: /app/test_reports/iteration_21.json, JUnit:
+          /app/test_reports/pytest/pytest_iter21.xml.
