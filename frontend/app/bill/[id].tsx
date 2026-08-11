@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, Alert,
+  Modal, Pressable, TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +21,12 @@ export default function BillDetailScreen() {
   const [bill, setBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
+  // Email invoice modal state
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [emailOk, setEmailOk] = useState<string | null>(null);
 
   // Branch corresponding to this bill (for logo, address, tax overrides)
   const billBranch = bill ? (branches || []).find((b: any) => b.id === bill.branch_id) : null;
@@ -331,6 +338,10 @@ ${tipBlock}
           <Ionicons name="add-circle-outline" size={18} color={colors.brandPrimary} />
           <Text style={styles.footerSecondaryText}>New Bill</Text>
         </TouchableOpacity>
+        <TouchableOpacity testID="email-bill-btn" style={styles.footerSecondary} onPress={() => { setEmailTo(bill?.customer_email || bill?.customer_phone_email || ''); setEmailErr(null); setEmailOk(null); setEmailOpen(true); }}>
+          <Ionicons name="mail-outline" size={18} color={colors.brandPrimary} />
+          <Text style={styles.footerSecondaryText}>Email</Text>
+        </TouchableOpacity>
         <TouchableOpacity testID="share-bill-btn" style={styles.footerPrimary} onPress={share} disabled={sharing}>
           {sharing ? <ActivityIndicator color="#fff" /> : (
             <>
@@ -340,6 +351,67 @@ ${tipBlock}
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Email invoice modal */}
+      <Modal visible={emailOpen} transparent animationType="slide" onRequestClose={() => !emailBusy && setEmailOpen(false)}>
+        <Pressable style={styles.emailBackdrop} onPress={() => !emailBusy && setEmailOpen(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <Pressable style={styles.emailSheet} onPress={() => {}}>
+              <View style={styles.emailHandle} />
+              <Text style={styles.emailTitle}>Email Invoice</Text>
+              <Text style={styles.emailHint}>Send a copy of Bill #{bill?.bill_no} to your customer's email.</Text>
+
+              <TextInput
+                testID="email-invoice-input"
+                value={emailTo}
+                onChangeText={setEmailTo}
+                placeholder="customer@example.com"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoCorrect={false}
+                editable={!emailBusy}
+                style={styles.emailInput}
+              />
+              {emailErr && <Text style={styles.emailErr}>{emailErr}</Text>}
+              {emailOk && <Text style={styles.emailOk}>{emailOk}</Text>}
+
+              <View style={styles.emailActions}>
+                <TouchableOpacity style={styles.emailBtnGhost} onPress={() => setEmailOpen(false)} disabled={emailBusy}>
+                  <Text style={styles.emailBtnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="email-invoice-send"
+                  style={styles.emailBtnPrimary}
+                  disabled={emailBusy}
+                  onPress={async () => {
+                    setEmailErr(null); setEmailOk(null);
+                    const to = emailTo.trim().toLowerCase();
+                    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { setEmailErr('Enter a valid email address'); return; }
+                    setEmailBusy(true);
+                    try {
+                      const res: any = await api(`/bills/${bill.id}/email`, {
+                        method: 'POST',
+                        body: { email: to, customer_name: bill?.customer_name || undefined },
+                      });
+                      if (res?.ok) {
+                        setEmailOk(`Sent! (via ${res.provider || 'email'})`);
+                        setTimeout(() => setEmailOpen(false), 1200);
+                      } else {
+                        setEmailErr(res?.error || 'Delivery failed. Please try again.');
+                      }
+                    } catch (e: any) {
+                      setEmailErr(e?.message || 'Delivery failed.');
+                    } finally { setEmailBusy(false); }
+                  }}
+                >
+                  {emailBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.emailBtnPrimaryText}>Send Invoice</Text>}
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -404,4 +476,27 @@ const styles = StyleSheet.create({
     paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, ...shadows.card,
   },
   footerPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  // Email invoice modal
+  emailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end', alignItems: 'center' } as any,
+  emailSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    ...(Platform.OS === 'web' ? { borderBottomLeftRadius: 24, borderBottomRightRadius: 24 } : {}),
+    padding: spacing.lg, gap: spacing.md, width: '100%', maxWidth: 480, alignSelf: 'center',
+  } as any,
+  emailHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
+  emailTitle: { fontSize: 18, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
+  emailHint: { fontSize: 13, color: colors.onSurfaceTertiary, textAlign: 'center' },
+  emailInput: {
+    backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 14,
+    borderRadius: radius.sm, fontSize: 15, color: colors.onSurface,
+  },
+  emailErr: { color: colors.error, fontSize: 13, textAlign: 'center' },
+  emailOk: { color: colors.success, fontSize: 13, textAlign: 'center', fontWeight: '700' },
+  emailActions: { flexDirection: 'row', gap: spacing.sm },
+  emailBtnGhost: { flex: 1, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
+  emailBtnGhostText: { color: colors.onSurface, fontWeight: '700', fontSize: 14 },
+  emailBtnPrimary: { flex: 1.4, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center' },
+  emailBtnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });
