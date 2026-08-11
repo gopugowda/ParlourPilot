@@ -7,9 +7,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { branchApi } from '@/src/api/client';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+import { branchApi, paymentsApi, tokenStore } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+
+const API_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 // SaaS pricing (INR base). These match the backend BRANCH_PLAN_PRICES_INR / TENANT_PLAN_PRICES_INR.
 const PRICES: Record<string, { monthly: number; yearly: number }> = {
@@ -48,7 +52,7 @@ export default function CheckoutScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ type?: string }>();
   const type = (params?.type === 'tenant' ? 'tenant' : 'branch') as 'branch' | 'tenant';
-  const { refreshBranches, refreshTenant } = useAuth();
+  const { refreshBranches, refreshTenant, user } = useAuth();
 
   const [plan, setPlan] = useState<Plan>('monthly');
   const [subCurrency, setSubCurrency] = useState<string>('INR');
@@ -99,43 +103,137 @@ export default function CheckoutScreen() {
     return branchName.trim().length > 0;
   }, [processing, type, branchName]);
 
-  const submitMockPayment = async () => {
+  const [gatewayReady, setGatewayReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const cfg: any = await paymentsApi.config();
+        setGatewayReady(!!cfg?.enabled);
+      } catch { setGatewayReady(false); }
+    })();
+  }, []);
+
+  // ---- Load Razorpay checkout.js on WEB ----
+  const loadRazorpayScript = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (Platform.OS !== 'web') return resolve(false);
+      const w: any = typeof window !== 'undefined' ? window : null;
+      if (!w) return resolve(false);
+      if (w.Razorpay) return resolve(true);
+      const script = w.document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      w.document.body.appendChild(script);
+    });
+  };
+
+  const openRazorpayWeb = (order: any): Promise<any> => {
+    return new Promise(async (resolve, reject) => {
+      const ok = await loadRazorpayScript();
+      const w: any = typeof window !== 'undefined' ? window : null;
+      if (!ok || !w || !w.Razorpay) return reject(new Error('Failed to load Razorpay checkout'));
+      const options = {
+        key: order.key_id,
+        amount: String(order.amount),
+        currency: order.currency,
+        order_id: order.order_id,
+        name: order.name || 'ParlourPilot',
+        description: order.description || 'Subscription',
+        handler: (response: any) => resolve(response),
+        modal: { ondismiss: () => reject(new Error('Payment cancelled')) },
+        theme: { color: colors.brandPrimary },
+        prefill: {
+          name: user?.name || undefined,
+          email: user?.email || undefined,
+        },
+      };
+      const rzp = new w.Razorpay(options);
+      rzp.on('payment.failed', (r: any) => reject(new Error(r?.error?.description || 'Payment failed')));
+      rzp.open();
+    });
+  };
+
+  const openRazorpayNative = async (order: any): Promise<'paid' | 'cancelled' | 'failed'> => {
+    // Use hosted checkout page + WebBrowser to complete payment. The page auto-verifies
+    // on success and redirects to our returnUrl (Expo deep link) — WebBrowser then auto-closes.
+    const token = await tokenStore.get();
+    const returnUrl = Linking.createURL('checkout-done');
+    const payUrl = `${API_BASE}/api/pay/${encodeURIComponent(order.order_id)}?token=${encodeURIComponent(token || '')}&return=${encodeURIComponent(returnUrl)}`;
+    const result = await WebBrowser.openAuthSessionAsync(payUrl, returnUrl);
+    if (result.type !== 'success' || !result.url) return 'cancelled';
+    const parsed = Linking.parse(result.url);
+    const status = String((parsed.queryParams as any)?.status || '');
+    if (status === 'paid') return 'paid';
+    if (status === 'failed') return 'failed';
+    return 'cancelled';
+  };
+
+  const submitRazorpayPayment = async () => {
     if (!canPay) return;
+    if (gatewayReady === false) {
+      Alert.alert('Payment gateway not configured', 'Razorpay keys are not set on the server. Please contact support.');
+      return;
+    }
     setProcessing(true);
     try {
-      // Simulate a payment sleep
-      await new Promise(res => setTimeout(res, 1500));
-      if (type === 'branch') {
-        const ref = `MOCKPAY-${Date.now().toString(36).toUpperCase()}`;
-        await branchApi.checkout({
-          plan,
-          branch: {
-            name: branchName.trim(),
-            address: address.trim(),
-            city: city.trim(),
-            phone: phone.replace(/\D/g, ''),
-            invoice_prefix: invoicePrefix.trim(),
-            active: true,
-          },
-          amount_inr: priceINR,
-          display_amount: Math.round(displayAmount * 100) / 100,
-          display_currency: subCurrency,
-          payment_reference: ref,
+      // 1. Create order server-side
+      const order: any = await branchApi.createOrder({
+        plan,
+        branch: {
+          name: branchName.trim(),
+          address: address.trim(),
+          city: city.trim(),
+          phone: phone.replace(/\D/g, ''),
+          invoice_prefix: invoicePrefix.trim(),
+          active: true,
+        },
+        display_amount: Math.round(displayAmount * 100) / 100,
+        display_currency: subCurrency,
+      });
+
+      if (Platform.OS === 'web') {
+        // 2a. Open Razorpay Checkout inline
+        const response: any = await openRazorpayWeb(order);
+        // 3. Verify server-side
+        const verified: any = await branchApi.verifyPayment({
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_order_id: response.razorpay_order_id,
+          razorpay_signature: response.razorpay_signature,
         });
         await refreshBranches();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert(
-          'Payment successful (mock)',
-          `Branch "${branchName}" activated on the ${plan} plan.\n\nReference: ${ref}\nAmount charged: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\n\nNext renewal in ${plan === 'yearly' ? '365' : '30'} days.`,
+          'Payment successful',
+          `Branch "${verified?.branch?.name || branchName}" activated on the ${plan} plan.\n\nAmount: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
           [{ text: 'Done', onPress: () => router.replace('/manage/branches') }]
         );
       } else {
-        // tenant checkout — future: extend main tenant subscription
-        Alert.alert('Coming soon', 'Main salon subscription renewal is coming soon.');
+        // 2b. Native (Expo Go / dev build): open hosted checkout in WebBrowser
+        const status = await openRazorpayNative(order);
+        if (status === 'paid') {
+          await refreshBranches();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert(
+            'Payment successful',
+            `Branch "${branchName}" activated on the ${plan} plan.`,
+            [{ text: 'Done', onPress: () => router.replace('/manage/branches') }]
+          );
+        } else if (status === 'cancelled') {
+          Alert.alert('Payment cancelled', 'You closed the payment window before completing.');
+        } else {
+          Alert.alert('Payment failed', 'Please try again or use a different card.');
+        }
       }
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Payment failed', e.message || String(e));
+      const msg = e?.message || String(e);
+      if (msg.toLowerCase().includes('cancel')) {
+        // silent — user closed the modal
+      } else {
+        Alert.alert('Payment failed', msg);
+      }
     } finally {
       setProcessing(false);
     }
@@ -158,11 +256,25 @@ export default function CheckoutScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={70}>
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
 
-          {/* MOCK-PAYMENT banner */}
-          <View style={styles.mockBanner}>
-            <Ionicons name="information-circle" size={18} color={colors.warning} />
-            <Text style={styles.mockBannerText}>MOCK payment — no real charge is made. Real gateway coming soon.</Text>
-          </View>
+          {/* Payment gateway status banner */}
+          {gatewayReady === null ? (
+            <View style={styles.mockBanner}>
+              <ActivityIndicator size="small" color={colors.warning} />
+              <Text style={styles.mockBannerText}>Loading payment gateway…</Text>
+            </View>
+          ) : gatewayReady ? (
+            <View style={[styles.mockBanner, { backgroundColor: '#E7F5EC', borderColor: '#5FBF7F' }]}>
+              <Ionicons name="shield-checkmark" size={18} color="#2F855A" />
+              <Text style={[styles.mockBannerText, { color: '#204F32' }]}>
+                Secure Razorpay checkout. {Platform.OS !== 'web' && '(Opens in secure browser)'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.mockBanner}>
+              <Ionicons name="warning" size={18} color={colors.warning} />
+              <Text style={styles.mockBannerText}>Payment gateway not configured. Contact support.</Text>
+            </View>
+          )}
 
           {/* Plan selector */}
           <Text style={styles.sectionLabel}>Choose Plan</Text>
@@ -247,9 +359,9 @@ export default function CheckoutScreen() {
 
           {/* Pay button */}
           <TouchableOpacity
-            testID="mock-pay-btn"
+            testID="razorpay-pay-btn"
             style={[styles.payBtn, !canPay && { opacity: 0.6 }]}
-            onPress={submitMockPayment}
+            onPress={submitRazorpayPayment}
             disabled={!canPay}
           >
             {processing ? (
@@ -261,14 +373,14 @@ export default function CheckoutScreen() {
               <>
                 <Ionicons name="card" size={18} color="#fff" />
                 <Text style={styles.payBtnText}>
-                  Pay {symbol}{displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} & Activate
+                  Pay {symbol}{displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} with Razorpay
                 </Text>
               </>
             )}
           </TouchableOpacity>
 
           <Text style={styles.disclaimer}>
-            By continuing you agree to the ParlourPilot terms. This is a mock payment flow for demo — real Stripe/Razorpay integration comes later. Your card is not charged.
+            🔒 Secured by Razorpay. All Indian payment methods supported — Cards, UPI, Netbanking, Wallets. In test mode use card 4111 1111 1111 1111, any future expiry, any CVV, OTP 1234.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

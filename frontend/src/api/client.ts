@@ -156,9 +156,19 @@ export const branchApi = {
   create: (data: any) => api('/branches', { method: 'POST', body: data }),
   update: (bid: string, data: any) => api(`/branches/${bid}`, { method: 'PUT', body: data }),
   remove: (bid: string) => api(`/branches/${bid}`, { method: 'DELETE' }),
+  // Legacy mock checkout (kept for backwards compatibility)
   checkout: (data: { plan: 'monthly' | 'yearly'; branch: any; amount_inr?: number; display_amount?: number; display_currency?: string; payment_reference?: string }) =>
     api('/branches/checkout', { method: 'POST', body: data }),
+  // NEW: Razorpay flow
+  createOrder: (data: { plan: 'monthly' | 'yearly'; branch: any; display_amount?: number; display_currency?: string }) =>
+    api('/branches/checkout/order', { method: 'POST', body: data }),
+  verifyPayment: (data: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) =>
+    api('/branches/checkout/verify', { method: 'POST', body: data }),
   pricing: () => api('/pricing'),
+};
+
+export const paymentsApi = {
+  config: () => api('/payments/config'),
 };
 
 export const appointmentApi = {

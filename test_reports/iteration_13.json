@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 13 — Razorpay payment gateway integration for branch subscriptions. Backend: 20/20 pytest cases pass against the public URL (payments/config, checkout/order role-gate + validation, checkout/verify signature/order/gateway/idempotency/tenant-scope, legacy /branches/checkout mock, hosted /pay/{order_id} HTML, /razorpay/webhook signature enforcement, and branch CRUD regression). Frontend (mobile 390x844): /checkout?type=branch renders the green 'Secure Razorpay checkout' banner sourced from /api/payments/config; clicking testID='razorpay-pay-btn' after entering testID='branch-name' fires exactly ONE POST to /api/branches/checkout/order and then successfully loads checkout.razorpay.com/v1/checkout.js and opens the real Razorpay Standard Checkout modal (iframe from api.razorpay.com with keyId rzp_test_TONzleNjsSy4o9, amount ₹888, brand 'ParlourPilot'). Branch is NOT created before payment verification — confirmed via GET /api/branches counts. Cross-tenant isolation is enforced (unknown-order for the wrong tenant returns 404). Deprecated packages: none blocking. Console warnings observed (non-blocking, carry-over from prior iterations): 'shadow*' style props deprecated in RN-Web (existing across StyleSheets), still applies to /checkout styles.card/planCardActive/payBtn.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/checkout", "issues": ["Console warning: 'shadow*' style props deprecated. Use boxShadow. Reference: /app/frontend/app/checkout.tsx lines 439 (planCardActive), 458 (card), 463 (payBtn)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter13_razorpay.py",
+    "/app/test_reports/pytest/pytest_iter13.xml",
+    "/app/test_reports/screenshots/iter13_checkout.png",
+    "/app/test_reports/screenshots/iter13_after_pay.png"
+  ],
+  "action_items": [
+    "P2 (bug, not blocking): In /app/frontend/app/checkout.tsx line 148, `prefill.name` uses `(useAuth as any)?.user?.name` — but `useAuth` is a hook, not a state object. This always evaluates to undefined, so the Razorpay modal is not pre-filled with the user's name. Fix: destructure `const { user } = useAuth();` at the top of the component and pass `user?.name` to prefill.",
+    "P2 (nice-to-have): expose `subscription_plan` and `subscription_end_date` on branches list — currently created via _activate_branch_from_order but not surfaced in the manage-branches UI (out of scope of this ticket but noted for follow-up).",
+    "P3 (deprecation, carry-over): migrate `shadows.card`/`shadow*` styles to `boxShadow` in /app/frontend/src/theme (affects the whole app; only re-noting)."
+  ],
+  "critical_code_review_comments": [
+    "Signature verification uses hmac.compare_digest — good (constant-time). Order lookup in /branches/checkout/verify includes tenant_id AND user_id — perfect tenant isolation, verified with a second tenant returning 404.",
+    "Order status is flipped to 'paid' atomically via update_one with `status: {'$ne':'paid'}` and modified_count check — race-safe. Good.",
+    "_activate_branch_from_order is idempotent (checks existing branch by razorpay_order_id) — good.",
+    "Webhook: RAZORPAY_WEBHOOK_SECRET is empty in .env so the webhook route currently returns 503 for ALL requests. This is safe-fail behaviour but means the async fallback path is inactive in prod until the secret is configured — /verify path from checkout handler carries the load. Not a bug, just an operator TODO.",
+    "server.py has grown to ~3200+ lines including the new Razorpay code + hosted HTML. The inline hosted checkout HTML (~80 lines) would be cleaner as a Jinja template or a static file — noted from iter11/12 backlog.",
+    "In checkout.tsx `openRazorpayWeb`, the reject path from `ondismiss` throws 'Payment cancelled' which is caught and silenced by the outer try/except (checks msg.toLowerCase().includes('cancel')) — clean UX. But the created pending_orders row remains status='created' forever with no cleanup — recommend a TTL index on pending_orders.created_at (e.g., 24h) for garbage collection.",
+    "BranchCheckoutBody accepts `display_amount`/`display_currency` from the client — comment correctly notes they are 'display only; server uses paise-map for actual charge'. Verified by reading amount from BRANCH_PLAN_PAISE, not from body. Server never trusts client amount.",
+    "GET /api/pay/{order_id} does not require auth on the page load itself (correct — Razorpay redirects the browser here). The subsequent /verify call embedded in the page uses the ?token= query param passed from the app — this token is a JWT and appears in the URL / browser history; acceptable for a short-lived checkout redirect but worth noting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter13_razorpay.py (new — 20 pytest cases across 7 groups: PaymentsConfig, CreateOrder, VerifyPayment, LegacyCheckout, HostedPage, Webhook, BranchRegression)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 iter13 tests pass in 12.9s)",
+    "frontend": "100% for exercised flows — /payments/config banner, order creation only after branchName, Razorpay Standard Checkout modal opens successfully via checkout.js with the correct key_id / amount (₹888) / brand"
+  },
+  "seed_data_creation": "Ephemeral only. Test suite creates: (1) throwaway TEST_biz_<uuid> tenant via /tenants/signup for cross-tenant isolation test (kept — 15-day trial tenant, harmless), (2) multiple pending_orders rows in Razorpay (test-mode order_ids — no monetary impact), (3) short-lived TEST_legacy_<uuid> and TEST_reg_<uuid> branches that are deleted immediately after creation, (4) UITest_<uuid> pending order fired from the UI test (branch NOT created since payment was never completed).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reusable pytest suite: /app/backend/tests/test_iter13_razorpay.py. RAZORPAY_KEY_ID=rzp_test_TONzleNjsSy4o9, RAZORPAY_KEY_SECRET=JASW9tXCoHsVd1JyQtW1TmPJ (test-mode, safe to use in tests). Key insight for testing verify without a real payment: compute HMAC-SHA256 of 'order_id|pay_id' with the KEY_SECRET — server accepts the signature but then Razorpay.payment.fetch fails on the bogus pay_id → 502 (this is the terminal 'gateway' assertion). To test true idempotency you'd need a captured payment; not possible in CI. Frontend testIDs on /checkout: 'plan-monthly', 'plan-yearly', 'pay-currency', 'pay-cur-<CODE>', 'branch-name', 'razorpay-pay-btn'. RAZORPAY_WEBHOOK_SECRET is currently empty in backend/.env — webhook route returns 503 for all requests until it's configured. Login page uses text 'Sign In' (case-sensitive) — not a button role, use get_by_text('Sign In', exact=True). Amount for branch monthly=88800 paise (₹888), yearly=888800 paise (₹8888). Client-side display_currency is FX-converted for display but backend charges INR (paise).",
+  "rca_of_issue": "N/A — no defects. Only a minor P2 bug in checkout.tsx prefill.name (documented in action_items)."
+}
