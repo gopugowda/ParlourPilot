@@ -187,7 +187,7 @@ export default function SubscriptionScreen() {
           <View style={styles.warnBox}>
             <Ionicons name="time-outline" size={20} color={colors.warning} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.warnTitle}>You've confirmed non-renewal</Text>
+              <Text style={styles.warnTitle}>You&rsquo;ve confirmed non-renewal</Text>
               <Text style={styles.warnText}>
                 Your subscription will not auto-renew. You continue to have <Text style={styles.bold}>full access</Text> to all
                 features until <Text style={styles.bold}>{endDateFmt}</Text>. After that, your account will be locked
@@ -203,7 +203,7 @@ export default function SubscriptionScreen() {
             <Ionicons name="shield-checkmark" size={20} color={colors.success} />
             <View style={{ flex: 1 }}>
               <Text style={styles.infoTitle}>Everything is running smoothly</Text>
-              <Text style={styles.infoText}>You have full access to all ParlourPilot features. No auto-renewal — you'll be reminded before {endDateFmt}.</Text>
+              <Text style={styles.infoText}>You have full access to all ParlourPilot features. No auto-renewal — you&rsquo;ll be reminded before {endDateFmt}.</Text>
             </View>
           </View>
         )}

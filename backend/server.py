@@ -45,6 +45,20 @@ for r in (
 
 app.include_router(api_router)
 
+
+# Root health endpoint — silences Kubernetes probe 404s and gives a friendly response
+# when someone hits the backend URL directly. Nginx routes `/api/*` to us and `/` to
+# the frontend, but health probes can bypass Nginx and hit the pod directly.
+@app.get("/", include_in_schema=False)
+async def root_health():
+    return {"ok": True, "service": "parlourpilot-api", "docs": "/docs"}
+
+
+@app.get("/api/health", include_in_schema=False)
+async def api_health():
+    return {"ok": True, "service": "parlourpilot-api"}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

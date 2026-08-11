@@ -211,7 +211,7 @@ export default function LoginScreen() {
 
               {fpStep === 'request' && (
                 <>
-                  <Text style={styles.sheetHint}>Enter your registered email and we'll send you a 6-digit code to reset your password.</Text>
+                  <Text style={styles.sheetHint}>Enter your registered email and we&rsquo;ll send you a 6-digit code to reset your password.</Text>
                   <View style={styles.field}>
                     <Text style={styles.label}>Email</Text>
                     <TextInput

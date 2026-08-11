@@ -359,7 +359,7 @@ ${tipBlock}
             <Pressable style={styles.emailSheet} onPress={() => {}}>
               <View style={styles.emailHandle} />
               <Text style={styles.emailTitle}>Email Invoice</Text>
-              <Text style={styles.emailHint}>Send a copy of Bill #{bill?.bill_no} to your customer's email.</Text>
+              <Text style={styles.emailHint}>Send a copy of Bill #{bill?.bill_no} to your customer&rsquo;s email.</Text>
 
               <TextInput
                 testID="email-invoice-input"
