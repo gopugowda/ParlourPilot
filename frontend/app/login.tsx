@@ -24,15 +24,18 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Forgot password flow
+  // Forgot password flow (OTP-based)
   const [fpOpen, setFpOpen] = useState(false);
   const [fpEmail, setFpEmail] = useState('');
   const [fpBusy, setFpBusy] = useState(false);
   const [fpStep, setFpStep] = useState<'request' | 'reset'>('request');
-  const [fpToken, setFpToken] = useState('');
+  const [fpOtp, setFpOtp] = useState('');
   const [fpNewPwd, setFpNewPwd] = useState('');
+  const [fpConfirmPwd, setFpConfirmPwd] = useState('');
   const [fpMsg, setFpMsg] = useState<string | null>(null);
   const [fpErr, setFpErr] = useState<string | null>(null);
+  const [fpEmailSent, setFpEmailSent] = useState(false);
+  const [fpDevOtp, setFpDevOtp] = useState<string | null>(null);
 
   const onSubmit = async () => {
     setErr(null);
@@ -50,32 +53,43 @@ export default function LoginScreen() {
 
   const requestReset = async () => {
     setFpErr(null); setFpMsg(null);
-    if (!fpEmail.trim()) { setFpErr('Enter your email'); return; }
+    const email = fpEmail.trim().toLowerCase();
+    if (!email) { setFpErr('Enter your email'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setFpErr('Enter a valid email address'); return; }
     setFpBusy(true);
     try {
-      const res: any = await api('/auth/forgot-password', { method: 'POST', body: { email: fpEmail.trim().toLowerCase() }, auth: false });
-      if (res.reset_token) {
-        setFpToken(res.reset_token);
-        setFpStep('reset');
-        setFpMsg('Copy this token and set a new password below. (Email service not configured yet.)');
-      } else {
-        setFpMsg(res.message || 'If the email exists, a reset was created. Contact admin.');
-      }
+      const res: any = await api('/auth/forgot-password', { method: 'POST', body: { email }, auth: false });
+      setFpEmailSent(!!res.email_sent);
+      setFpDevOtp(res.dev_otp || null);
+      setFpStep('reset');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setFpMsg(res.email_sent
+        ? `We sent a 6-digit code to ${email}. Check your inbox (and spam).`
+        : res.message || 'Enter the code below to reset your password.');
     } catch (e: any) { setFpErr(e.message || 'Failed'); }
     finally { setFpBusy(false); }
   };
 
   const submitReset = async () => {
     setFpErr(null); setFpMsg(null);
+    const otp = fpOtp.trim();
+    if (!/^\d{6}$/.test(otp)) { setFpErr('Enter the 6-digit code from your email'); return; }
     if (fpNewPwd.length < 6) { setFpErr('Password must be at least 6 characters'); return; }
+    if (fpNewPwd !== fpConfirmPwd) { setFpErr('Passwords do not match'); return; }
     setFpBusy(true);
     try {
-      await api('/auth/reset-password', { method: 'POST', body: { token: fpToken.trim(), new_password: fpNewPwd }, auth: false });
+      await api('/auth/reset-password', {
+        method: 'POST',
+        body: { email: fpEmail.trim().toLowerCase(), otp, new_password: fpNewPwd },
+        auth: false,
+      });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setFpMsg('Password reset — sign in with your new password.');
       setTimeout(() => {
         setEmail(fpEmail); setPassword('');
-        setFpOpen(false); setFpStep('request'); setFpEmail(''); setFpToken(''); setFpNewPwd(''); setFpMsg(null);
+        setFpOpen(false); setFpStep('request');
+        setFpEmail(''); setFpOtp(''); setFpNewPwd(''); setFpConfirmPwd('');
+        setFpMsg(null); setFpDevOtp(null); setFpEmailSent(false);
       }, 1500);
     } catch (e: any) { setFpErr(e.message || 'Failed'); }
     finally { setFpBusy(false); }
@@ -193,11 +207,11 @@ export default function LoginScreen() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{fpStep === 'request' ? 'Forgot Password' : 'Set New Password'}</Text>
+              <Text style={styles.sheetTitle}>{fpStep === 'request' ? 'Forgot Password' : 'Enter Reset Code'}</Text>
 
               {fpStep === 'request' && (
                 <>
-                  <Text style={styles.sheetHint}>Enter your registered email. A reset token will be generated below.</Text>
+                  <Text style={styles.sheetHint}>Enter your registered email and we'll send you a 6-digit code to reset your password.</Text>
                   <View style={styles.field}>
                     <Text style={styles.label}>Email</Text>
                     <TextInput
@@ -208,12 +222,13 @@ export default function LoginScreen() {
                       placeholderTextColor={colors.onSurfaceTertiary}
                       autoCapitalize="none"
                       keyboardType="email-address"
+                      autoCorrect={false}
                       style={styles.plainInput}
                     />
                   </View>
                   {fpErr && <Text style={styles.err}>{fpErr}</Text>}
                   <TouchableOpacity testID="fp-request-btn" style={styles.btn} onPress={requestReset} disabled={fpBusy}>
-                    {fpBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Get Reset Token</Text>}
+                    {fpBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Send Reset Code</Text>}
                   </TouchableOpacity>
                 </>
               )}
@@ -221,28 +236,31 @@ export default function LoginScreen() {
               {fpStep === 'reset' && (
                 <>
                   {fpMsg && (
-                    <View style={styles.infoBox}>
-                      <Ionicons name="information-circle" size={18} color={colors.warning} />
+                    <View style={[styles.infoBox, fpEmailSent && { backgroundColor: '#E8F5E9', borderColor: '#C5E1A5' }]}>
+                      <Ionicons name={fpEmailSent ? 'mail-outline' : 'information-circle'} size={18} color={fpEmailSent ? '#2E7D32' : colors.warning} />
                       <Text style={styles.infoText}>{fpMsg}</Text>
                     </View>
                   )}
-                  <View style={styles.field}>
-                    <Text style={styles.label}>Reset Token</Text>
-                    <View style={styles.tokenRow}>
-                      <TextInput
-                        testID="fp-token"
-                        value={fpToken}
-                        onChangeText={setFpToken}
-                        style={[styles.plainInput, { flex: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 12 }]}
-                      />
-                      <TouchableOpacity
-                        testID="fp-copy-token"
-                        style={styles.copyBtn}
-                        onPress={async () => { await Clipboard.setStringAsync(fpToken); Haptics.selectionAsync(); }}
-                      >
-                        <Ionicons name="copy-outline" size={16} color={colors.brandPrimary} />
+                  {fpDevOtp && (
+                    <View style={styles.devBox}>
+                      <Text style={styles.devLabel}>DEV OTP (email disabled)</Text>
+                      <TouchableOpacity onPress={async () => { await Clipboard.setStringAsync(fpDevOtp); Haptics.selectionAsync(); }}>
+                        <Text style={styles.devOtp}>{fpDevOtp}</Text>
                       </TouchableOpacity>
                     </View>
+                  )}
+                  <View style={styles.field}>
+                    <Text style={styles.label}>6-Digit Code</Text>
+                    <TextInput
+                      testID="fp-otp"
+                      value={fpOtp}
+                      onChangeText={(t) => setFpOtp(t.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="123456"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      style={[styles.plainInput, styles.otpInput]}
+                    />
                   </View>
                   <View style={styles.field}>
                     <Text style={styles.label}>New Password (≥ 6 chars)</Text>
@@ -256,9 +274,24 @@ export default function LoginScreen() {
                       style={styles.plainInput}
                     />
                   </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Confirm New Password</Text>
+                    <TextInput
+                      testID="fp-confirmpwd"
+                      value={fpConfirmPwd}
+                      onChangeText={setFpConfirmPwd}
+                      placeholder="••••••"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      secureTextEntry
+                      style={styles.plainInput}
+                    />
+                  </View>
                   {fpErr && <Text style={styles.err}>{fpErr}</Text>}
                   <TouchableOpacity testID="fp-reset-btn" style={styles.btn} onPress={submitReset} disabled={fpBusy}>
                     {fpBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Reset Password</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setFpStep('request'); setFpOtp(''); setFpNewPwd(''); setFpConfirmPwd(''); setFpErr(null); setFpMsg(null); setFpDevOtp(null); }}>
+                    <Text style={styles.backLink}>← Use a different email</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -327,4 +360,24 @@ const styles = StyleSheet.create({
   infoText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary },
   tokenRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   copyBtn: { width: 40, height: 40, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
+  otpInput: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 22,
+    letterSpacing: 8,
+    textAlign: 'center',
+    fontWeight: '800',
+    color: colors.brandPrimary,
+  } as any,
+  devBox: {
+    backgroundColor: '#FFF3E0',
+    borderWidth: 1,
+    borderColor: '#FFD180',
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    alignItems: 'center',
+    gap: 4,
+  },
+  devLabel: { fontSize: 10, fontWeight: '800', color: '#EF6C00', letterSpacing: 1 },
+  devOtp: { fontSize: 24, fontWeight: '900', letterSpacing: 6, color: '#BF360C', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' } as any,
+  backLink: { color: colors.brandPrimary, fontSize: 13, fontWeight: '700', textAlign: 'center', paddingVertical: 4 },
 });

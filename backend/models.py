@@ -87,7 +87,11 @@ class ForgotPasswordReq(BaseModel):
 
 
 class ResetPasswordReq(BaseModel):
-    token: str
+    # Legacy: token-based reset (still supported for backward compatibility)
+    token: Optional[str] = None
+    # New: OTP-based reset via email
+    email: Optional[EmailStr] = None
+    otp: Optional[str] = None
     new_password: str
 
 

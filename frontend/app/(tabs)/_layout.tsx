@@ -22,7 +22,9 @@ export default function TabsLayout() {
       <View style={styles.desktopRow}>
         <DesktopSidebar mode="tenant" />
         <View style={styles.desktopMain} testID="desktop-main">
-          <Slot />
+          <View style={styles.desktopContent}>
+            <Slot />
+          </View>
         </View>
       </View>
     );
@@ -94,4 +96,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FDFCF9',
     ...(Platform.OS === 'web' ? { overflowY: 'auto' as any, height: '100vh' as any } : {}),
   },
+  desktopContent: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
+  } as any,
 });

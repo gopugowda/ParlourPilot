@@ -206,7 +206,8 @@ export default function PlatformScreen() {
   return (
     <View style={isDesktop ? styles.desktopRow : { flex: 1 }}>
       {isDesktop && <DesktopSidebar mode="platform" />}
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+      <SafeAreaView style={isDesktop ? styles.desktopMainSA : { flex: 1, backgroundColor: colors.surface }}>
+      <View style={isDesktop ? styles.desktopContent : ({ flex: 1 } as any)}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
           {!isDesktop && <Image source={require('../assets/images/parlourpilot-logo.png')} style={{ width: 32, height: 32 }} contentFit="contain" />}
@@ -535,6 +536,7 @@ export default function PlatformScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+      </View>
     </SafeAreaView>
     </View>
   );
@@ -622,6 +624,13 @@ const styles = StyleSheet.create({
   desktopRow: {
     flex: 1, flexDirection: 'row',
     ...(Platform.OS === 'web' ? ({ height: '100vh' as any }) : {}),
+  } as any,
+  desktopMainSA: {
+    flex: 1, backgroundColor: colors.surface,
+    ...(Platform.OS === 'web' ? ({ overflowY: 'auto' as any, height: '100vh' as any }) : {}),
+  } as any,
+  desktopContent: {
+    flex: 1, width: '100%', maxWidth: 1200, alignSelf: 'center',
   } as any,
 
   // Table styles (desktop tenant list)

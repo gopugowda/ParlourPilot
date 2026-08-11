@@ -115,8 +115,8 @@ const styles = StyleSheet.create({
   brandName: { fontSize: 15, fontWeight: '800' },
   brandSub: { fontSize: 11, marginTop: 2, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase' },
 
-  navItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: spacing.md, paddingVertical: 11, borderRadius: radius.sm, marginBottom: 4 },
-  navLabel: { fontSize: 14 },
+  navItem: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, marginBottom: 4 },
+  navLabel: { fontSize: 14, marginLeft: 4 },
 
   footer: { paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.15)' },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: 6 },

@@ -37,19 +37,62 @@ function webDownload(content: string, filename: string, mime: string) {
 }
 
 function webPrint(html: string) {
-  const w: any = typeof window !== 'undefined' ? window : null;
-  if (!w) return;
-  const printWin = w.open('', '_blank', 'noopener,noreferrer,width=780,height=900');
-  if (!printWin) {
-    Alert.alert('Popup blocked', 'Please allow pop-ups to print.');
-    return;
+  const doc: any = typeof document !== 'undefined' ? document : null;
+  const win: any = typeof window !== 'undefined' ? window : null;
+  if (!doc || !win) return;
+
+  // Use a hidden iframe with srcdoc — reliable inside iframed previews and
+  // never triggers popup blockers (unlike window.open).
+  const iframe = doc.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+
+  const cleanup = () => {
+    setTimeout(() => {
+      try { doc.body.removeChild(iframe); } catch {}
+    }, 1500);
+  };
+
+  const triggerPrint = () => {
+    try {
+      const cw = iframe.contentWindow;
+      if (!cw) { cleanup(); return; }
+      // Ensure images/fonts have laid out before firing print
+      setTimeout(() => {
+        try { cw.focus(); cw.print(); } catch (e) {}
+        cleanup();
+      }, 250);
+    } catch (e) {
+      cleanup();
+    }
+  };
+
+  iframe.onload = triggerPrint;
+  doc.body.appendChild(iframe);
+
+  // srcdoc is far more reliable than document.write and renders synchronously
+  // in the iframe context, so buildReportHtml content shows correctly.
+  try {
+    iframe.srcdoc = html;
+  } catch {
+    // Extremely old browser fallback
+    try {
+      const cw = iframe.contentWindow;
+      cw.document.open();
+      cw.document.write(html);
+      cw.document.close();
+    } catch (e) {
+      Alert.alert('Print failed', 'Unable to open the print preview.');
+      cleanup();
+    }
   }
-  printWin.document.open();
-  printWin.document.write(html);
-  printWin.document.close();
-  setTimeout(() => {
-    try { printWin.focus(); printWin.print(); } catch {}
-  }, 400);
 }
 
 // --- Public API ---

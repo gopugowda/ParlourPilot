@@ -412,3 +412,31 @@ agent_communication:
       MOCK PAYMENT: the /branches/checkout endpoint accepts a `payment_reference` and inserts a
       record in `payments`. It does NOT integrate with any real gateway. Users should be informed.
 
+
+  - task: "Forgot Password (OTP-based Self-Serve Reset) — iteration_19"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/auth.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Wrote 16 pytest cases in /app/backend/tests/test_iter19_forgot_password.py — ALL PASS.
+          Coverage:
+            • POST /api/auth/forgot-password: OTP issuance for real user, no-leak/no-record for
+              non-existent email, prior-OTP invalidation, rate-limit (>=3/10min → 429), invalid
+              email format (422).
+            • POST /api/auth/reset-password (OTP flow): wrong OTP (400 + attempts increments),
+              invalid OTP format, no active OTP (400), expired OTP (400), 5-attempt lockout
+              (429 + doc marked used+invalidated), weak password <6 (400), happy-path reset →
+              login works, replay of same OTP blocked, missing fields (400).
+            • Legacy token flow (backward compat): valid token reset, token reuse blocked,
+              invalid token (400), expired token (400).
+          Security verified: OTPs are SHA-256 hashed (no plain OTP in DB), hmac.compare_digest
+          used for constant-time comparison, non-existent email creates no DB record and returns
+          no dev_otp (no enumeration). dev_otp fallback only surfaces when Emergent Resend marks
+          the destination as undeliverable (as expected for admin@glowup.com in preview env).
+          Admin password fully restored to admin123 via module teardown fixture.

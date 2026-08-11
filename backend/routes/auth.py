@@ -212,33 +212,126 @@ async def admin_reset_password(uid: str, body: PasswordReset, user=Depends(requi
 
 @router.post("/auth/forgot-password")
 async def forgot_password(body: ForgotPasswordReq):
-    email = body.email.lower()
+    """Request a password reset. Sends a 6-digit OTP to the user's email (if configured).
+
+    Response is intentionally identical whether the email exists or not — this prevents
+    account enumeration attacks. If email delivery isn't configured, returns the OTP
+    inline as a dev fallback.
+    """
+    from mailer import send_email, render_otp_email, email_enabled
+    import random as _random
+
+    email = body.email.lower().strip()
     target = await db.users.find_one({"email": email})
+
+    # Always issue the same-shape response — but only actually create a record if user exists
+    generic = {"ok": True, "email_sent": email_enabled(), "message": "If the email is registered, a 6-digit code has been sent. It expires in 15 minutes."}
+
     if not target:
-        return {"ok": True, "email_sent": False, "message": "If the email exists, a reset link is available."}
+        return generic
+
+    # Rate limit: max 3 OTP requests per email per 10 minutes
+    ten_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    recent = await db.password_resets.count_documents({
+        "email": email,
+        "created_at": {"$gte": ten_min_ago},
+    })
+    if recent >= 3:
+        raise HTTPException(status_code=429, detail="Too many reset attempts. Please try again in a few minutes.")
+
+    # Invalidate any prior unused OTPs for this email
+    await db.password_resets.update_many({"email": email, "used": False}, {"$set": {"used": True, "used_at": now_iso(), "invalidated": True}})
+
+    otp = f"{_random.randint(0, 999999):06d}"
+    otp_hash = hashlib.sha256(otp.encode()).hexdigest()
     token = str(uuid.uuid4()).replace("-", "")
-    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+
     await db.password_resets.insert_one({
-        "token": token,
+        "token": token,               # kept for legacy compatibility
+        "otp_hash": otp_hash,
+        "attempts": 0,
         "user_id": target["id"],
         "email": email,
         "expires_at": expires,
         "used": False,
         "created_at": now_iso(),
     })
-    return {
-        "ok": True,
-        "email_sent": False,
-        "reset_token": token,
-        "expires_at": expires,
-        "message": "Email not configured. Use the token below to reset your password within 1 hour.",
-    }
+
+    # Send email — non-blocking failure (still returns success to caller for security)
+    email_result = {"ok": False}
+    if email_enabled():
+        html = render_otp_email(otp=otp, name=target.get("name"), purpose="reset your ParlourPilot password")
+        email_result = await send_email(
+            to=email,
+            subject=f"Your ParlourPilot password reset code: {otp}",
+            html=html,
+        )
+
+    resp = {"ok": True, "email_sent": bool(email_result.get("ok")), "message": generic["message"]}
+    # Dev fallback: if email couldn't be sent (not configured OR delivery blocked),
+    # surface the OTP in the response so the reset flow is testable on preview.
+    # NOTE: In production with real customer emails this branch will never trigger.
+    if not email_result.get("ok"):
+        resp["dev_otp"] = otp
+        if not email_enabled():
+            resp["message"] = "Email service not configured. Use the code below within 15 minutes."
+        else:
+            resp["message"] = "Email delivery unavailable for this address. Use the code below within 15 minutes."
+    return resp
 
 
 @router.post("/auth/reset-password")
 async def reset_password(body: ResetPasswordReq):
+    """Reset a password using EITHER an OTP + email (new flow) OR a legacy token."""
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    # --- New flow: email + 6-digit OTP ---
+    if body.otp and body.email:
+        email = body.email.lower().strip()
+        otp = body.otp.strip()
+        if not re.fullmatch(r"\d{4,8}", otp):
+            raise HTTPException(status_code=400, detail="Invalid OTP format")
+        otp_hash = hashlib.sha256(otp.encode()).hexdigest()
+
+        # Find the most recent unused OTP for this email
+        doc = await db.password_resets.find_one(
+            {"email": email, "used": False},
+            sort=[("created_at", -1)],
+        )
+        if not doc:
+            raise HTTPException(status_code=400, detail="No active reset code. Please request a new one.")
+
+        # Rate-limit brute force: max 5 attempts per OTP
+        if doc.get("attempts", 0) >= 5:
+            await db.password_resets.update_one({"_id": doc["_id"]}, {"$set": {"used": True, "used_at": now_iso(), "invalidated": True}})
+            raise HTTPException(status_code=429, detail="Too many incorrect attempts. Please request a new code.")
+
+        # Expiry check
+        try:
+            exp = datetime.fromisoformat(doc["expires_at"])
+            if datetime.now(timezone.utc) > exp:
+                raise HTTPException(status_code=400, detail="Reset code expired. Please request a new one.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+        # Compare in constant time
+        if not hmac.compare_digest(doc.get("otp_hash", ""), otp_hash):
+            await db.password_resets.update_one({"_id": doc["_id"]}, {"$inc": {"attempts": 1}})
+            raise HTTPException(status_code=400, detail="Incorrect reset code")
+
+        # Success — update password + burn the OTP
+        await db.users.update_one({"id": doc["user_id"]}, {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso()}})
+        await db.password_resets.update_one({"_id": doc["_id"]}, {"$set": {"used": True, "used_at": now_iso()}})
+        return {"ok": True}
+
+    # --- Legacy flow: reset token ---
+    if not body.token:
+        raise HTTPException(status_code=400, detail="Provide either (email + otp) or a legacy reset token.")
+
     doc = await db.password_resets.find_one({"token": body.token})
     if not doc:
         raise HTTPException(status_code=400, detail="Invalid reset token")

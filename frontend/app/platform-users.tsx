@@ -9,6 +9,8 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { platformApi } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { useResponsive } from '@/src/hooks/use-responsive';
+import { DesktopSidebar } from '@/src/components/DesktopSidebar';
 
 type PUser = {
   id: string;
@@ -22,6 +24,7 @@ type PUser = {
 export default function PlatformUsersScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const { isDesktop } = useResponsive();
   const isSuperAdmin = user?.role === 'platform_admin';
   const [users, setUsers] = useState<PUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,7 +116,10 @@ export default function PlatformUsersScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={isDesktop ? styles.desktopRow : { flex: 1 }}>
+      {isDesktop && <DesktopSidebar mode="platform" />}
+      <SafeAreaView style={isDesktop ? styles.desktopMainSA : { flex: 1, backgroundColor: colors.surface }}>
+      <View style={isDesktop ? styles.desktopContent : ({ flex: 1 } as any)}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 4 }}>
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
@@ -266,11 +272,24 @@ export default function PlatformUsersScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+      </View>
     </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  desktopRow: {
+    flex: 1, flexDirection: 'row',
+    ...(Platform.OS === 'web' ? ({ height: '100vh' as any }) : {}),
+  } as any,
+  desktopMainSA: {
+    flex: 1, backgroundColor: colors.surface,
+    ...(Platform.OS === 'web' ? ({ overflowY: 'auto' as any, height: '100vh' as any }) : {}),
+  } as any,
+  desktopContent: {
+    flex: 1, width: '100%', maxWidth: 1200, alignSelf: 'center',
+  } as any,
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,

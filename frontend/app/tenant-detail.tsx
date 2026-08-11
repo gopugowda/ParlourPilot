@@ -1,16 +1,19 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, RefreshControl,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, RefreshControl, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { platformApi } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { useResponsive } from '@/src/hooks/use-responsive';
+import { DesktopSidebar } from '@/src/components/DesktopSidebar';
 
 export default function TenantDetailScreen() {
   const { tid } = useLocalSearchParams<{ tid?: string }>();
   const router = useRouter();
+  const { isDesktop } = useResponsive();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<any>(null);
@@ -46,7 +49,10 @@ export default function TenantDetailScreen() {
     : sub.status === 'expired' ? colors.error : colors.info;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={isDesktop ? styles.desktopRow : { flex: 1 }}>
+      {isDesktop && <DesktopSidebar mode="platform" />}
+      <SafeAreaView style={isDesktop ? styles.desktopMainSA : { flex: 1, backgroundColor: colors.surface }}>
+      <View style={isDesktop ? styles.desktopContent : ({ flex: 1 } as any)}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} testID="btn-back">
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
@@ -70,14 +76,16 @@ export default function TenantDetailScreen() {
               <Text style={[styles.statusText, { color: statusColor }]}>{(sub.status || '').toUpperCase()}</Text>
             </View>
           </View>
-          <InfoRow label="Business Name" value={tenant.business_name} />
-          <InfoRow label="Owner" value={tenant.owner_name} />
-          <InfoRow label="Email" value={tenant.email} />
-          <InfoRow label="Phone" value={tenant.phone || '—'} />
-          <InfoRow label="City" value={`${tenant.city || '—'}${tenant.country ? ', ' + tenant.country : ''}`} />
-          <InfoRow label="Plan" value={sub.subscription_plan || tenant.subscription_plan || 'trial'} />
-          <InfoRow label="Days Left" value={String(sub.days_left ?? '—')} />
-          <InfoRow label="Sub End" value={(sub.subscription_end_date || sub.trial_end_date || '').slice(0, 10) || '—'} />
+          <View style={styles.infoList}>
+            <InfoRow label="Business Name" value={tenant.business_name} />
+            <InfoRow label="Owner" value={tenant.owner_name} />
+            <InfoRow label="Email" value={tenant.email} />
+            <InfoRow label="Phone" value={tenant.phone || '—'} />
+            <InfoRow label="City" value={`${tenant.city || '—'}${tenant.country ? ', ' + tenant.country : ''}`} />
+            <InfoRow label="Plan" value={sub.subscription_plan || tenant.subscription_plan || 'trial'} />
+            <InfoRow label="Days Left" value={String(sub.days_left ?? '—')} />
+            <InfoRow label="Sub End" value={(sub.subscription_end_date || sub.trial_end_date || '').slice(0, 10) || '—'} />
+          </View>
           <View style={styles.metaRow}>
             <MetaCol label="Users" val={tenant.user_count ?? 0} />
             <MetaCol label="Bills" val={tenant.bills_count ?? 0} />
@@ -145,7 +153,9 @@ export default function TenantDetailScreen() {
           })}
         </View>
       </ScrollView>
+      </View>
     </SafeAreaView>
+    </View>
   );
 }
 
@@ -185,6 +195,17 @@ function MetaCol({ label, val }: { label: string; val: any }) {
 }
 
 const styles = StyleSheet.create({
+  desktopRow: {
+    flex: 1, flexDirection: 'row',
+    ...(Platform.OS === 'web' ? ({ height: '100vh' as any }) : {}),
+  } as any,
+  desktopMainSA: {
+    flex: 1, backgroundColor: colors.surface,
+    ...(Platform.OS === 'web' ? ({ overflowY: 'auto' as any, height: '100vh' as any }) : {}),
+  } as any,
+  desktopContent: {
+    flex: 1, width: '100%', maxWidth: 1200, alignSelf: 'center',
+  } as any,
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
@@ -206,9 +227,10 @@ const styles = StyleSheet.create({
   statusChip: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   statusText: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
 
-  infoRow: { flexDirection: 'row', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.divider },
-  infoLabel: { flex: 1, fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
-  infoValue: { flex: 1.5, fontSize: 13, color: colors.onSurface, fontWeight: '600', textAlign: 'right' },
+  infoList: { alignSelf: 'center', width: '100%', maxWidth: 560 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider },
+  infoLabel: { width: 140, fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
+  infoValue: { flex: 1, fontSize: 13, color: colors.onSurface, fontWeight: '600', textAlign: 'right' },
 
   metaRow: { flexDirection: 'row', marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider },
   metaLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '600', textTransform: 'uppercase' },
