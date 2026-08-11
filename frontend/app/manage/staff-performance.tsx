@@ -143,38 +143,40 @@ export default function StaffPerformanceScreen() {
 
   return (
     <View style={styles.root} testID="staff-performance-screen">
-      <SafeAreaView edges={['top']} style={styles.header}>
-        <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}>
-          <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Staff Performance</Text>
-          <Text style={styles.headerSub}>{data ? `${data.from} → ${data.to}` : 'Pick a period'}</Text>
-        </View>
-        <TouchableOpacity testID="share-btn" style={styles.shareBtn} onPress={() => setShareOpen(true)}>
-          <Ionicons name="share-outline" size={18} color="#fff" />
-          <Text style={styles.shareBtnText}>Export</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-
-      {/* Period chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-        {([
-          { k: 'today', label: 'Today' },
-          { k: 'week', label: 'Last 7 Days' },
-          { k: 'month', label: 'This Month' },
-          { k: 'last_month', label: 'Last Month' },
-        ] as { k: Preset; label: string }[]).map(({ k, label }) => (
-          <TouchableOpacity
-            key={k}
-            testID={`preset-${k}`}
-            style={[styles.chip, preset === k && styles.chipActive]}
-            onPress={() => { Haptics.selectionAsync(); setPreset(k); }}
-          >
-            <Text style={[styles.chipText, preset === k && styles.chipTextActive]}>{label}</Text>
+      <SafeAreaView edges={['top']} style={styles.headerWrap}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.iconBtn} hitSlop={8}>
+            <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.headerTitle} numberOfLines={1}>Staff Performance</Text>
+            <Text style={styles.headerSub} numberOfLines={1}>{data ? `${data.from} → ${data.to}` : 'Pick a period'}</Text>
+          </View>
+          <TouchableOpacity testID="share-btn" style={styles.shareBtn} onPress={() => setShareOpen(true)}>
+            <Ionicons name="share-outline" size={16} color="#fff" />
+            <Text style={styles.shareBtnText}>Export</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Period chips — plain View row (no ScrollView) so it always claims its layout height */}
+        <View style={styles.chipsRow}>
+          {([
+            { k: 'today', label: 'Today' },
+            { k: 'week', label: '7 Days' },
+            { k: 'month', label: 'This Month' },
+            { k: 'last_month', label: 'Last Month' },
+          ] as { k: Preset; label: string }[]).map(({ k, label }) => (
+            <TouchableOpacity
+              key={k}
+              testID={`preset-${k}`}
+              style={[styles.chip, preset === k && styles.chipActive]}
+              onPress={() => { Haptics.selectionAsync(); setPreset(k); }}
+            >
+              <Text style={[styles.chipText, preset === k && styles.chipTextActive]} numberOfLines={1}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </SafeAreaView>
 
       <ScrollView
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 60 }}
@@ -343,22 +345,43 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  header: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: colors.border,
+  headerWrap: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    // Elevation ensures the sticky header + chips clearly sit above the content scroller
+    ...(Platform.OS === 'android' ? { elevation: 3 } : { shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }),
+    zIndex: 10,
   },
-  iconBtn: { padding: 4 },
-  headerTitle: { fontSize: 16, fontWeight: '800', color: colors.onSurface },
-  headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 1 },
-  shareBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.brandPrimary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill },
-  shareBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  headerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.sm,
+  },
+  iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 18 },
+  headerTitle: { fontSize: 17, fontWeight: '800', color: colors.onSurface },
+  headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  shareBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: colors.brandPrimary,
+    paddingHorizontal: 14, paddingVertical: 9,
+    borderRadius: radius.pill,
+  },
+  shareBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
-  chipsRow: { padding: spacing.md, gap: spacing.sm },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, marginRight: spacing.sm },
+  chipsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.md,
+    backgroundColor: '#FFFFFF',
+    // Elevate above content so no card can ever overlap it
+    zIndex: 10,
+  },
+  chip: { flex: 1, paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
-  chipText: { fontSize: 13, fontWeight: '600', color: colors.onSurface },
-  chipTextActive: { color: '#fff', fontWeight: '700' },
+  chipText: { fontSize: 12, fontWeight: '700', color: colors.onSurface },
+  chipTextActive: { color: '#fff' },
 
   centerBox: { alignItems: 'center', paddingVertical: 40 },
   centerRoot: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, backgroundColor: colors.surface, gap: spacing.md },
@@ -371,23 +394,41 @@ const styles = StyleSheet.create({
   topCard: {
     backgroundColor: '#FFF8E7',
     borderWidth: 1, borderColor: '#F0D89A',
-    borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md, ...shadows.card,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xl,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+    ...shadows.card,
   },
-  topBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', backgroundColor: '#F0D89A', paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  topBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', backgroundColor: '#F0D89A', paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
   topBadgeText: { fontSize: 10, fontWeight: '900', color: '#8A5A00', letterSpacing: 1 },
-  topName: { fontSize: 22, fontWeight: '900', color: colors.onSurface, marginTop: spacing.sm },
-  topRole: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2, fontWeight: '600' },
-  topStats: { flexDirection: 'row', marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: '#F0D89A' },
-  topStat: { flex: 1, alignItems: 'center' },
+  topName: { fontSize: 22, fontWeight: '900', color: colors.onSurface, marginTop: spacing.md },
+  topRole: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 4, fontWeight: '600' },
+  topStats: {
+    flexDirection: 'row',
+    marginTop: spacing.lg,
+    paddingTop: spacing.lg,
+    borderTopWidth: 1, borderTopColor: '#F0D89A',
+  },
+  topStat: { flex: 1, alignItems: 'center', paddingHorizontal: spacing.sm, paddingVertical: 6 },
   topStatVal: { fontSize: 18, fontWeight: '900', color: colors.brandPrimary },
-  topStatLabel: { fontSize: 10, color: colors.onSurfaceTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2, fontWeight: '700' },
-  topStatDivider: { width: 1, backgroundColor: '#F0D89A' },
+  topStatLabel: { fontSize: 10, color: colors.onSurfaceTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 6, fontWeight: '700' },
+  topStatDivider: { width: 1, marginVertical: 4, backgroundColor: '#F0D89A' },
 
   // Summary grid
   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-  sumCard: { flex: 1, minWidth: 140, backgroundColor: '#FFFFFF', borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
+  sumCard: {
+    flex: 1, minWidth: 140,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md + 2,
+    borderWidth: 1, borderColor: colors.border,
+    gap: 6,
+  },
   sumLabel: { fontSize: 10, fontWeight: '700', color: colors.onSurfaceTertiary, textTransform: 'uppercase', letterSpacing: 0.5 },
-  sumValue: { fontSize: 18, fontWeight: '800', color: colors.onSurface, marginTop: 4 },
+  sumValue: { fontSize: 20, fontWeight: '800', color: colors.onSurface, marginTop: 2 },
 
   // Chart card
   chartCard: { backgroundColor: '#FFFFFF', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.md, ...shadows.card },
