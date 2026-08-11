@@ -233,3 +233,68 @@ async def delete_bill(bid: str, scope: BranchScope = Depends(branch_scope_admin)
     return {"ok": True}
 
 
+class EmailInvoiceBody(BaseModel):
+    email: EmailStr
+    customer_name: Optional[str] = None
+
+
+@router.post("/bills/{bid}/email")
+async def email_invoice(bid: str, body: EmailInvoiceBody, scope: BranchScope = Depends(branch_scope)):
+    """Email the invoice PDF-style receipt to a customer address.
+
+    Best-effort: returns ok=False (200) if email delivery fails so the UI can
+    surface a friendly message.
+    """
+    from mailer import send_email, render_invoice_email
+
+    doc = await db.bills.find_one(scope.filter({"id": bid}), {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    tenant = await load_tenant(scope.tenant_id)
+    business_name = (tenant.get("business_name") if tenant else "") or "Your Salon"
+    currency_symbol = "₹" if (tenant or {}).get("currency", "INR") == "INR" else "$"
+
+    # Normalise line items for the template
+    items = []
+    for it in doc.get("items", []) or []:
+        items.append({
+            "name": it.get("service_name") or "Service",
+            "price": float(it.get("total") or it.get("price") or 0),
+        })
+
+    date_str = (doc.get("created_at") or "")[:10]
+    inv_no = doc.get("bill_no") or bid[:8]
+
+    subtotal = float(doc.get("services_net") or doc.get("grand_total", 0) or 0)
+    tax = float(doc.get("tax_amount") or 0)
+    tip = float(doc.get("tip_amount") or 0)
+    grand = float(doc.get("grand_total") or 0)
+
+    html = render_invoice_email(
+        customer_name=body.customer_name or doc.get("customer_name"),
+        business_name=business_name,
+        invoice_no=inv_no,
+        date_str=date_str,
+        items=items,
+        subtotal=subtotal,
+        tax=tax,
+        tip=tip,
+        grand_total=grand,
+        currency_symbol=currency_symbol,
+    )
+
+    result = await send_email(
+        to=str(body.email),
+        subject=f"Invoice #{inv_no} from {business_name}",
+        html=html,
+        reply_to="support@parlourpilot.com",
+    )
+    if not result.get("ok"):
+        # Return a friendly 200 so the frontend can display an inline message
+        # rather than crashing with a red toast.
+        return {"ok": False, "error": result.get("error", "delivery_failed"), "provider": result.get("provider")}
+    return {"ok": True, "id": result.get("id"), "provider": result.get("provider")}
+
+
+

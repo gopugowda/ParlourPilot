@@ -141,6 +141,25 @@ async def signup_tenant(body: TenantSignup):
     }
     await db.users.insert_one(user_doc)
 
+    # Send welcome email (best-effort; signup succeeds even if email fails)
+    try:
+        from mailer import send_email, render_welcome_email
+        html = render_welcome_email(
+            business_name=body.business_name.strip(),
+            owner_name=body.owner_name.strip(),
+            trial_days=TRIAL_DAYS,
+        )
+        result = await send_email(
+            to=email,
+            subject=f"Welcome to ParlourPilot, {body.owner_name.strip().split()[0] if body.owner_name else 'there'}!",
+            html=html,
+            reply_to="support@parlourpilot.com",
+        )
+        if not result.get("ok"):
+            logger.info("Welcome email skipped for %s: %s", email, result.get("error", ""))
+    except Exception as e:
+        logger.warning("Welcome email crashed for %s: %s", email, e)
+
     token = create_token(user_doc["id"], user_doc["role"], tenant_id)
     return {
         "token": token,
