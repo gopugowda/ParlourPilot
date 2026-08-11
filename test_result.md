@@ -440,3 +440,51 @@ agent_communication:
           no dev_otp (no enumeration). dev_otp fallback only surfaces when Emergent Resend marks
           the destination as undeliverable (as expected for admin@glowup.com in preview env).
           Admin password fully restored to admin123 via module teardown fixture.
+
+
+  - task: "Cancel Subscription (Pending Expiry) — iteration_20"
+    implemented: true
+    working: true
+    file: "/app/backend/routes/tenants.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Wrote 19 pytest cases in /app/backend/tests/test_iter20_cancel_subscription.py.
+          18/19 PASS. Coverage:
+            • POST /api/tenants/me/cancel-subscription (owner) — 200, subscription.status stays
+              active/trialing, cancellation_pending=true, cancelled_by=email set on both tenant
+              and subscription payload.
+            • Idempotency — second POST returns already_cancelled=true, no state change.
+            • GET /api/tenants/me/subscription surfaces cancellation_pending,
+              cancellation_requested_at, cancelled_by.
+            • Access preserved after cancel: GET /api/services, GET /api/bills,
+              GET /api/tenants/me all return 200 with cancellation_pending=true.
+            • RBAC: staff POST → 403; staff DELETE → 403; unauthenticated → 401/403.
+            • Platform visibility: /api/platform/stats.cancelled_pending is int and reflects
+              the cancelled tenant; /api/platform/tenants shows subscription.cancellation_pending=true
+              for glowup-tenant-0001; /api/platform/tenants/{tid}/detail also carries the fields.
+            • DELETE /api/tenants/me/cancel-subscription (owner) — 200, fields cleared;
+              second DELETE → 400 "Subscription is not cancelled".
+            • Cannot cancel expired tenant → 400 with detail mentioning expired.
+            • Cleanup fixture guarantees glowup tenant is restored to non-cancelled state.
+
+          FAILED / GAP (1): "Cannot cancel a suspended tenant" is NOT enforced. The endpoint uses
+          require_admin (role check only) and tenant_status() maps only subscription_status/
+          end_date → "expired", never "suspended". When platform admin flips is_active=false,
+          the owner POST /cancel-subscription still returns 200. Root cause:
+            - core.tenant_status() does not consider tenant.is_active
+            - routes/tenants.py:203 uses require_admin (no check_subscription) so suspended
+              tenants can still hit the endpoint
+          Recommendation for main agent: either (a) switch dependency to require_admin_active
+          which runs check_subscription (rejects is_active=False with 403 "Tenant is
+          suspended"), or (b) add `if not tenant.get("is_active", True): raise 400 "Cannot
+          cancel a suspended tenant"` at the top of cancel_my_subscription. Test was left in
+          place to guard the fix.
+
+          All other happy paths and edge cases pass. Test report:
+          /app/test_reports/iteration_20.json, JUnit:
+          /app/test_reports/pytest/pytest_iter20.xml.

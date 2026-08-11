@@ -251,11 +251,16 @@ def tenant_status(tenant: dict) -> dict:
                 status_val = "expired"
         except Exception:
             pass
+    cancellation_requested_at = tenant.get("cancellation_requested_at")
     return {
         "status": status_val, "days_left": days_left,
         "trial_end_date": tenant.get("trial_end_date"),
         "subscription_end_date": tenant.get("subscription_end_date"),
         "subscription_plan": tenant.get("subscription_plan", "trial"),
+        "cancellation_requested_at": cancellation_requested_at,
+        "cancelled_by": tenant.get("cancelled_by"),
+        # UI-friendly derived flag: true while cancelled but end date not yet reached
+        "cancellation_pending": bool(cancellation_requested_at) and status_val in ("trialing", "active"),
     }
 
 

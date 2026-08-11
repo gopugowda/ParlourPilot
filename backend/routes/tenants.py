@@ -199,3 +199,63 @@ async def my_subscription(user=Depends(get_current_user)):
     st["plans"] = SUBSCRIPTION_PLANS
     return st
 
+
+@router.post("/tenants/me/cancel-subscription")
+async def cancel_my_subscription(user=Depends(require_admin)):
+    """Owner-initiated soft-cancellation.
+
+    Records the cancellation intent but keeps `subscription_status` = 'active' /
+    'trialing' so the tenant retains FULL ACCESS to all features until
+    `subscription_end_date` (or `trial_end_date`) is reached — at which point
+    normal expiry logic kicks in and access is locked.
+
+    Platform admins see `cancellation_requested_at` on the tenant list/detail so
+    they know who has decided not to renew.
+    """
+    tid = tenant_id_of(user)
+    tenant = await load_tenant(tid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if not tenant.get("is_active", True):
+        raise HTTPException(status_code=400, detail="Cannot cancel a suspended account. Please contact support.")
+
+    st = tenant_status(tenant)
+    if st["status"] in ("expired", "suspended", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Cannot cancel a {st['status']} subscription. Please renew instead.")
+    if tenant.get("cancellation_requested_at"):
+        # Idempotent — already cancelled
+        return {"tenant": tenant, "subscription": st, "already_cancelled": True}
+
+    updates = {
+        "cancellation_requested_at": now_iso(),
+        "cancelled_by": user.get("email") or user.get("id"),
+        "updated_at": now_iso(),
+    }
+    tenant = await db.tenants.find_one_and_update(
+        {"id": tid}, {"$set": updates},
+        return_document=True, projection={"_id": 0},
+    )
+    logger.info("Tenant %s subscription cancelled by %s (access until %s)", tid, updates["cancelled_by"], st.get("subscription_end_date") or st.get("trial_end_date"))
+    return {"tenant": tenant, "subscription": tenant_status(tenant), "already_cancelled": False}
+
+
+@router.delete("/tenants/me/cancel-subscription")
+async def resume_my_subscription(user=Depends(require_admin)):
+    """Undo a pending cancellation — only valid if the tenant is still active
+    and hadn't yet reached the end date."""
+    tid = tenant_id_of(user)
+    tenant = await load_tenant(tid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if not tenant.get("cancellation_requested_at"):
+        raise HTTPException(status_code=400, detail="Subscription is not cancelled")
+    tenant = await db.tenants.find_one_and_update(
+        {"id": tid},
+        {"$unset": {"cancellation_requested_at": "", "cancelled_by": ""},
+         "$set": {"updated_at": now_iso()}},
+        return_document=True, projection={"_id": 0},
+    )
+    logger.info("Tenant %s cancellation reversed by %s", tid, user.get("email") or user.get("id"))
+    return {"tenant": tenant, "subscription": tenant_status(tenant)}
+
+

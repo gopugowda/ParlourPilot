@@ -72,10 +72,32 @@ export default function TenantDetailScreen() {
           <View style={styles.cardHeader}>
             <Ionicons name="business-outline" size={18} color={colors.brandPrimary} />
             <Text style={styles.cardTitle}>Business Info</Text>
-            <View style={[styles.statusChip, { backgroundColor: `${statusColor}20`, borderColor: statusColor }]}>
-              <Text style={[styles.statusText, { color: statusColor }]}>{(sub.status || '').toUpperCase()}</Text>
+            <View style={{ gap: 4, alignItems: 'flex-end' }}>
+              <View style={[styles.statusChip, { backgroundColor: `${statusColor}20`, borderColor: statusColor }]}>
+                <Text style={[styles.statusText, { color: statusColor }]}>{(sub.status || '').toUpperCase()}</Text>
+              </View>
+              {sub.cancellation_pending && (
+                <View style={[styles.statusChip, { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' }]} testID="tenant-cancellation-badge">
+                  <Text style={[styles.statusText, { color: '#A05B00' }]}>CANCELLING</Text>
+                </View>
+              )}
             </View>
           </View>
+
+          {sub.cancellation_pending && (
+            <View style={styles.cancelBanner} testID="tenant-cancellation-banner">
+              <Ionicons name="time-outline" size={18} color="#A05B00" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cancelBannerTitle}>Owner has cancelled — pending expiry</Text>
+                <Text style={styles.cancelBannerText}>
+                  Cancelled on {(sub.cancellation_requested_at || '').slice(0, 10) || '—'}
+                  {sub.cancelled_by ? ` by ${sub.cancelled_by}` : ''}. Access retained until{' '}
+                  {(sub.subscription_end_date || sub.trial_end_date || '').slice(0, 10) || '—'}.
+                </Text>
+              </View>
+            </View>
+          )}
+
           <View style={styles.infoList}>
             <InfoRow label="Business Name" value={tenant.business_name} />
             <InfoRow label="Owner" value={tenant.owner_name} />
@@ -85,6 +107,9 @@ export default function TenantDetailScreen() {
             <InfoRow label="Plan" value={sub.subscription_plan || tenant.subscription_plan || 'trial'} />
             <InfoRow label="Days Left" value={String(sub.days_left ?? '—')} />
             <InfoRow label="Sub End" value={(sub.subscription_end_date || sub.trial_end_date || '').slice(0, 10) || '—'} />
+            {sub.cancellation_requested_at && (
+              <InfoRow label="Cancelled On" value={(sub.cancellation_requested_at || '').slice(0, 10)} />
+            )}
           </View>
           <View style={styles.metaRow}>
             <MetaCol label="Users" val={tenant.user_count ?? 0} />
@@ -228,6 +253,13 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
 
   infoList: { alignSelf: 'center', width: '100%', maxWidth: 560 },
+  cancelBanner: {
+    flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start',
+    backgroundColor: '#FFF6E5', borderColor: '#F0DCA6', borderWidth: 1,
+    borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.sm,
+  },
+  cancelBannerTitle: { fontSize: 13, fontWeight: '800', color: '#A05B00' },
+  cancelBannerText: { fontSize: 12, color: '#4B3A16', marginTop: 2, lineHeight: 16 },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider },
   infoLabel: { width: 140, fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
   infoValue: { flex: 1, fontSize: 13, color: colors.onSurface, fontWeight: '600', textAlign: 'right' },

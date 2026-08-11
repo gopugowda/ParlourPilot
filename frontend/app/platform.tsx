@@ -266,6 +266,12 @@ export default function PlatformScreen() {
               <Text style={styles.statNum}>{stats.expired_tenants}</Text>
               <Text style={styles.statLabel}>Expired</Text>
             </View>
+            {(stats.cancelled_pending ?? 0) > 0 && (
+              <View style={[styles.statCard, { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' }]} testID="stat-cancelled-pending">
+                <Text style={[styles.statNum, { color: '#A05B00' }]}>{stats.cancelled_pending}</Text>
+                <Text style={[styles.statLabel, { color: '#A05B00' }]}>Cancelling</Text>
+              </View>
+            )}
             <View style={styles.statCard}>
               <Text style={styles.statNum}>{stats.users}</Text>
               <Text style={styles.statLabel}>Users</Text>
@@ -308,8 +314,15 @@ export default function PlatformScreen() {
                   </View>
                   <Text style={[styles.tdText, { flex: 1.2 }]}>{t.phone || '—'}</Text>
                   <Text style={[styles.tdText, { flex: 1.2 }]}>{t.city || '—'}</Text>
-                  <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor, width: 80, alignSelf: 'flex-start' }]}>
-                    <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                  <View style={{ width: 90, alignSelf: 'flex-start', gap: 3 }}>
+                    <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
+                      <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                    </View>
+                    {sub.cancellation_pending && (
+                      <View style={[styles.statusChip, { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' }]} testID={`cancelled-badge-${t.id}`}>
+                        <Text style={[styles.statusText, { color: '#A05B00' }]}>CANCELLING</Text>
+                      </View>
+                    )}
                   </View>
                   <Text style={[styles.tdText, { width: 80 }]}>{sub.subscription_plan || t.subscription_plan || 'trial'}</Text>
                   <Text style={[styles.tdText, { width: 70, textAlign: 'right', fontWeight: '700' }]}>{sub.days_left ?? '—'}</Text>
@@ -363,8 +376,15 @@ export default function PlatformScreen() {
                   <Text style={styles.tenantName}>{t.business_name}</Text>
                   <Text style={styles.tenantEmail}>{t.email}</Text>
                 </View>
-                <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
-                  <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                <View style={{ gap: 4, alignItems: 'flex-end' }}>
+                  <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
+                    <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                  </View>
+                  {sub.cancellation_pending && (
+                    <View style={[styles.statusChip, { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' }]} testID={`cancelled-badge-mobile-${t.id}`}>
+                      <Text style={[styles.statusText, { color: '#A05B00' }]}>CANCELLING</Text>
+                    </View>
+                  )}
                 </View>
               </View>
 

@@ -46,9 +46,13 @@ async def platform_stats(user=Depends(require_platform_admin)):
     tenant_count = await db.tenants.count_documents({})
     active = await db.tenants.count_documents({"is_active": True, "subscription_status": {"$in": ["active", "trialing"]}})
     expired = await db.tenants.count_documents({"subscription_status": "expired"})
+    cancelled_pending = await db.tenants.count_documents({
+        "cancellation_requested_at": {"$exists": True, "$ne": None},
+        "subscription_status": {"$in": ["active", "trialing"]},
+    })
     users = await db.users.count_documents({})
     bills = await db.bills.count_documents({})
-    return {"tenants": tenant_count, "active_tenants": active, "expired_tenants": expired, "users": users, "bills": bills}
+    return {"tenants": tenant_count, "active_tenants": active, "expired_tenants": expired, "cancelled_pending": cancelled_pending, "users": users, "bills": bills}
 
 
 @router.put("/platform/tenants/{tid}")

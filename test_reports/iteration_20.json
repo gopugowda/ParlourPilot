@@ -1,0 +1,43 @@
+{
+  "summary": "Backend-only testing of Cancel Subscription (Pending Expiry) feature. 18/19 pytest cases pass (94.7%). Happy path, idempotency, RBAC (staff blocked), access preservation post-cancel, undo flow, platform stats.cancelled_pending counter, platform tenant list + detail cancellation_pending surfacing, and cannot-cancel-expired all PASS. One real gap found: suspended tenant (is_active=false) can still be cancelled — endpoint uses require_admin without an is_active guard and tenant_status() never maps is_active→'suspended'. Glow Up tenant state restored to non-cancelled at end of suite.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/tenants/me/cancel-subscription",
+        "issue": "Suspended tenants (is_active=false) can still cancel subscription. Endpoint uses require_admin (no is_active check) and core.tenant_status() only derives status from subscription_status/end_date, never 'suspended'. Review request expected 400/403. Fix: switch to require_admin_active OR add explicit is_active guard at top of cancel_my_subscription.",
+        "priority": "MEDIUM"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_cancel_subscription.py",
+    "/app/test_reports/pytest/pytest_iter20.xml"
+  ],
+  "action_items": [
+    "Enforce suspended-tenant guard in POST /api/tenants/me/cancel-subscription. Preferred: change dependency from require_admin to require_admin_active (auto-blocks is_active=False with 403 'Tenant is suspended' via check_subscription). Alternative: add `if not tenant.get('is_active', True): raise HTTPException(400, 'Cannot cancel a suspended subscription')` after loading the tenant.",
+    "Optional: consider surfacing is_active=False as status='suspended' in tenant_status() so the same guard `if st['status'] in ('expired','suspended','cancelled')` catches it."
+  ],
+  "critical_code_review_comments": [
+    "cancel_my_subscription uses require_admin (role-only), not require_admin_active. This means suspended/expired tenants can still hit the endpoint; the endpoint mitigates 'expired' via tenant_status() but NOT 'suspended' (is_active=false), which tenant_status never derives.",
+    "cancelled_by is stored as user['email'] || user['id'] — fine, but ensure this field is always trustworthy (email is; consider adding it to JWT claims for defence-in-depth, though not required now)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter20_cancel_subscription.py (new)",
+    "/app/test_result.md (appended iteration_20 result)",
+    "/app/test_reports/iteration_20.json (new)",
+    "/app/test_reports/pytest/pytest_iter20.xml (new)"
+  ],
+  "success_rate": {"backend": "94.7%", "frontend": "not tested (per request)"},
+  "seed_data_creation": "None. Only mutated glowup-tenant-0001 cancellation fields temporarily; teardown restores state (cancellation cleared, is_active=true, subscription_status/active preserved).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iter20_cancel_subscription.py is idempotent and self-cleaning (autouse module fixture wipes cancellation on entry & exit). Safe to re-run alongside other iter regression suites. The one failing test (TestCancelInvalidStates::test_cannot_cancel_suspended) will start passing once main agent adds an is_active/suspended guard to cancel_my_subscription.",
+  "rca_of_issue": "Bug: 'Cannot cancel a suspended tenant' requirement is not enforced. Reproduction: (1) as platform admin, POST /api/platform/tenants/glowup-tenant-0001/subscription {is_active:false}; (2) as glowup owner, POST /api/tenants/me/cancel-subscription → returns 200 with cancellation_pending=true (expected 400/403). Root cause: routes/tenants.py:cancel_my_subscription depends on require_admin (role check only) and its explicit block-list `if st['status'] in ('expired','suspended','cancelled')` never fires because core.tenant_status() ignores tenant.is_active — it only derives status from subscription_status/end_date. Mitigation: switch dependency to require_admin_active (which invokes check_subscription that returns 403 for is_active=False), or add `if not tenant.get('is_active', True): raise HTTPException(status_code=400, detail='Cannot cancel a suspended subscription. Please contact support.')` immediately after load_tenant()."
+}
