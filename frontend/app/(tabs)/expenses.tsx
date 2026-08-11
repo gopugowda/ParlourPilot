@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
 type Expense = {
   id: string; category: string; description: string; amount: number;
@@ -26,13 +27,14 @@ const CATEGORY_ICON: Record<string, any> = {
 };
 
 export default function ExpensesScreen() {
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<string[]>(['Material', 'Utilities', 'Rent', 'Salary', 'Maintenance', 'Other']);
   const [filter, setFilter] = useState<'today' | 'month' | 'all'>('today');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // Editor
   const [editOpen, setEditOpen] = useState(false);
@@ -103,6 +105,57 @@ export default function ExpensesScreen() {
   const byCat: Record<string, number> = {};
   list.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
 
+  const rangeLabel = filter === 'today' ? 'Today' : filter === 'month' ? 'This Month' : 'All';
+  const dateSuffix = filter === 'today' ? today : filter === 'month' ? month : 'all';
+
+  const buildRows = () => {
+    const headers = ['Date', 'Category', 'Description', 'Amount (INR)', 'Notes', 'By'];
+    const dataRows: (string | number)[][] = list.map(e => [
+      e.date, e.category, e.description, e.amount, e.notes || '', e.created_by_name || '',
+    ]);
+    const totalRow: (string | number)[] = ['TOTAL', '', '', total, '', ''];
+    return { headers, dataRows, totalRow };
+  };
+
+  const doShareCsv = async () => {
+    setShareOpen(false);
+    if (!list.length) return;
+    const { headers, dataRows, totalRow } = buildRows();
+    const csv = rowsToCsv(headers, [...dataRows, totalRow]);
+    await shareCsv(csv, `expenses_${dateSuffix}.csv`);
+  };
+
+  const buildHtml = () => {
+    const { headers, dataRows, totalRow } = buildRows();
+    const summary = [
+      { label: 'Range', value: rangeLabel },
+      { label: 'Entries', value: String(list.length) },
+      { label: 'Total Spent', value: `₹${total.toLocaleString('en-IN')}` },
+      ...Object.entries(byCat).slice(0, 3).map(([c, a]) => ({ label: c, value: `₹${(a as number).toLocaleString('en-IN')}` })),
+    ];
+    return buildReportHtml({
+      title: 'Expenses Report',
+      subtitle: rangeLabel,
+      brand: { name: tenant?.business_name, color: (tenant as any)?.brand_color || '#C42032', logo: (tenant as any)?.logo || null },
+      summary,
+      columns: headers,
+      rows: dataRows,
+      totalRow,
+    });
+  };
+
+  const doSharePdf = async () => {
+    setShareOpen(false);
+    if (!list.length) return;
+    await sharePdf(buildHtml(), `expenses_${dateSuffix}.pdf`);
+  };
+
+  const doPrint = async () => {
+    setShareOpen(false);
+    if (!list.length) return;
+    await printOrShareHtml(buildHtml(), `expenses_${dateSuffix}.pdf`);
+  };
+
   const chips: { key: any; label: string }[] = isAdmin
     ? [{ key: 'today', label: 'Today' }, { key: 'month', label: 'This Month' }, { key: 'all', label: 'All' }]
     : [{ key: 'today', label: 'Today' }];
@@ -115,9 +168,19 @@ export default function ExpensesScreen() {
             <Text style={styles.headerTitle}>Expenses</Text>
             <Text style={styles.headerSub}>{list.length} entries · {fmtINR(total)}</Text>
           </View>
-          <TouchableOpacity testID="add-expense-header" onPress={openAdd} style={styles.headerBtn}>
-            <Ionicons name="add" size={22} color="#fff" />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              testID="share-expenses-btn"
+              onPress={() => { Haptics.selectionAsync(); setShareOpen(true); }}
+              style={[styles.headerBtn, { backgroundColor: '#6B6862' }]}
+              disabled={list.length === 0}
+            >
+              <Ionicons name="share-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity testID="add-expense-header" onPress={openAdd} style={styles.headerBtn}>
+              <Ionicons name="add" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {isAdmin && (
@@ -276,6 +339,44 @@ export default function ExpensesScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      {/* Share options sheet */}
+      <Modal visible={shareOpen} transparent animationType="fade" onRequestClose={() => setShareOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setShareOpen(false)}>
+          <Pressable style={styles.shareSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Share Expenses</Text>
+            <Text style={styles.shareSub}>{rangeLabel} · {list.length} entries · {fmtINR(total)}</Text>
+            <TouchableOpacity testID="share-exp-csv" style={styles.shareAction} onPress={doShareCsv}>
+              <View style={[styles.shareIcon, { backgroundColor: '#DDF3E4' }]}><Ionicons name="grid-outline" size={20} color="#207447" /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shareTitle}>CSV (Excel)</Text>
+                <Text style={styles.shareDesc}>Spreadsheet format for analysis</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity testID="share-exp-pdf" style={styles.shareAction} onPress={doSharePdf}>
+              <View style={[styles.shareIcon, { backgroundColor: '#FFE5E5' }]}><Ionicons name="document-text-outline" size={20} color="#C42032" /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shareTitle}>PDF</Text>
+                <Text style={styles.shareDesc}>Formatted document with your branding</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity testID="share-exp-print" style={styles.shareAction} onPress={doPrint}>
+              <View style={[styles.shareIcon, { backgroundColor: '#E5EEFF' }]}><Ionicons name="print-outline" size={20} color="#2551B4" /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shareTitle}>Print</Text>
+                <Text style={styles.shareDesc}>Open printer dialog</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.shareCancel} onPress={() => setShareOpen(false)}>
+              <Text style={styles.shareCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -341,4 +442,13 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
   deleteBtnText: { color: colors.error, fontWeight: '600' },
+
+  shareSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.sm, marginTop: 'auto', maxWidth: 480, width: '100%', alignSelf: 'center' },
+  shareSub: { fontSize: 12, color: colors.onSurfaceTertiary, textAlign: 'center', marginTop: -4 },
+  shareAction: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  shareIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  shareTitle: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
+  shareDesc: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
+  shareCancel: { paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
+  shareCancelText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 14 },
 });

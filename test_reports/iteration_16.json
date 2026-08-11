@@ -1,0 +1,54 @@
+{
+  "summary": "Frontend-only verification of Share/Print (CSV/PDF/Print) exports on /manage/report and /expenses plus new calendar-based Custom Date Range on Reports. Logged in as admin@glowup.com. All acceptance criteria pass: share buttons visible, bottom sheets render 3 options each, CSV downloads on web with correct filename & header/TOTAL rows, PDF opens a new window (popup), and the react-native-calendars period picker responds to day taps (first tap sets FROM and auto-advances to TO, second tap sets TO, Apply Range refreshes report and closes modal). No regressions observed on report/expenses list rendering. No deprecated Expo packages detected in the touched files (expo-print, expo-sharing, expo-file-system v19 File API, react-native-calendars are all current).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/03_report_screen.png",
+    "/app/test_reports/screenshots/04_share_sheet.png",
+    "/app/test_reports/screenshots/05_custom_range.png",
+    "/app/test_reports/screenshots/06_after_apply.png",
+    "/app/test_reports/screenshots/07_expenses.png",
+    "/app/test_reports/screenshots/08_exp_share_sheet.png",
+    "/app/backend/tests/test_share_export_ui.py"
+  ],
+  "verified_acceptance_criteria": {
+    "report_share_btn_visible": true,
+    "report_share_sheet_has_csv_pdf_print": true,
+    "report_csv_download_filename": "report_2026-08-11_2026-08-11.csv",
+    "report_csv_header_row": "Date,Bills,Cash,UPI/QR,Total,Tips,Expenses,Net",
+    "report_csv_has_total_row": true,
+    "report_pdf_opens_new_window": true,
+    "report_preset_custom_opens_modal": true,
+    "report_pick_from_visible": true,
+    "report_pick_to_visible": true,
+    "report_range_calendar_visible": true,
+    "report_calendar_first_tap_sets_from_and_switches_to_to": true,
+    "report_calendar_second_tap_sets_to": true,
+    "report_apply_range_closes_modal_and_refreshes": true,
+    "expenses_share_btn_visible": true,
+    "expenses_share_sheet_has_3_options": true,
+    "expenses_csv_download_filename": "expenses_all.csv",
+    "expenses_csv_header_row": "Date,Category,Description,Amount (INR),Notes,By",
+    "expenses_csv_has_total_row": true,
+    "expenses_pdf_opens_new_window": true
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PDF popup content assertion via Playwright is timing-sensitive: window.open('','_blank') creates an about:blank tab, then document.write(html) commits synchronously. In our test popup.content() sometimes returned blank because the framework captured the popup at open time. Not a bug — real browsers render correctly. If you want the assertion to be robust, consider navigating the popup to a data: URL instead: printWin.location.href = 'data:text/html;charset=utf-8,' + encodeURIComponent(html) — this also gives the popup a title consistent with <title> tag.",
+    "Minor: report.tsx (456 lines) and expenses.tsx (454 lines) are approaching the 700-line guideline. The share sheet + PDF/CSV logic is nicely factored into src/utils/exportShare.ts (good DRY). Consider extracting the <ShareSheet/> component so both screens reuse the same JSX.",
+    "Minor: In webPrint (exportShare.ts:39), the popup is opened with 'noopener,noreferrer' which sets window.opener=null — the setTimeout(printWin.print, 400) still works because printWin reference is retained, but this is worth knowing if any future callback needs cross-window access.",
+    "Nice-to-have: rowsToCsv doesn't emit UTF-8 BOM. Excel on Windows may misrender ₹ / non-ASCII if user's locale isn't UTF-8. Consider prefixing '\\uFEFF' when Platform.OS === 'web' to guarantee correct encoding."
+  ],
+  "updated_files": ["/app/backend/tests/test_share_export_ui.py"],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "100%"},
+  "seed_data_creation": "None — reused existing TEST_Item expense and Aug 11 bill data on Glow Up tenant.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Feature is stable. If revisiting, note: (a) PDF popup uses window.open('') then document.write; Playwright popup.content() may read as blank due to about:blank timing — the popup opens is the reliable check via context.expect_page. Use page.expect_download for CSV. (b) react-native-calendars period marking is used; day cells expose role=button with the day number as inner text — use page.get_by_text('5', exact=True).first.click(force=True). (c) Custom range chip requires horizontal scroll into view since it's last in the ScrollView on mobile widths.",
+  "rca_of_issue": "N/A — feature verification only, no bugs found."
+}

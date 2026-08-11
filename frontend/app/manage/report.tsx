@@ -1,15 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
   Modal, Pressable, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
 type Row = { date: string; total: number; count: number; cash: number; qr: number; tips: number; expenses: number; net: number };
 
@@ -29,7 +31,7 @@ const STAFF_PRESETS = [
 
 export default function ReportScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const presets = isAdmin ? ADMIN_PRESETS : STAFF_PRESETS;
 
@@ -38,6 +40,8 @@ export default function ReportScreen() {
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
   const [customOpen, setCustomOpen] = useState(false);
+  const [pickingField, setPickingField] = useState<'from' | 'to'>('from');
+  const [shareOpen, setShareOpen] = useState(false);
   const [data, setData] = useState<{ from: string; to: string; totals: any; rows: Row[] } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -67,6 +71,72 @@ export default function ReportScreen() {
     Haptics.selectionAsync();
   };
 
+  const currentRangeLabel = () => {
+    const p = presets.find(x => x.k === preset)?.label || 'Range';
+    return data ? `${p} (${data.from} → ${data.to})` : p;
+  };
+
+  const buildExport = () => {
+    const rows = data?.rows || [];
+    const headers = isAdmin
+      ? ['Date', 'Bills', 'Cash', 'UPI/QR', 'Total', 'Tips', 'Expenses', 'Net']
+      : ['Date', 'Bills', 'Cash', 'UPI/QR', 'Total'];
+    const dataRows: (string | number)[][] = rows.map(r => isAdmin
+      ? [r.date, r.count, r.cash, r.qr, r.total, r.tips || 0, r.expenses || 0, r.net]
+      : [r.date, r.count, r.cash, r.qr, r.total]);
+    const t = data?.totals || {};
+    const totalRow: (string | number)[] = isAdmin
+      ? ['TOTAL', t.count || 0, t.cash || 0, t.qr || 0, t.total || 0, t.tips || 0, t.expenses || 0, t.net || 0]
+      : ['TOTAL', t.count || 0, t.cash || 0, t.qr || 0, t.total || 0];
+    return { headers, dataRows, totalRow, t };
+  };
+
+  const doShareCsv = async () => {
+    setShareOpen(false);
+    if (!data) return;
+    const { headers, dataRows, totalRow } = buildExport();
+    const csv = rowsToCsv(headers, [...dataRows, totalRow]);
+    const fname = `report_${data.from}_${data.to}.csv`;
+    await shareCsv(csv, fname);
+  };
+
+  const buildHtml = () => {
+    const { headers, dataRows, totalRow, t } = buildExport();
+    const summary = isAdmin ? [
+      { label: 'Total Revenue', value: `₹${(t.total || 0).toLocaleString('en-IN')}` },
+      { label: 'Bills', value: String(t.count || 0) },
+      { label: 'Cash', value: `₹${(t.cash || 0).toLocaleString('en-IN')}` },
+      { label: 'UPI/QR', value: `₹${(t.qr || 0).toLocaleString('en-IN')}` },
+      { label: 'Expenses', value: `₹${(t.expenses || 0).toLocaleString('en-IN')}` },
+      { label: 'Net', value: `₹${(t.net || 0).toLocaleString('en-IN')}` },
+    ] : [
+      { label: 'Total', value: `₹${(t.total || 0).toLocaleString('en-IN')}` },
+      { label: 'Bills', value: String(t.count || 0) },
+    ];
+    return buildReportHtml({
+      title: 'Sales Report',
+      subtitle: `${data?.from} → ${data?.to}`,
+      brand: { name: tenant?.business_name, color: (tenant as any)?.brand_color || '#C42032', logo: (tenant as any)?.logo || null },
+      summary,
+      columns: headers,
+      rows: dataRows,
+      totalRow,
+    });
+  };
+
+  const doSharePdf = async () => {
+    setShareOpen(false);
+    if (!data) return;
+    const html = buildHtml();
+    await sharePdf(html, `report_${data.from}_${data.to}.pdf`);
+  };
+
+  const doPrint = async () => {
+    setShareOpen(false);
+    if (!data) return;
+    await printOrShareHtml(buildHtml(), `report_${data.from}_${data.to}.pdf`);
+  };
+
   return (
     <View style={styles.root} testID="report-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
@@ -80,6 +150,15 @@ export default function ReportScreen() {
           <Text style={styles.headerTitle}>Report</Text>
           <Text style={styles.headerSub}>{isAdmin ? 'Pick a range' : 'Last 2 days'}</Text>
         </View>
+        <TouchableOpacity
+          testID="share-report-btn"
+          onPress={() => { Haptics.selectionAsync(); setShareOpen(true); }}
+          style={styles.shareBtn}
+          disabled={!data || (data?.rows?.length || 0) === 0}
+        >
+          <Ionicons name="share-outline" size={18} color="#fff" />
+          <Text style={styles.shareBtnText}>Share</Text>
+        </TouchableOpacity>
       </SafeAreaView>
 
       {/* Preset chips */}
@@ -167,44 +246,151 @@ export default function ReportScreen() {
         </ScrollView>
       )}
 
-      {/* Custom range modal */}
+      {/* Custom range modal — with calendar */}
       <Modal visible={customOpen} transparent animationType="slide" onRequestClose={() => setCustomOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setCustomOpen(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>Custom Date Range</Text>
-              <View style={styles.field}>
-                <Text style={styles.label}>From (YYYY-MM-DD)</Text>
-                <TextInput
-                  testID="from-input"
-                  value={fromDate}
-                  onChangeText={setFromDate}
-                  placeholder="2026-01-01"
-                  placeholderTextColor={colors.onSurfaceTertiary}
-                  style={styles.input}
-                />
+
+              <View style={styles.dateSwitchRow}>
+                <TouchableOpacity
+                  testID="pick-from"
+                  onPress={() => setPickingField('from')}
+                  style={[styles.dateSwitch, pickingField === 'from' && styles.dateSwitchActive]}
+                >
+                  <Text style={styles.dateSwitchLabel}>FROM</Text>
+                  <Text style={[styles.dateSwitchValue, pickingField === 'from' && { color: '#fff' }]}>{fromDate}</Text>
+                </TouchableOpacity>
+                <Ionicons name="arrow-forward" size={16} color={colors.onSurfaceTertiary} />
+                <TouchableOpacity
+                  testID="pick-to"
+                  onPress={() => setPickingField('to')}
+                  style={[styles.dateSwitch, pickingField === 'to' && styles.dateSwitchActive]}
+                >
+                  <Text style={styles.dateSwitchLabel}>TO</Text>
+                  <Text style={[styles.dateSwitchValue, pickingField === 'to' && { color: '#fff' }]}>{toDate}</Text>
+                </TouchableOpacity>
               </View>
-              <View style={styles.field}>
-                <Text style={styles.label}>To (YYYY-MM-DD)</Text>
-                <TextInput
-                  testID="to-input"
-                  value={toDate}
-                  onChangeText={setToDate}
-                  placeholder="2026-01-31"
-                  placeholderTextColor={colors.onSurfaceTertiary}
-                  style={styles.input}
-                />
+
+              <Calendar
+                testID="range-calendar"
+                current={pickingField === 'from' ? fromDate : toDate}
+                maxDate={today}
+                onDayPress={(day) => {
+                  Haptics.selectionAsync();
+                  if (pickingField === 'from') {
+                    setFromDate(day.dateString);
+                    // If from > to, reset to
+                    if (day.dateString > toDate) setToDate(day.dateString);
+                    setPickingField('to');
+                  } else {
+                    // Ensure to >= from
+                    if (day.dateString < fromDate) setFromDate(day.dateString);
+                    setToDate(day.dateString);
+                  }
+                }}
+                markingType="period"
+                markedDates={buildMarkedRange(fromDate, toDate)}
+                theme={{
+                  backgroundColor: colors.surface,
+                  calendarBackground: colors.surface,
+                  textSectionTitleColor: colors.onSurfaceSecondary,
+                  selectedDayBackgroundColor: colors.brandPrimary,
+                  selectedDayTextColor: '#fff',
+                  todayTextColor: colors.brandPrimary,
+                  dayTextColor: colors.onSurface,
+                  monthTextColor: colors.onSurface,
+                  arrowColor: colors.brandPrimary,
+                  textDayFontWeight: '500' as any,
+                  textMonthFontWeight: '700' as any,
+                }}
+              />
+
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setCustomOpen(false)}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity testID="apply-range" style={[styles.applyBtn, { flex: 1 }]} onPress={applyCustom}>
+                  <Text style={styles.applyBtnText}>Apply Range</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity testID="apply-range" style={styles.applyBtn} onPress={applyCustom}>
-                <Text style={styles.applyBtnText}>Apply</Text>
-              </TouchableOpacity>
             </Pressable>
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      {/* Share options sheet */}
+      <Modal visible={shareOpen} transparent animationType="fade" onRequestClose={() => setShareOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setShareOpen(false)}>
+          <Pressable style={styles.actionSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Share Report</Text>
+            <Text style={styles.sheetSub}>{currentRangeLabel()}</Text>
+            <TouchableOpacity testID="share-csv" style={styles.actionBtn} onPress={doShareCsv}>
+              <View style={[styles.actionIcon, { backgroundColor: '#DDF3E4' }]}>
+                <Ionicons name="grid-outline" size={20} color="#207447" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.actionTitle}>CSV (Excel)</Text>
+                <Text style={styles.actionDesc}>Spreadsheet format for analysis</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity testID="share-pdf" style={styles.actionBtn} onPress={doSharePdf}>
+              <View style={[styles.actionIcon, { backgroundColor: '#FFE5E5' }]}>
+                <Ionicons name="document-text-outline" size={20} color="#C42032" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.actionTitle}>PDF</Text>
+                <Text style={styles.actionDesc}>Formatted document with your branding</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity testID="share-print" style={styles.actionBtn} onPress={doPrint}>
+              <View style={[styles.actionIcon, { backgroundColor: '#E5EEFF' }]}>
+                <Ionicons name="print-outline" size={20} color="#2551B4" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.actionTitle}>Print</Text>
+                <Text style={styles.actionDesc}>Open printer dialog</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShareOpen(false)}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
+}
+
+// Build marked dates for react-native-calendars period selection
+function buildMarkedRange(from: string, to: string): Record<string, any> {
+  const marked: Record<string, any> = {};
+  if (!from) return marked;
+  const start = new Date(from + 'T00:00:00Z');
+  const end = new Date(to + 'T00:00:00Z');
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return marked;
+  if (from === to) {
+    marked[from] = { startingDay: true, endingDay: true, color: '#C42032', textColor: '#fff' };
+    return marked;
+  }
+  const cur = new Date(start.getTime());
+  while (cur <= end) {
+    const iso = cur.toISOString().slice(0, 10);
+    const isStart = iso === from;
+    const isEnd = iso === to;
+    marked[iso] = {
+      startingDay: isStart, endingDay: isEnd,
+      color: '#C42032', textColor: '#fff',
+    };
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return marked;
 }
 
 const styles = StyleSheet.create({
@@ -249,4 +435,22 @@ const styles = StyleSheet.create({
   input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface },
   applyBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', marginTop: spacing.sm },
   applyBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  cancelBtn: { paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, marginTop: spacing.sm },
+  cancelBtnText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 14 },
+
+  shareBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.brandPrimary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill },
+  shareBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+
+  dateSwitchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
+  dateSwitch: { flex: 1, backgroundColor: colors.surfaceTertiary, padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border },
+  dateSwitchActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  dateSwitchLabel: { fontSize: 9, color: colors.onSurfaceTertiary, fontWeight: '800', letterSpacing: 1 },
+  dateSwitchValue: { fontSize: 14, color: colors.onSurface, fontWeight: '700', marginTop: 2 },
+
+  sheetSub: { fontSize: 12, color: colors.onSurfaceTertiary, textAlign: 'center', marginTop: -6 },
+  actionSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.sm, maxWidth: 480, width: '100%', alignSelf: 'center', marginTop: 'auto' },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  actionIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  actionTitle: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
+  actionDesc: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
 });
