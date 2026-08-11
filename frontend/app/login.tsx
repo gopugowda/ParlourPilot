@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
-  Platform, ScrollView, ActivityIndicator, TouchableOpacity, Modal,
+  Platform, ScrollView, ActivityIndicator, TouchableOpacity, Modal, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -16,6 +16,8 @@ import { colors, spacing, radius, shadows } from '@/src/theme';
 export default function LoginScreen() {
   const { login } = useAuth();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= 1024;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
@@ -87,10 +89,14 @@ export default function LoginScreen() {
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ flexGrow: 1 }}
+        contentContainerStyle={[
+          { flexGrow: 1 },
+          isDesktop && { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5F2EA' },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        <View style={isDesktop ? styles.desktopCard : { flex: 1 }}>
         <SafeAreaView edges={['top']} style={styles.hero}>
           <Image
             source={require('../assets/images/parlourpilot-logo.png')}
@@ -178,6 +184,7 @@ export default function LoginScreen() {
             <Ionicons name="arrow-forward" size={16} color={colors.brandPrimary} />
           </TouchableOpacity>
         </View>
+        </View>
       </ScrollView>
 
       {/* Forgot Password Modal */}
@@ -264,6 +271,16 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
+  desktopCard: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    marginVertical: spacing.xxl,
+    ...shadows.strong,
+  } as any,
   hero: {
     paddingTop: spacing.xl, paddingBottom: spacing.xl, paddingHorizontal: spacing.xl,
     alignItems: 'center', backgroundColor: '#FFFFFF',

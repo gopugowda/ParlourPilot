@@ -12,12 +12,15 @@ import * as Sharing from 'expo-sharing';
 import { useAuth } from '@/src/context/AuthContext';
 import { platformApi } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { useResponsive } from '@/src/hooks/use-responsive';
+import { DesktopSidebar } from '@/src/components/DesktopSidebar';
 
 type Tenant = any;
 
 export default function PlatformScreen() {
   const { user, logout } = useAuth();
   const router = useRouter();
+  const { isDesktop } = useResponsive();
   const isSuperAdmin = user?.role === 'platform_admin';
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -201,18 +204,22 @@ export default function PlatformScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={isDesktop ? styles.desktopRow : { flex: 1 }}>
+      {isDesktop && <DesktopSidebar mode="platform" />}
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-          <Image source={require('../assets/images/parlourpilot-logo.png')} style={{ width: 32, height: 32 }} contentFit="contain" />
+          {!isDesktop && <Image source={require('../assets/images/parlourpilot-logo.png')} style={{ width: 32, height: 32 }} contentFit="contain" />}
           <View>
-            <Text style={styles.brand}>ParlourPilot</Text>
+            <Text style={styles.brand}>{isDesktop ? 'Platform Dashboard' : 'ParlourPilot'}</Text>
             <Text style={styles.brandSub}>{isSuperAdmin ? 'Platform Admin' : 'Platform Staff'}</Text>
           </View>
         </View>
-        <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
-          <Ionicons name="log-out-outline" size={22} color={colors.onSurface} />
-        </TouchableOpacity>
+        {!isDesktop && (
+          <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
+            <Ionicons name="log-out-outline" size={22} color={colors.onSurface} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView
@@ -271,7 +278,81 @@ export default function PlatformScreen() {
 
         <Text style={styles.sectionTitle}>Tenants ({tenants.length})</Text>
 
-        {tenants.map(t => {
+        {isDesktop ? (
+          <View style={styles.tableWrap} testID="tenants-table">
+            <View style={styles.tableHeader}>
+              <Text style={[styles.thCell, { flex: 2.2 }]}>Business</Text>
+              <Text style={[styles.thCell, { flex: 2 }]}>Owner / Email</Text>
+              <Text style={[styles.thCell, { flex: 1.2 }]}>Phone</Text>
+              <Text style={[styles.thCell, { flex: 1.2 }]}>City</Text>
+              <Text style={[styles.thCell, { width: 90 }]}>Status</Text>
+              <Text style={[styles.thCell, { width: 80 }]}>Plan</Text>
+              <Text style={[styles.thCell, { width: 70, textAlign: 'right' }]}>Days</Text>
+              <Text style={[styles.thCell, { width: 60, textAlign: 'right' }]}>Users</Text>
+              <Text style={[styles.thCell, { width: 60, textAlign: 'right' }]}>Bills</Text>
+              <Text style={[styles.thCell, { width: 340 }]}>Actions</Text>
+            </View>
+            {tenants.map((t, idx) => {
+              const sub = t.subscription || {};
+              const statColor = statusColor(sub.status || 'trialing');
+              return (
+                <View key={t.id} style={[styles.tableRow, idx % 2 === 1 && { backgroundColor: '#FBF9F4' }]}>
+                  <View style={{ flex: 2.2 }}>
+                    <Text style={styles.tdStrong}>{t.business_name}</Text>
+                    {t.city ? <Text style={styles.tdSub}>{t.city}{t.country ? ', ' + t.country : ''}</Text> : null}
+                  </View>
+                  <View style={{ flex: 2 }}>
+                    <Text style={styles.tdText}>{t.owner_name || '—'}</Text>
+                    <Text style={styles.tdSub}>{t.email}</Text>
+                  </View>
+                  <Text style={[styles.tdText, { flex: 1.2 }]}>{t.phone || '—'}</Text>
+                  <Text style={[styles.tdText, { flex: 1.2 }]}>{t.city || '—'}</Text>
+                  <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor, width: 80, alignSelf: 'flex-start' }]}>
+                    <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                  </View>
+                  <Text style={[styles.tdText, { width: 80 }]}>{sub.subscription_plan || t.subscription_plan || 'trial'}</Text>
+                  <Text style={[styles.tdText, { width: 70, textAlign: 'right', fontWeight: '700' }]}>{sub.days_left ?? '—'}</Text>
+                  <Text style={[styles.tdText, { width: 60, textAlign: 'right' }]}>{t.user_count ?? 0}</Text>
+                  <Text style={[styles.tdText, { width: 60, textAlign: 'right' }]}>{t.bills_count ?? 0}</Text>
+                  <View style={{ width: 340, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => router.push({ pathname: '/tenant-detail', params: { tid: t.id } })} testID={`view-details-${t.id}`}>
+                      <Ionicons name="eye-outline" size={13} color={colors.brandPrimary} />
+                      <Text style={styles.actionText}>Details</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => { setSubEditor({ tenant: t, visible: true }); setExtendDays('30'); }}>
+                      <Ionicons name="calendar-outline" size={13} color={colors.brandPrimary} />
+                      <Text style={styles.actionText}>Extend</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => openPwdEditor(t)} testID={`reset-pwd-${t.id}`}>
+                      <Ionicons name="key-outline" size={13} color={colors.brandPrimary} />
+                      <Text style={styles.actionText}>Reset</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.actionBtn, !t.is_active && { backgroundColor: '#FEE' }]} onPress={() => toggleActive(t)}>
+                      <Ionicons name={t.is_active ? 'lock-open-outline' : 'lock-closed-outline'} size={13} color={t.is_active ? colors.success : colors.error} />
+                      <Text style={[styles.actionText, { color: t.is_active ? colors.success : colors.error }]}>{t.is_active ? 'Active' : 'Suspended'}</Text>
+                    </TouchableOpacity>
+                    {isSuperAdmin && (
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDanger]} onPress={() => confirmDeleteTenant(t)} disabled={deletingId === t.id} testID={`delete-tenant-${t.id}`}>
+                        {deletingId === t.id ? <ActivityIndicator color={colors.error} size="small" /> : (
+                          <>
+                            <Ionicons name="trash-outline" size={13} color={colors.error} />
+                            <Text style={[styles.actionText, { color: colors.error }]}>Delete</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+            {tenants.length === 0 && (
+              <View style={{ paddingVertical: spacing.xxl, alignItems: 'center' }}>
+                <Text style={{ color: colors.onSurfaceTertiary }}>No tenants yet.</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          tenants.map(t => {
           const sub = t.subscription || {};
           const statColor = statusColor(sub.status || 'trialing');
           return (
@@ -344,7 +425,8 @@ export default function PlatformScreen() {
               </View>
             </View>
           );
-        })}
+        })
+        )}
       </ScrollView>
 
       {/* Subscription Editor Modal */}
@@ -454,6 +536,7 @@ export default function PlatformScreen() {
         </Pressable>
       </Modal>
     </SafeAreaView>
+    </View>
   );
 }
 
@@ -534,4 +617,19 @@ const styles = StyleSheet.create({
   userRowActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
   userRowName: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
   userRowMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+
+  // Desktop layout
+  desktopRow: {
+    flex: 1, flexDirection: 'row',
+    ...(Platform.OS === 'web' ? ({ height: '100vh' as any }) : {}),
+  } as any,
+
+  // Table styles (desktop tenant list)
+  tableWrap: { backgroundColor: '#FFFFFF', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  tableHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: 10, backgroundColor: colors.brandPrimary },
+  thCell: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
+  tableRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider, minHeight: 56 },
+  tdStrong: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  tdText: { fontSize: 12, color: colors.onSurface },
+  tdSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
 });

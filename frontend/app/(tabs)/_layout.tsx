@@ -1,14 +1,33 @@
-import { Tabs } from 'expo-router';
+import React from 'react';
+import { Tabs, Slot } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, contrastText } from '@/src/theme';
+import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { colors, contrastText } from '@/src/theme';
 import { useBrand } from '@/src/context/AuthContext';
+import { useResponsive } from '@/src/hooks/use-responsive';
+import { DesktopSidebar } from '@/src/components/DesktopSidebar';
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { brandColor } = useBrand();
   const onBrand = contrastText(brandColor || colors.brandPrimary);
   const inactive = onBrand === '#FFFFFF' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.55)';
+  const { isDesktop } = useResponsive();
+
+  // On desktop, replace the bottom tab bar with a persistent left sidebar.
+  if (isDesktop) {
+    return (
+      <View style={styles.desktopRow}>
+        <DesktopSidebar mode="tenant" />
+        <View style={styles.desktopMain} testID="desktop-main">
+          <Slot />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -63,3 +82,16 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  desktopRow: {
+    flex: 1,
+    flexDirection: 'row',
+    ...(Platform.OS === 'web' ? { height: '100vh' as any } : {}),
+  },
+  desktopMain: {
+    flex: 1,
+    backgroundColor: '#FDFCF9',
+    ...(Platform.OS === 'web' ? { overflowY: 'auto' as any, height: '100vh' as any } : {}),
+  },
+});

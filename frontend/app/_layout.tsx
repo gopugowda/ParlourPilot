@@ -2,7 +2,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { LogBox, Platform, StyleSheet, View } from 'react-native';
+import { LogBox, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -68,6 +68,8 @@ function AuthGate() {
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= 1024;
 
   useEffect(() => {
     if (loaded || error) SplashScreen.hideAsync();
@@ -87,10 +89,12 @@ export default function RootLayout() {
   );
 
   if (Platform.OS === 'web') {
-    // On web, constrain the app to a phone-sized column and center it.
+    // Web layout is responsive:
+    //  - Desktop (≥ 1024px): full width, no phone frame
+    //  - Phone / tablet: constrained to a 480px column with soft borders
     return (
-      <View style={webStyles.pageWrap}>
-        <View style={webStyles.phoneCol}>{content}</View>
+      <View style={[webStyles.pageWrap, isDesktop && webStyles.pageWrapDesktop]}>
+        <View style={[webStyles.phoneCol, isDesktop && webStyles.desktopCol]}>{content}</View>
       </View>
     );
   }
@@ -101,20 +105,32 @@ export default function RootLayout() {
 const webStyles = StyleSheet.create({
   pageWrap: {
     flex: 1,
-    backgroundColor: '#EFEBE2', // neutral surrounding
+    backgroundColor: '#EFEBE2',
     alignItems: 'center',
     justifyContent: 'center',
+  } as any,
+  pageWrapDesktop: {
+    backgroundColor: '#F5F2EA',
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
   } as any,
   phoneCol: {
     flex: 1,
     width: '100%',
     maxWidth: 480,
     backgroundColor: '#FDFCF9',
-    // subtle side borders on wide screens for a phone-frame feel
     borderLeftWidth: 1,
     borderRightWidth: 1,
     borderColor: '#E8E5DA',
-    // Use viewport height on web so the layout does not overflow the browser
     ...(Platform.OS === 'web' ? ({ height: '100vh' as any }) : {}),
+  } as any,
+  desktopCol: {
+    // On desktop we use the full browser width, no phone frame
+    maxWidth: 100000 as any,
+    width: '100%',
+    alignSelf: 'stretch',
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    backgroundColor: '#F5F2EA',
   } as any,
 });
