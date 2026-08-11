@@ -1,0 +1,43 @@
+{
+  "summary": "Iter 15 — Refactor validation: server.py monolith (3441 lines) split into 20 modular files (server.py=64, core.py=403, models.py=238, startup.py=226, 15 route files ranging 37–623 lines) is behaviorally identical to the original. Ran 34 fresh smoke tests (test_iter15_refactor_smoke.py) covering every endpoint category in the review request PLUS 75 regression tests (iter11+iter12+iter13+iter14). Result: 109/109 passed (100%). All required endpoints work: GET /api/ (returns {message,status:'ok'}), POST /api/auth/login (admin/staff/platform), GET /api/auth/me, GET /api/tenants/me (returns {tenant, subscription}), GET /api/branches, GET /api/services|beauticians|members|expenses|stock|cash-closing|appointments, GET /api/reports/summary (previously broken with 'NameError: _member_status not defined' — now FIXED via imports from core.py in both members.py and reports.py, verified in code and via 200 OK response), POST /api/bills (create+read+delete round-trip), GET /api/payments/config, POST /api/branches/checkout/order + /verify (bad-signature 400), POST /api/tenants/checkout/order (₹99900 monthly / ₹999900 yearly paise), GET /api/pay/{order_id} (renders HTML, dispatches to correct verify path based on order.type — 'Salon subscription' for tenant, 'Branch … subscription' for branch), platform admin flows (list tenants/users/detail/export, delete seed-tenant blocked with 400, admin-role forbidden 403), auth register/reset/forgot-password (token issued and single-use consumed), /api/pricing (auth-required), POST /api/seed idempotent. Multi-tenant isolation still enforced: fresh signup-tenant's /api/bills returns [] and cannot access glowup bill IDs (404). Iter11 (16 tests), iter12 (24 tests), iter13 (19 tests), iter14 (15 tests) — ALL PASS unchanged.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter15_refactor_smoke.py",
+    "/app/test_reports/pytest/pytest_iter15.xml",
+    "/app/test_reports/pytest/pytest_iter15_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "GOOD: server.py went from 3441 → 64 lines. Cleanly wires 15 sub-routers under a single /api APIRouter prefix. Startup/shutdown are delegated to startup.run_startup() and core.client.close(). No behavior drift.",
+    "GOOD: The reported regression bug ('_member_status not defined') is fixed correctly — the helper lives in core.py at line 380 and is imported by both routes/members.py (used 5x) and routes/reports.py (used 1x) via the shared `from core import …` block.",
+    "GOOD: Shared models are centralized in models.py (238 lines) — VerifyPaymentBody, TenantCheckoutBody, BranchCheckoutBody, AppointmentIn, Platform*Update are defined ONCE and imported by every consuming route. No duplication.",
+    "GOOD: All 15 route files use an identical `from core import …` / `from models import …` boilerplate — makes future splits/moves trivial. Backend logs show a clean startup (Indexes ensured / Startup migration + seed complete) with no import errors.",
+    "MINOR (informational, not blocking): routes/payments.py is 623 lines — largest remaining file. Contains BOTH branch checkout (Razorpay + legacy mock) AND tenant checkout AND the hosted /pay/{id} HTML page AND the webhook. If further split desired: routes/payments/branch.py + tenant.py + hosted.py + webhook.py. Not required — currently passes lint and reads cleanly.",
+    "MINOR (informational): Each route file re-imports the ENTIRE core & models symbol set even when only 2-3 are needed (e.g., misc.py imports 30+ symbols but uses ~2). This is a code-smell but not a correctness issue — the imports are ~2ms cheap. A future cleanup can trim these per-file.",
+    "MINOR (informational, not blocking): routes/__init__.py is a 1-line empty file. Fine; Python packaging works.",
+    "GOOD: /api/ root endpoint moved to routes/misc.py under a router prefix, so the '/api/' URL correctly resolves to {message:'ParlourPilot SaaS API', status:'ok'} (verified).",
+    "GOOD: server_original.py.bak is preserved (rollback path if needed).",
+    "NOTE (docs vs impl mismatch, existing behavior — pre-existing, NOT introduced by refactor): review request said 'GET /api/tenants/me returns tenant + branches + subscription'. Actual (both pre- and post-refactor) returns {tenant, subscription} only. Branches are exposed via GET /api/branches and via /api/auth/me + /api/auth/login response envelopes. Confirmed against /app/backend/server_original.py.bak line 711–718 — same shape. No action needed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter15_refactor_smoke.py (new — 34 pytest cases across 8 classes: TestBootstrap, TestAuth, TestTenants, TestDomains, TestBills, TestPayments, TestPlatform, TestTenantIsolation)"
+  ],
+  "success_rate": {
+    "backend": "100% (109/109 = iter15:34/34 + iter11:16 + iter12:24 + iter13:19 + iter14:15/15)",
+    "frontend": "not tested (backend-only task per request)"
+  },
+  "seed_data_creation": "Ephemeral: (1) one throwaway signup tenant TEST_iter15_<uuid>@example.com for isolation test — leaves an orphan tenant in DB (harmless, isolated data). (2) several TEST_iter15_<uuid> Razorpay TEST-mode orders in pending_orders (status='created', no monetary impact — see iter14's TTL P3 action item). (3) One bill 'TEST_refactor_iter15' created and immediately deleted (net zero).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reusable smoke suite lives at /app/backend/tests/test_iter15_refactor_smoke.py — 34 fast tests (13s) covering every endpoint category. Run with: `EXPO_PUBLIC_BACKEND_URL=<url> python -m pytest backend/tests/test_iter15_refactor_smoke.py -v`. Combines cleanly with iter11-14 for a 109-test regression pack (~2min). New route structure: server.py wires 15 sub-routers → routes/{tenants,branches_crud,payments,appointments,plans,auth,beauticians,services,bills,members,expenses,stock,cash_closing,reports,platform,misc}.py. Shared helpers: core.py (auth/tenancy + all _member_status/apply_member_discount/etc.). Shared models: models.py. Startup: startup.py.run_startup(). Rollback available: /app/backend/server_original.py.bak. Env var name is EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL).",
+  "rca_of_issue": "N/A — no defects found. The two known refactor-time regressions listed by main agent are BOTH verified fixed: (a) `_member_status` NameError in /api/reports/summary — repro'd in backend logs pre-fix ('NameError: name _member_status is not defined at reports.py:104'), now core.py defines the helper at line 380 and both members.py + reports.py import it explicitly; endpoint returns 200 OK. (b) VerifyPaymentBody/TenantCheckoutBody/BranchCheckoutBody/AppointmentIn/Platform*Update are all defined ONLY in models.py (grep-confirmed no duplicates in routes/*.py) and correctly imported by every route that references them."
+}
