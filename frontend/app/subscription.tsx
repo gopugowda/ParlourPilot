@@ -1,13 +1,17 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
+const SUPPORT_EMAIL = 'support@parlourpilot.com';
+
 export default function SubscriptionScreen() {
-  const { subscription, tenant, logout } = useAuth();
+  const { subscription, tenant, user, logout } = useAuth();
+  const router = useRouter();
 
   const statusColor = (s: string) =>
     s === 'expired' ? colors.error :
@@ -15,6 +19,53 @@ export default function SubscriptionScreen() {
     s === 'active' ? colors.success : colors.info;
 
   const status = subscription?.status || 'expired';
+  const isOwner = user?.role === 'admin' || user?.role === 'owner';
+
+  const openRenew = () => {
+    if (!isOwner) {
+      Alert.alert(
+        'Owner action required',
+        'Only the salon owner/admin can renew the subscription. Please contact your admin.'
+      );
+      return;
+    }
+    router.push('/checkout?type=tenant');
+  };
+
+  const openSupport = async () => {
+    const subject = encodeURIComponent(`ParlourPilot support — ${tenant?.business_name || 'account'}`);
+    const bodyLines = [
+      'Hi ParlourPilot Support,',
+      '',
+      'I need help with my account.',
+      '',
+      '— Account details —',
+      `Business: ${tenant?.business_name || 'N/A'}`,
+      `Email: ${user?.email || 'N/A'}`,
+      `Subscription: ${status}`,
+      `Plan: ${subscription?.subscription_plan || 'N/A'}`,
+      tenant?.id ? `Tenant ID: ${tenant.id}` : '',
+      '',
+      'Please describe your issue below:',
+      '',
+    ].filter(Boolean).join('\n');
+    const body = encodeURIComponent(bodyLines);
+    const mailto = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+    try {
+      if (Platform.OS === 'web') {
+        const w: any = typeof window !== 'undefined' ? window : null;
+        if (w) { w.location.href = mailto; return; }
+      }
+      const supported = await Linking.canOpenURL(mailto);
+      if (supported) {
+        await Linking.openURL(mailto);
+      } else {
+        Alert.alert('Contact Support', `Email us at ${SUPPORT_EMAIL}`);
+      }
+    } catch {
+      Alert.alert('Contact Support', `Email us at ${SUPPORT_EMAIL}`);
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -69,18 +120,19 @@ export default function SubscriptionScreen() {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.btnPrimary} onPress={() => {
-          // For MVP: no payment gateway yet; contact support
-          // In future this opens billing/subscription selection flow
-        }}>
+        <TouchableOpacity style={styles.btnPrimary} onPress={openRenew} testID="btn-renew-subscription">
           <Ionicons name="card-outline" size={18} color="#fff" />
           <Text style={styles.btnPrimaryText}>Renew Subscription</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.btnSecondary} onPress={() => {}}>
+        <TouchableOpacity style={styles.btnSecondary} onPress={openSupport} testID="btn-contact-support">
           <Ionicons name="mail-outline" size={18} color={colors.brandPrimary} />
           <Text style={styles.btnSecondaryText}>Contact Support</Text>
         </TouchableOpacity>
+
+        <Text style={styles.supportHint} selectable>
+          Email: {SUPPORT_EMAIL}
+        </Text>
 
         <TouchableOpacity onPress={logout} style={styles.logoutLink}>
           <Text style={styles.logoutText}>Sign out</Text>
@@ -128,6 +180,7 @@ const styles = StyleSheet.create({
     width: '100%', marginTop: spacing.md,
   },
   btnSecondaryText: { color: colors.brandPrimary, fontWeight: '700', fontSize: 15 },
+  supportHint: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: spacing.md, textAlign: 'center' },
   logoutLink: { marginTop: spacing.xl },
   logoutText: { color: colors.onSurfaceTertiary, fontSize: 14, fontWeight: '600' },
 });

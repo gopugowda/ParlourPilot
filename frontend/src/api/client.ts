@@ -149,6 +149,11 @@ export const tenantApi = {
   updateMine: (data: any) => api('/tenants/me', { method: 'PUT', body: data }),
   subscription: () => api('/tenants/me/subscription'),
   plans: () => api('/subscription/plans', { auth: false }),
+  // Razorpay tenant renewal
+  createOrder: (data: { plan: 'monthly' | 'yearly'; display_amount?: number; display_currency?: string }) =>
+    api('/tenants/checkout/order', { method: 'POST', body: data }),
+  verifyPayment: (data: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) =>
+    api('/tenants/checkout/verify', { method: 'POST', body: data }),
 };
 
 export const branchApi = {

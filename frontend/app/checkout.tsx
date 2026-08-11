@@ -9,7 +9,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
-import { branchApi, paymentsApi, tokenStore } from '@/src/api/client';
+import { branchApi, paymentsApi, tenantApi, tokenStore } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
@@ -178,48 +178,76 @@ export default function CheckoutScreen() {
     }
     setProcessing(true);
     try {
-      // 1. Create order server-side
-      const order: any = await branchApi.createOrder({
-        plan,
-        branch: {
-          name: branchName.trim(),
-          address: address.trim(),
-          city: city.trim(),
-          phone: phone.replace(/\D/g, ''),
-          invoice_prefix: invoicePrefix.trim(),
-          active: true,
-        },
-        display_amount: Math.round(displayAmount * 100) / 100,
-        display_currency: subCurrency,
-      });
+      // 1. Create order server-side (branch or tenant)
+      const order: any = type === 'branch'
+        ? await branchApi.createOrder({
+            plan,
+            branch: {
+              name: branchName.trim(),
+              address: address.trim(),
+              city: city.trim(),
+              phone: phone.replace(/\D/g, ''),
+              invoice_prefix: invoicePrefix.trim(),
+              active: true,
+            },
+            display_amount: Math.round(displayAmount * 100) / 100,
+            display_currency: subCurrency,
+          })
+        : await tenantApi.createOrder({
+            plan,
+            display_amount: Math.round(displayAmount * 100) / 100,
+            display_currency: subCurrency,
+          });
+
+      const verifyFn = type === 'branch' ? branchApi.verifyPayment : tenantApi.verifyPayment;
 
       if (Platform.OS === 'web') {
         // 2a. Open Razorpay Checkout inline
         const response: any = await openRazorpayWeb(order);
         // 3. Verify server-side
-        const verified: any = await branchApi.verifyPayment({
+        const verified: any = await verifyFn({
           razorpay_payment_id: response.razorpay_payment_id,
           razorpay_order_id: response.razorpay_order_id,
           razorpay_signature: response.razorpay_signature,
         });
-        await refreshBranches();
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert(
-          'Payment successful',
-          `Branch "${verified?.branch?.name || branchName}" activated on the ${plan} plan.\n\nAmount: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
-          [{ text: 'Done', onPress: () => router.replace('/manage/branches') }]
-        );
-      } else {
-        // 2b. Native (Expo Go / dev build): open hosted checkout in WebBrowser
-        const status = await openRazorpayNative(order);
-        if (status === 'paid') {
+        if (type === 'branch') {
           await refreshBranches();
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert(
             'Payment successful',
-            `Branch "${branchName}" activated on the ${plan} plan.`,
+            `Branch "${verified?.branch?.name || branchName}" activated on the ${plan} plan.\n\nAmount: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
             [{ text: 'Done', onPress: () => router.replace('/manage/branches') }]
           );
+        } else {
+          await refreshTenant();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert(
+            'Subscription renewed',
+            `Your salon subscription is now active on the ${plan} plan.\n\nAmount: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
+            [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
+          );
+        }
+      } else {
+        // 2b. Native (Expo Go / dev build): open hosted checkout in WebBrowser
+        const status = await openRazorpayNative(order);
+        if (status === 'paid') {
+          if (type === 'branch') {
+            await refreshBranches();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert(
+              'Payment successful',
+              `Branch "${branchName}" activated on the ${plan} plan.`,
+              [{ text: 'Done', onPress: () => router.replace('/manage/branches') }]
+            );
+          } else {
+            await refreshTenant();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert(
+              'Subscription renewed',
+              `Your salon subscription is now active on the ${plan} plan.`,
+              [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
+            );
+          }
         } else if (status === 'cancelled') {
           Alert.alert('Payment cancelled', 'You closed the payment window before completing.');
         } else {

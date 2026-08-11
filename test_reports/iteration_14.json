@@ -1,0 +1,52 @@
+{
+  "summary": "Iter 14 — Wired-up /subscription 'Renew Subscription' + 'Contact Support' buttons and full Razorpay TENANT renewal flow. Backend: 15/15 pytest cases pass against public URL — POST /api/tenants/checkout/order (admin=200 monthly ₹99900 paise & yearly ₹999900 paise, staff=403, no-auth=401, invalid plan=422), POST /api/tenants/checkout/verify (unknown order=404, bad signature=400, valid signature + bogus payment_id=502 gateway, cross-tenant isolation=404 from a fresh signup-tenant, staff=403), GET /api/pay/{order_id} for a tenant order renders 'Salon subscription' label AND POSTs to /api/tenants/checkout/verify (not /branches/), and branch checkout regression still works. Frontend (mobile 390x844): /subscription shows both testIDs (btn-renew-subscription, btn-contact-support) with support email 'support@parlourpilot.com' visible on-screen. Admin clicks Renew → navigates to /checkout?type=tenant with ₹999 monthly and ₹9999 yearly rendered, green 'Secure Razorpay checkout' banner, NO branch-name field (correctly hidden for type=tenant). Clicking 'Pay …' fires exactly ONE POST /api/tenants/checkout/order → 200, then successfully opens the real Razorpay Standard Checkout modal (api.razorpay.com iframe) showing brand 'ParlourPilot', Total Amount 999, and prefills email admin@glowup.com. Staff user clicks Renew → URL stays at /subscription (guard works — no navigation to /checkout). Idempotent-verify path and true-success verify path cannot be exercised end-to-end from CI (real captured payment required); the code path is reviewed and mirrors the branch-verify implementation (guarded by `if order.status=='paid': return {ok:true, idempotent:true}`).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/checkout & /subscription", "issues": ["Console warning (carry-over from iter13): 'shadow*' style props deprecated in RN-Web. Use boxShadow. Reference: /app/frontend/src/theme.ts shadows.card used across /checkout & /subscription."]},
+      {"screen": "global", "issues": ["Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — likely from a third-party RN component; non-blocking."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter14_tenant_renewal.py",
+    "/app/test_reports/pytest/pytest_iter14.xml",
+    "/app/test_reports/screenshots/iter14_subscription.png",
+    "/app/test_reports/screenshots/iter14_checkout_tenant.png",
+    "/app/test_reports/screenshots/iter14_razorpay_modal.png",
+    "/app/test_reports/screenshots/iter14_staff_renew_alert.png"
+  ],
+  "action_items": [
+    "P3 (carry-over from iter13): The pending_orders collection has no TTL — abandoned tenant-subscription orders (user opens Razorpay, closes modal, never returns) accumulate as status='created' forever. Recommend a TTL index on pending_orders.created_at (24h) so garbage collection is automatic.",
+    "P3 (informational, not blocking): On react-native-web, Alert.alert() is largely a no-op — the 'Owner action required' message will not be visible to a staff user in the web preview (they will just see nothing happen; the guard IS active because URL doesn't change, so they can't accidentally hit the paid flow). On a real device (iOS/Android build) the Alert renders normally. If web parity matters, replace Alert.alert with a custom in-DOM banner/modal for /subscription.",
+    "P3 (nice-to-have): The mailto: opens the OS mail client on native, and on web via `window.location.href = 'mailto:...'` — in a Chromium headless environment this is silently swallowed. On a real user browser it triggers the default mail handler correctly. Consider adding a fallback UI (copy-to-clipboard button for support@parlourpilot.com) for users whose browsers block mailto."
+  ],
+  "critical_code_review_comments": [
+    "GOOD: /tenants/checkout/order uses require_admin (NOT require_admin_active) — this is critical because expired tenants MUST be able to renew. Confirmed by test_staff_forbidden (staff 403) AND by admin@glowup.com being able to create orders even though its subscription state is not always 'active'.",
+    "GOOD: /tenants/checkout/verify order-lookup includes tenant_id AND user_id AND type='tenant_subscription' — perfect tenant + type + user isolation. Verified: a fresh other-tenant's admin cannot verify glowup's order (returns 404).",
+    "GOOD: Signature verification uses hmac.compare_digest (constant-time). After signature passes, an additional payment.fetch call verifies with Razorpay that (a) payment.order_id matches and (b) payment.status is 'captured'/'authorized' — defense in depth.",
+    "GOOD: _activate_tenant_from_order correctly extends from the LATER of (now, current subscription_end_date) — so paying yearly on an active 6-month remaining plan gives 6+12 months, not 12 months total. Records to both `payments` and `subscription_history` audit collections.",
+    "GOOD: Idempotency guard: `if order.get('status') == 'paid': return {..., idempotent: True}` BEFORE re-activating. And the pending_orders.update_one uses `status: {'$ne':'paid'}` filter with modified_count check — race-safe.",
+    "GOOD: GET /api/pay/{order_id} dispatches on order.type — HTML renders 'Salon subscription' label and posts to /api/tenants/checkout/verify for tenant orders; verified via test_pay_page_for_tenant_order + test_branch_checkout_still_works (branch path shows 'Branch monthly subscription' + posts to /branches/checkout/verify).",
+    "MINOR: subscription.tsx openSupport builds the mailto with encodeURIComponent for subject AND body — good. Includes business_name, email, subscription status, plan, tenant_id — matches ticket requirement.",
+    "MINOR: checkout.tsx branches on `params.type === 'tenant'` for BOTH order creation AND verify function selection — correct. `canPay` is true immediately for tenant (no branch-name required), false for branch until name is filled — verified in the running app.",
+    "MINOR: server.py is now ~3441 lines (grew from ~3200 in iter13). The tenant checkout block (lines 1115–1293) is well-scoped but the file continues to be a candidate for modularisation (routers/, services/) — not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter14_tenant_renewal.py (new — 15 pytest cases across 5 groups: TenantCreateOrder, TenantVerify, HostedPage, BranchRegression, PaymentsConfig)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 iter14 tests pass in 9.4s)",
+    "frontend": "100% for exercised flows — /subscription buttons + support email + admin→checkout?type=tenant navigation + ₹999/₹9999 pricing + Razorpay modal open with correct amount (999 INR) + brand + prefill + staff-blocked-from-renew (URL guard verified)"
+  },
+  "seed_data_creation": "Ephemeral: (1) new signup-tenant 'TEST_iter14_<uuid>' with 15-day trial for cross-tenant isolation test (harmless — isolated data), (2) multiple Razorpay TEST-mode order_ids (no monetary impact), (3) pending_orders rows with type='tenant_subscription' that will remain status='created' (see P3 TTL action item).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reusable pytest suite: /app/backend/tests/test_iter14_tenant_renewal.py. Tenant subscription paise-map: monthly=99900 (₹999), yearly=999900 (₹9999). Branch paise-map (still active): monthly=88800 (₹888), yearly=888800 (₹8888). To fake a valid signature for the /verify 502-path test: HMAC-SHA256 of `{order_id}|{payment_id}` with KEY_SECRET='JASW9tXCoHsVd1JyQtW1TmPJ' → server accepts signature but Razorpay.payment.fetch fails on the bogus pay_id → 502. Frontend testIDs: btn-renew-subscription and btn-contact-support (on /subscription); razorpay-pay-btn / plan-monthly / plan-yearly / pay-currency (on /checkout). Query param /checkout?type=tenant vs /checkout?type=branch controls entire flow (order endpoint + verify endpoint + branch-details form). Support email is hard-coded 'support@parlourpilot.com' at /app/frontend/app/subscription.tsx line 10. RN-Web Alert.alert on web preview is effectively a no-op — verify staff-blocked flow by URL guard, not by visible alert.",
+  "rca_of_issue": "N/A — no defects introduced. The originally-reported dead buttons on /subscription are now wired: Renew navigates to /checkout?type=tenant which creates a real Razorpay tenant subscription order (₹999/mo or ₹9999/yr); Contact Support opens mailto:support@parlourpilot.com with pre-filled subject (business name) and body (tenant id, email, subscription status, plan)."
+}
