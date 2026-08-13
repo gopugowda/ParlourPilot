@@ -1,0 +1,50 @@
+{
+  "summary": "Backend-only re-verification after user redeployed web with corrected MongoDB Secrets. 10/12 pytest cases PASS. DB PARITY IS CONFIRMED — mobile and web backends now share the same Atlas cluster (slaon-master.8oc5pjc.mongodb.net) and database (ParlourPilot). Platform admin id matches on both backends (9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4). Signup on mobile → login on web works, and vice versa. Direct Atlas query confirms web-signup tenant + user land in the ParlourPilot DB. However, JWT SSO PARITY IS BROKEN: mobile-issued JWT is rejected by web with 401 'Invalid token', and web-issued JWT cannot be decoded with mobile's JWT_SECRET (InvalidSignatureError) — the two deployments use different JWT_SECRET values.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET https://parlourpilot.com/api/tenants/me (Authorization: Bearer <mobile_token>)",
+        "issue": "Returns 401 'Invalid token'. Mobile-issued JWTs are not accepted by the web backend because JWT_SECRET differs between deployments. Cross-backend SSO does not work. Fix: set web deployment's JWT_SECRET to match mobile /app/backend/.env value (8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP) and redeploy.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "GET http://localhost:8001/api/tenants/me (Authorization: Bearer <web_token>)",
+        "issue": "Returns 401. Web-issued JWTs cannot be decoded with mobile JWT_SECRET (pyjwt.InvalidSignatureError). Same root cause as above — JWT_SECRET mismatch.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_shared_db.py",
+    "/app/test_reports/pytest/pytest_iter23.xml"
+  ],
+  "action_items": [
+    "OUT OF SCOPE (web repo): Align JWT_SECRET in the web deployment (parlourpilot.com) to match the mobile backend's value from /app/backend/.env — `8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP`. After redeploy, tokens issued by either backend will be accepted by both, enabling true cross-app SSO. Nothing to change on the mobile side.",
+    "Optional: If SSO between apps is not a product requirement, this can be left as-is — users just need to log in separately on each app. But since the user asked to verify JWT SSO parity, this is reported as a HIGH-priority parity gap."
+  ],
+  "critical_code_review_comments": [
+    "Mobile backend correctly reads JWT_SECRET from env at import time — no hardcoded value observed.",
+    "Both backends normalise email to lowercase on user insert; test now queries with .lower() to match.",
+    "One minor pytest warning: TestPlatformAdminIdParity uses class-scoped fixtures defined as instance methods (deprecated in pytest 10). Cosmetic; can migrate to @classmethod later."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_shared_db.py (NEW, 12 pytest cases across 6 classes)",
+    "/app/test_result.md (appended iteration_23 status entry)"
+  ],
+  "success_rate": {
+    "backend": "83% (10/12) — 100% on DB-parity axis, 0% on JWT-SSO axis",
+    "frontend": "N/A (backend-only test as requested)"
+  },
+  "seed_data_creation": "Created 5 test tenants during the run (2 via mobile signup, 3 via web signup). All deleted via /api/platform/tenants/{tid} in teardown. Final DB state: 1 pre-existing tenant (postredeploy-verify — not created by this run), 4 users (platform_admin + 2 platform_staff + 1 tenant admin). Platform admin id 9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4 preserved as required.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Mobile and web now share the same Atlas DB (ParlourPilot on slaon-master.8oc5pjc.mongodb.net) — confirmed by cross-backend login, platform-admin id match, and direct pymongo query. The only remaining parity gap is JWT_SECRET: web signs with a different secret so tokens from one backend are 401'd by the other. To close this gap, sync JWT_SECRET in the web deployment. To retest, rerun `pytest backend/tests/test_iter23_shared_db.py` — the two JWT SSO tests should flip to green once JWT_SECRET is aligned. No other tests were touched; test_iter22_db_isolation.py is now stale/obsolete (its assertions were the opposite of the current desired state).",
+  "rca_of_issue": "User's redeploy fixed the DB parity (both backends now write to Atlas cluster slaon-master.8oc5pjc.mongodb.net DB ParlourPilot — proven by (a) mobile-created tenant successfully logging in on web, (b) web-created tenant appearing via direct pymongo query on the mobile MONGO_URL, and (c) platform_admin.id being byte-identical `9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4` on both /api/auth/login responses). However, the JWT_SECRET Secret was not synced during the redeploy. Evidence: mobile-issued JWT payload decoded fine with mobile secret (sub=<uuid>, role=admin, tenant_id=<uuid>, exp=1787207033) but the identical token returns 401 'Invalid token' from https://parlourpilot.com/api/tenants/me, and a web-issued token throws InvalidSignatureError when decoded with the mobile JWT_SECRET. Mitigation: set JWT_SECRET in the web deployment's env to `8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP` and redeploy. Note this will invalidate any currently active web-issued tokens (users will need to re-login once) — acceptable since active-token count is likely low."
+}

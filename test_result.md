@@ -525,3 +525,157 @@ agent_communication:
           No writes performed against DB; no seed data modified.
           Report: /app/test_reports/iteration_21.json, JUnit:
           /app/test_reports/pytest/pytest_iter21.xml.
+
+
+  - task: "MongoDB Atlas cross-DB isolation (mobile vs web backend) — iteration_22"
+    implemented: true
+    working: true
+    file: "/app/backend/tests/test_iter22_db_isolation.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Wrote 11 pytest cases in /app/backend/tests/test_iter22_db_isolation.py.
+          11/11 PASS. Independently confirmed the mobile backend's Atlas DB is
+          isolated from the web backend. Coverage:
+
+          1. Backend identity (GET /api/health):
+             • Mobile → {"ok": true, "service": "parlourpilot-api"} ✓
+             • Web (parlourpilot.com) → {"status":"ok","service":"parlourpilot"}
+               — different `service` field → different deployment ✓
+          2. Platform admin login (platform@parlourpilot.com / platform123) → 200,
+             role=platform_admin ✓
+          3. Clean Atlas ParlourPilot DB verified:
+             • GET /api/platform/stats → tenants=0, users=1 (platform admin only)
+               after teardown ✓
+             • GET /api/platform/tenants → no glowup-tenant-0001, no
+               `glow-up-unisex-salon` slug ✓
+             • POST /api/auth/login {admin@glowup.com/admin123} → 401 (purged) ✓
+          4. Demo seed disabled after restart:
+             • `sudo supervisorctl restart backend` executed. Startup log line
+               observed: "Demo seed disabled (ENABLE_DEMO_SEED != true) — skipping
+               Glow Up seed" ✓
+             • Post-restart tenant list still has no glowup-tenant-0001 ✓
+             • `ENABLE_DEMO_SEED` guard in /app/backend/startup.py:229 is working.
+          5. Mobile signup end-to-end:
+             • POST /api/tenants/signup → 200 with token + tenant + branches ✓
+             • POST /api/auth/login with new creds → 200, tenant_id matches ✓
+             • New tenant visible in GET /api/platform/tenants ✓
+          6. Cross-DB isolation confirmed:
+             • Created TEST_crossdb_verify_<ts>@resend.dev via
+               https://parlourpilot.com/api/tenants/signup (200 on web)
+             • Mobile login with those creds → 401 ✓
+             • Mobile /api/platform/tenants does NOT contain web tenant id/email ✓
+             → Mobile Atlas DB `ParlourPilot` is fully isolated from the web
+               backend's DB. The user's earlier observation stands: the two
+               backends write to SEPARATE databases (as intended for the mobile
+               side — the web side must be reconfigured separately to share).
+
+          Teardown: 2 mobile-created tenants deleted via DELETE
+          /api/platform/tenants/{tid}. Final DB state: 0 tenants, 1 user
+          (platform admin). Web-created tenant remains in the web's own DB
+          (expected — cannot teardown from mobile side).
+
+          Reports: /app/test_reports/iteration_22.json,
+          /app/test_reports/pytest/pytest_iter22.xml.
+
+          Note for main agent: This project (mobile backend) is correctly
+          configured. To make BOTH apps share the same Atlas DB, the web
+          deployment at parlourpilot.com must have its `MONGO_URL` +
+          `DB_NAME` env vars updated to match this project's values
+          (mongodb+srv://parlourpilot:...@slaon-master.8oc5pjc.mongodb.net /
+          ParlourPilot). That is out of scope for the mobile repo — you'll
+          need to update the web repo's .env and redeploy.
+
+
+  - task: "Iteration 23 — Shared-DB parity re-verification (post web redeploy)"
+    implemented: true
+    working: partial   # DB is shared, JWT SSO is NOT
+    status_history:
+      - working: partial
+        agent: "testing"
+        comment: |
+          User redeployed web backend with corrected MongoDB Secrets.
+          Ran /app/backend/tests/test_iter23_shared_db.py — 10/12 pass.
+
+          DB PARITY (SHARED — CONFIRMED)
+          - GET /api/health on both backends → 200
+            mobile: {"ok":true,"service":"parlourpilot-api"}
+            web   : {"status":"ok","service":"parlourpilot",...}
+          - Platform admin id IDENTICAL on both:
+              9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4  ✓
+          - Signup on MOBILE → login on WEB → 200, tenant_id matches ✓
+          - Mobile-created tenant appears in web's GET /api/platform/tenants ✓
+          - Signup on WEB → login on MOBILE → 200 ✓
+          - Direct Atlas query (MONGO_URL from /app/backend/.env, DB=ParlourPilot):
+            web-signup tenant doc + user doc BOTH present ✓
+
+          JWT SSO (NOT shared — new finding)
+          - mobile-issued JWT presented to https://parlourpilot.com/api/tenants/me
+              → 401 {"detail":"Invalid token"}
+          - web-issued JWT decoded with mobile JWT_SECRET
+              → jwt.InvalidSignatureError
+          - web-issued JWT presented to mobile /api/tenants/me
+              → 401 {"detail":"Invalid token"}
+          Conclusion: The two backends share the DB but sign JWTs with
+          DIFFERENT secrets, so tokens are not cross-accepted. Cross-backend
+          SSO will not work until JWT_SECRET is aligned in the web deployment
+          to match /app/backend/.env JWT_SECRET
+          (`8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP`).
+
+          Sample JWT payload decoded (mobile-issued, mobile secret):
+            {'sub': '3753077c-f0a5-43dd-8d95-23f36f78d006',
+             'role': 'admin',
+             'tenant_id': '2e9dde2c-40e0-43a3-ae05-18c2ce4d4d3f',
+             'exp': 1787207033}
+
+          TEARDOWN — All 5 test tenants created during the run were deleted
+          via /api/platform/tenants/{tid}. Post-run DB state:
+             tenants: 1  (postredeploy-verify — pre-existing, not ours)
+             users  : 4  (platform admin + 2 platform_staff + 1 tenant admin)
+          Platform admin preserved (id 9f03ff19-...).
+
+          Reports:
+            /app/test_reports/iteration_23.json
+            /app/test_reports/pytest/pytest_iter23.xml
+            /app/backend/tests/test_iter23_shared_db.py
+
+
+## Iteration 24 — JWT SSO Parity Re-verification (Backend only)
+  Date : Jan 2026
+  Scope: Re-run iteration_23 suite after user aligned JWT_SECRET on BOTH deployments to
+         `8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP`.
+
+  Result: 13/13 pytest cases PASS (0 failed).
+     - TestHealthParity              2/2
+     - TestPlatformAdminIdParity     3/3   (mobile & web both return id 9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4)
+     - TestMobileToWebSharedDb       2/2
+     - TestWebToMobileSharedDb       1/1
+     - TestJwtSsoParity              3/3   <-- previously 0/2, now includes new platform-admin cross-test
+     - TestAtlasDirect               2/2
+
+  JWT SSO PARITY IS NOW GREEN.
+     • Mobile-issued token on GET https://parlourpilot.com/api/tenants/me      -> 200 with correct tenant
+     • Web-issued    token on GET http://localhost:8001/api/tenants/me         -> 200 with correct tenant
+     • Web-issued JWT decodes cleanly with mobile JWT_SECRET (HS256, no InvalidSignatureError)
+     • Platform-admin tokens from either backend hit /api/platform/tenants on
+       the OTHER backend and both return the SAME set of 2 tenants.
+     • Payload parity: both platform-admin tokens have identical
+         sub  = 9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4
+         role = platform_admin
+         alg  = HS256
+
+  User's manual verification is LEGITIMATE — confirmed via automated tests.
+
+  TEARDOWN — 5 test tenants created during the run were all deleted via
+  /api/platform/tenants/{tid}. Post-run DB state:
+     tenants: 2  (Test-01, PostRedeploy Verify — both pre-existing)
+     Platform admin preserved (id 9f03ff19-...).
+
+  Reports:
+    /app/test_reports/iteration_24.json
+    /app/test_reports/pytest/pytest_iter24.xml
+    /app/backend/tests/test_iter23_shared_db.py   (updated: response-shape assertion + new platform-admin cross-test)

@@ -1,0 +1,39 @@
+{
+  "summary": "Backend-only cross-DB isolation verification for mobile backend. 11/11 pytest cases PASS. Confirmed mobile backend identity (service='parlourpilot-api'), Atlas ParlourPilot DB is clean (0 tenants, 1 platform_admin user after teardown), demo seed is disabled after restart (log line 'Demo seed disabled (ENABLE_DEMO_SEED != true) — skipping Glow Up seed' observed post-restart), platform admin login works, signup+login round trip works, and a tenant created via https://parlourpilot.com/api/tenants/signup is NOT visible in the mobile backend's DB — so the two backends ARE writing to separate databases (as the user noted). The mobile side is correctly configured. To share the DB, the WEB backend's MONGO_URL+DB_NAME env must be updated to match.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter22_db_isolation.py",
+    "/app/test_reports/pytest/pytest_iter22.xml"
+  ],
+  "action_items": [
+    "None for the mobile repo — mobile backend is correctly bound to Atlas cluster slaon-master.8oc5pjc.mongodb.net DB=ParlourPilot and demo seed is opt-in.",
+    "OUT OF SCOPE (web repo): To make the web app share the same DB, update https://parlourpilot.com deployment's env vars: MONGO_URL=mongodb+srv://parlourpilot:...@slaon-master.8oc5pjc.mongodb.net/... and DB_NAME=ParlourPilot, then redeploy. Verify via GET /api/health returning service='parlourpilot' but signup on either side becoming visible on the other."
+  ],
+  "critical_code_review_comments": [
+    "startup.py:229 correctly gates demo seed behind ENABLE_DEMO_SEED — default off is safe for production Atlas.",
+    "seed_platform_admin() always runs when PLATFORM_ADMIN_PASSWORD is set — required for SaaS ops, verified.",
+    "One test-side quirk: the platform tenants endpoint returns a raw list (not {tenants: [...]}), test handles both shapes; no code change needed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter22_db_isolation.py (new, 11 pytest cases)",
+    "/app/test_result.md (appended iteration_22 status entry)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A (backend-only test as requested)"
+  },
+  "seed_data_creation": "Created 2 test tenants during the run (TEST_mobile_iso_<ts>@resend.dev on mobile, TEST_crossdb_verify_<ts>@resend.dev on web). Mobile tenants deleted via DELETE /api/platform/tenants/{tid}. Final mobile DB: 0 tenants, 1 user (platform_admin). Web tenant remains in web DB (out of our reach — expected).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Mobile backend is confirmed pointed at Atlas cluster slaon-master.8oc5pjc.mongodb.net DB=ParlourPilot. platform@parlourpilot.com / platform123 works. admin@glowup.com no longer exists (401). To re-seed demo data, set ENABLE_DEMO_SEED=true in /app/backend/.env and restart backend.",
+  "rca_of_issue": "User's observation is correct: mobile and web backends write to separate DBs. Root cause is that only the mobile backend's env vars were updated to the shared Atlas cluster — the web backend at parlourpilot.com is still bound to its own DB (evidence: GET https://parlourpilot.com/api/health returns service='parlourpilot' vs mobile 'parlourpilot-api', and a tenant created via web signup does NOT appear in the mobile Atlas DB even though the mobile backend now points at cluster slaon-master.8oc5pjc.mongodb.net). Mitigation: update the WEB deployment's MONGO_URL and DB_NAME to match the mobile config, then redeploy the web app. This is out of scope for the mobile repo."
+}

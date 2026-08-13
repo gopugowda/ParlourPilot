@@ -122,8 +122,13 @@ async def ensure_glow_up_tenant():
 
 
 async def seed_initial_users():
-    """Seed default admin/staff for Glow Up tenant only if no users exist yet."""
-    if await db.users.count_documents({}) > 0:
+    """Seed default admin/staff for Glow Up tenant only if the Glow Up tenant has no users yet.
+
+    NOTE: The previous guard `count > 0: return` bailed out because the
+    platform_admin user is created before this function runs on fresh DBs.
+    Scope the check to the tenant to avoid skipping the demo seed.
+    """
+    if await db.users.count_documents({"tenant_id": GLOW_UP_TENANT_ID}) > 0:
         return
     admin_pw = os.environ.get("ADMIN_SEED_PASSWORD")
     staff_pw = os.environ.get("STAFF_SEED_PASSWORD")
@@ -218,8 +223,15 @@ async def seed_platform_admin():
 async def run_startup():
     try:
         await ensure_indexes()
-        await ensure_glow_up_tenant()
-        await seed_initial_users()
+        # Demo seed is opt-in — set `ENABLE_DEMO_SEED=true` in .env to seed the
+        # Glow Up demo tenant + services + beauticians. Default off so
+        # production Atlas DBs stay clean.
+        if (os.environ.get("ENABLE_DEMO_SEED", "false").lower() == "true"):
+            await ensure_glow_up_tenant()
+            await seed_initial_users()
+        else:
+            logger.info("Demo seed disabled (ENABLE_DEMO_SEED != true) — skipping Glow Up seed")
+        # Platform admin always seeded when PLATFORM_ADMIN_PASSWORD is set — needed for SaaS ops
         await seed_platform_admin()
         logger.info("Startup migration + seed complete")
     except Exception as e:

@@ -1,0 +1,40 @@
+{
+  "summary": "Backend-only re-verification after user aligned JWT_SECRET on BOTH deployments to `8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP`. 13/13 pytest cases PASS (previously 10/12 in iter23). JWT SSO PARITY IS NOW GREEN — mobile-issued JWT is accepted by web (200), web-issued JWT is accepted by mobile (200), and web-issued JWT decodes cleanly with mobile JWT_SECRET (no InvalidSignatureError). Payload parity for platform admin is confirmed: same sub=9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4, same role=platform_admin, both HS256. DB parity is still intact (2 shared tenants visible from both backends). User's manual verification (mobile token -> web /api/platform/tenants returning 2 tenants; web token -> mobile /api/platform/tenants returning 2 tenants) is LEGITIMATE and reproducible by automated tests.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test infra", "issue": "Pytest deprecation warning: TestPlatformAdminIdParity uses class-scoped fixtures as instance methods (PytestRemovedIn10Warning). Cosmetic; can be migrated to @classmethod later."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_shared_db.py",
+    "/app/test_reports/pytest/pytest_iter24.xml"
+  ],
+  "action_items": [
+    "None — JWT SSO parity and DB parity are both green. Cross-backend SSO between mobile (localhost:8001 / preview URL) and web (parlourpilot.com) is now fully functional."
+  ],
+  "critical_code_review_comments": [
+    "Test script had a bad assertion: /api/tenants/me returns `{tenant:{id,...}, subscription:{...}}` but the test expected `{id:...}` at the root. Fixed to read `body['tenant']['id']`. This was a test-only bug — the endpoint itself and JWT verification were correct.",
+    "Both backends normalise email to lowercase on user insert; direct Atlas lookups use .lower().",
+    "Added a new consolidated test `TestJwtSsoParity::test_platform_admin_token_cross_backend` that (a) logs in as platform_admin on both backends, (b) decodes both tokens with the mobile JWT_SECRET and asserts sub/role/algorithm parity, (c) uses each token against the OTHER backend's /api/platform/tenants and asserts 200 + identical tenant sets."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_shared_db.py (fixed /api/tenants/me response-shape assertion; added TestJwtSsoParity::test_platform_admin_token_cross_backend for payload parity + cross-backend platform endpoint check)",
+    "/app/test_result.md (appended iteration_24 status)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "N/A (backend-only re-verification as requested)"
+  },
+  "seed_data_creation": "Created 5 test tenants during the run (2 via mobile signup, 3 via web signup, prefix TEST_). All deleted via /api/platform/tenants/{tid} in the fixture teardown. Post-run DB state confirmed via `GET /api/platform/tenants`: 2 tenants remain — `99aa641d-... Test-01` and `f21cc1c0-... PostRedeploy Verify` — both pre-existing and untouched. Platform admin preserved (id 9f03ff19-29dd-4046-aed3-e5eb1fd8f3c4).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both DB parity and JWT SSO parity between the mobile backend (EXPO_PUBLIC_BACKEND_URL / localhost:8001) and the web backend (https://parlourpilot.com) are now GREEN as of iteration_24. Same Atlas cluster (slaon-master.8oc5pjc.mongodb.net), same DB (ParlourPilot), same JWT_SECRET (8G2boEz-...), HS256. To regress-test in the future, run `pytest backend/tests/test_iter23_shared_db.py` — should stay 13/13. If any tests flip to failing, first check that (a) web deployment is still up (https://parlourpilot.com/api/health), (b) JWT_SECRET hasn't drifted on either side, (c) the pre-existing 2 tenants weren't nuked.",
+  "rca_of_issue": "User's fix (setting JWT_SECRET to `8G2boEz-aAY0ze5U6J8nNKr-H6-n0Gc3OK2P2JSGPDs-tQaxSdlAigyxZg59ARZP` on the web deployment) resolved the iteration_23 JWT SSO parity gap. Verification: (1) mobile-issued JWT -> GET https://parlourpilot.com/api/tenants/me returned 200 with correct tenant body (previously 401 InvalidToken); (2) web-issued JWT decoded successfully with `pyjwt.decode(token, JWT_SECRET, algorithms=['HS256'])` on the mobile side (previously InvalidSignatureError); (3) platform_admin token from EITHER backend authorised /api/platform/tenants on the OTHER backend and both returned the same 2-tenant list; (4) payload parity: sub=9f03ff19-... and role=platform_admin on both. The two failing iter23 tests were also affected by a bad response-shape assertion — /api/tenants/me returns `{tenant:{...}, subscription:{...}}`, not a bare tenant object. This was fixed in-place (test-only change, no product code change) and the tests now assert `body['tenant']['id'] == tid`."
+}
