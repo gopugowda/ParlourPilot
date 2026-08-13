@@ -1,0 +1,31 @@
+{
+  "summary": "Iter25 minor findings for WhatsApp invoice are ALL FIXED and re-verified. Legacy suite 40/40 pass (unchanged). Added new suite whatsappInvoice_iter26.test.js — 27/27 pass covering: discount line rendering when bill.discount is present (also legacy discount_amount fallback), pre-discount subtotal being sent (bill.subtotal, not services_net), payment_mode title-casing (cash→Cash, split→Split) with special 'qr'→'UPI'. Live Playwright verification on a freshly seeded tenant with subtotal=2000, discount=200 (via 10% per-item discount_pct), tip=100, payment_mode='qr': WhatsApp buttons on both /bill/[id] (whatsapp-bill-btn) and /history (wa-btn-<id>) fire https://wa.me/919880012345?text=... whose decoded body contains ALL required lines: 'Discount: -₹200.00', 'Subtotal: ₹2,000.00', 'Tip: ₹100.00', '*Total: ₹1,900.00*', '_Paid via UPI_'. History click does not navigate (stopPropagation intact — URL stays on /history). Empty-phone guard still fires (validated in unit T6 — alert + no URL open). Test tenant fully deleted via platform admin.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/__tests__/whatsappInvoice.test.js",
+    "/app/frontend/__tests__/whatsappInvoice_iter26.test.js",
+    "/app/frontend/__tests__/__rn_stub.js",
+    "/app/test_reports/screenshots/iter26_bill_final.png",
+    "/app/test_reports/screenshots/iter26_history_final.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fixes verified in /app/frontend/app/bill/[id].tsx lines 358-374 and /app/frontend/app/(tabs)/history.tsx lines 48-64.",
+    "Payment mode mapper uses ternary (qr → UPI) + charAt(0).toUpperCase() + slice(1). Correct for the three valid enum values (cash, qr, split). If a future payment_mode enum is added, the ternary still handles it (title-case fallback)."
+  ],
+  "updated_files": [
+    "/app/frontend/__tests__/whatsappInvoice_iter26.test.js (new — 27 assertions)"
+  ],
+  "success_rate": { "backend": "n/a — no backend changes tested", "frontend": "100% (40/40 legacy + 27/27 new + live Playwright end-to-end)" },
+  "seed_data_creation": "Created 1 test tenant (db090aee-66c9-4703-874c-34ba2099851e / wa-iter26-1786612649@resend.dev) with 1 branch, 2 services, 1 beautician, 1 bill (INV-20260813-0001, subtotal=2000, discount=200, tip=100, payment_mode=qr, grand_total=1900). DELETED via /api/platform/tenants/{tid} — deleted users:1, branches:1, bills:1, beauticians:1, services:2. Zero residual data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "WhatsApp invoice deep-link feature is now fully working end-to-end. Discount line renders from bill.discount (with bill.discount_amount fallback), subtotal is true pre-discount (bill.subtotal with services_net fallback), payment_mode is title-cased (qr → UPI). Test IDs: 'whatsapp-bill-btn' on /bill/[id], 'wa-btn-<bill_id>' on /history. Empty phone shows Alert (native) or is silently guarded (web react-native-web) — either way no wa.me URL is fired. Node test harness in /app/frontend/__tests__ uses sucrase/register + a react-native stub; run with `node __tests__/whatsappInvoice.test.js` and `node __tests__/whatsappInvoice_iter26.test.js`. Fixture note: to create a bill with a specific discount amount via API, set per-item discount_pct (backend has no top-level `discount` field on BillCreate — it's derived).",
+  "rca_of_issue": "N/A — iter25's 3 minor findings were reported as fixed by main agent and this iteration re-verified them via both unit and live Playwright tests."
+}

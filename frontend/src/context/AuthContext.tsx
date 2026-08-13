@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import {
   authApi, tenantApi, tokenStore, userStore, tenantStore, subscriptionStore,
   currentBranchStore,
@@ -242,6 +243,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res: any = await authApi.me();
       if (res.branches) setBranches(res.branches);
     } catch {}
+  }, []);
+
+  // Auto-refresh tenant + branches when app comes back to foreground.
+  // Ensures logo / branding / branch changes done on the web app propagate to mobile.
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (next) => {
+      const prev = appState.current;
+      appState.current = next;
+      if (prev.match(/inactive|background/) && next === 'active') {
+        try {
+          const token = await tokenStore.get();
+          if (!token) return;
+          // Full refresh: tenant + subscription + branches
+          const res: any = await authApi.me().catch(() => null);
+          if (res?.tenant) {
+            setTenant(res.tenant);
+            await tenantStore.set(res.tenant);
+            applyTenantCurrency(res.tenant);
+            applyTenantBrand(res.tenant);
+          }
+          if (res?.branches) setBranches(res.branches);
+          if (res?.subscription) {
+            setSubscription(res.subscription);
+            await subscriptionStore.set(res.subscription);
+          }
+        } catch {}
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   const selectBranch = useCallback(async (branchId: string | null) => {

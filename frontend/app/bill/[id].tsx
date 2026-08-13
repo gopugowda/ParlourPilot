@@ -11,6 +11,7 @@ import * as Sharing from 'expo-sharing';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/whatsappInvoice';
 
 export default function BillDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -334,19 +335,55 @@ ${tipBlock}
 
       {/* Sticky footer with actions */}
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
-        <TouchableOpacity testID="new-bill-again" style={styles.footerSecondary} onPress={() => router.replace('/(tabs)/new-bill' as any)}>
-          <Ionicons name="add-circle-outline" size={18} color={colors.brandPrimary} />
-          <Text style={styles.footerSecondaryText}>New Bill</Text>
+        <TouchableOpacity testID="new-bill-again" style={styles.footerIcon} onPress={() => router.replace('/(tabs)/new-bill' as any)}>
+          <Ionicons name="add-circle-outline" size={20} color={colors.brandPrimary} />
+          <Text style={styles.footerIconText}>New</Text>
         </TouchableOpacity>
-        <TouchableOpacity testID="email-bill-btn" style={styles.footerSecondary} onPress={() => { setEmailTo(bill?.customer_email || bill?.customer_phone_email || ''); setEmailErr(null); setEmailOk(null); setEmailOpen(true); }}>
-          <Ionicons name="mail-outline" size={18} color={colors.brandPrimary} />
-          <Text style={styles.footerSecondaryText}>Email</Text>
+        <TouchableOpacity testID="email-bill-btn" style={styles.footerIcon} onPress={() => { setEmailTo(bill?.customer_email || bill?.customer_phone_email || ''); setEmailErr(null); setEmailOk(null); setEmailOpen(true); }}>
+          <Ionicons name="mail-outline" size={20} color={colors.brandPrimary} />
+          <Text style={styles.footerIconText}>Email</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="whatsapp-bill-btn"
+          style={[styles.footerIcon, styles.footerIconWA]}
+          onPress={() => {
+            const items = (bill?.items || []).map((it: any) => ({
+              name: it.service_name || 'Service',
+              qty: it.qty || 1,
+              price: Number(it.total ?? it.price ?? 0),
+            }));
+            const dt = new Date(bill?.created_at || Date.now()).toLocaleString(undefined, {
+              day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+            });
+            const paymentMode = bill?.payment_mode
+              ? (bill.payment_mode === 'qr' ? 'UPI' : bill.payment_mode.charAt(0).toUpperCase() + bill.payment_mode.slice(1))
+              : ((bill?.cash_amount > 0 && bill?.qr_amount > 0) ? 'Cash + UPI'
+                : bill?.cash_amount > 0 ? 'Cash'
+                : bill?.qr_amount > 0 ? 'UPI' : null);
+            const msg = buildWhatsAppInvoiceMessage({
+              businessName: tenant?.business_name,
+              billNo: bill?.bill_no,
+              dateStr: dt,
+              customerName: bill?.customer_name,
+              items,
+              subtotal: bill?.subtotal ?? bill?.services_net,
+              discount: bill?.discount ?? bill?.discount_amount,
+              tax: bill?.tax_amount,
+              tip: bill?.tip_amount,
+              grandTotal: bill?.grand_total || 0,
+              paymentMode,
+            });
+            sendWhatsAppInvoice({ phone: bill?.customer_phone, message: msg });
+          }}
+        >
+          <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
+          <Text style={[styles.footerIconText, { color: '#128C7E' }]}>WhatsApp</Text>
         </TouchableOpacity>
         <TouchableOpacity testID="share-bill-btn" style={styles.footerPrimary} onPress={share} disabled={sharing}>
           {sharing ? <ActivityIndicator color="#fff" /> : (
             <>
               <Ionicons name="share-social-outline" size={18} color="#fff" />
-              <Text style={styles.footerPrimaryText}>Share Bill</Text>
+              <Text style={styles.footerPrimaryText}>Share</Text>
             </>
           )}
         </TouchableOpacity>
@@ -471,11 +508,19 @@ const styles = StyleSheet.create({
     paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary,
   },
   footerSecondaryText: { color: colors.brandPrimary, fontWeight: '700', fontSize: 14 },
-  footerPrimary: {
-    flex: 1.3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, ...shadows.card,
+  footerIcon: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3,
+    paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary,
+    minWidth: 62,
   },
-  footerPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  footerIconText: { color: colors.brandPrimary, fontWeight: '700', fontSize: 11 },
+  footerIconWA: { borderColor: '#25D366', backgroundColor: '#F0FFF4' },
+  footerPrimary: {
+    flex: 1.1, alignItems: 'center', justifyContent: 'center', gap: 3, flexDirection: 'row',
+    paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brandPrimary, ...shadows.card,
+    minWidth: 76,
+  },
+  footerPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 
   // Email invoice modal
   emailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end', alignItems: 'center' } as any,

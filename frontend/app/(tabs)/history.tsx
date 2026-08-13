@@ -9,10 +9,13 @@ import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/whatsappInvoice';
 
 type Bill = {
-  id: string; bill_no: string; customer_name: string; grand_total: number;
+  id: string; bill_no: string; customer_name: string; customer_phone?: string; grand_total: number;
   payment_mode: string; items: any[]; created_at: string;
+  services_net?: number; discount_amount?: number; tax_amount?: number; tip_amount?: number;
+  cash_amount?: number; qr_amount?: number;
 };
 
 const chips = [
@@ -25,13 +28,44 @@ const chips = [
 
 export default function HistoryScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState(isAdmin ? 'all' : 'today');
   const [search, setSearch] = useState('');
+
+  const shareOnWhatsApp = (b: Bill) => {
+    const items = (b.items || []).map((it: any) => ({
+      name: it.service_name || 'Service',
+      qty: it.qty || 1,
+      price: Number(it.total ?? it.price ?? 0),
+    }));
+    const dt = new Date(b.created_at).toLocaleString(undefined, {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    const paymentMode = b.payment_mode
+      ? (b.payment_mode === 'qr' ? 'UPI' : b.payment_mode.charAt(0).toUpperCase() + b.payment_mode.slice(1))
+      : (((b.cash_amount || 0) > 0 && (b.qr_amount || 0) > 0) ? 'Cash + UPI'
+        : (b.cash_amount || 0) > 0 ? 'Cash'
+        : (b.qr_amount || 0) > 0 ? 'UPI' : null);
+    const msg = buildWhatsAppInvoiceMessage({
+      businessName: tenant?.business_name,
+      billNo: b.bill_no,
+      dateStr: dt,
+      customerName: b.customer_name,
+      items,
+      subtotal: (b as any).subtotal ?? b.services_net,
+      discount: (b as any).discount ?? b.discount_amount,
+      tax: b.tax_amount,
+      tip: b.tip_amount,
+      grandTotal: b.grand_total || 0,
+      paymentMode,
+    });
+    Haptics.selectionAsync();
+    sendWhatsAppInvoice({ phone: b.customer_phone, message: msg });
+  };
 
   const load = async () => {
     try {
@@ -141,7 +175,18 @@ export default function HistoryScreen() {
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.billTotal}>{fmtINR(b.grand_total)}</Text>
-                <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} style={{ marginTop: 4 }} />
+                <View style={styles.billActions}>
+                  <TouchableOpacity
+                    testID={`wa-btn-${b.id}`}
+                    onPress={(e) => { e.stopPropagation?.(); shareOnWhatsApp(b); }}
+                    style={styles.waBtn}
+                    hitSlop={6}
+                    accessibilityLabel="Send invoice on WhatsApp"
+                  >
+                    <Ionicons name="logo-whatsapp" size={18} color="#25D366" />
+                  </TouchableOpacity>
+                  <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+                </View>
               </View>
             </TouchableOpacity>
           ))
@@ -193,4 +238,10 @@ const styles = StyleSheet.create({
   pmCash: { backgroundColor: colors.success },
   pmQr: { backgroundColor: colors.info },
   pmSplit: { backgroundColor: colors.warning },
+  billActions: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  waBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: '#E8F9EF', borderWidth: 1, borderColor: '#B7EAC4',
+    alignItems: 'center', justifyContent: 'center',
+  },
 });

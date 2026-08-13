@@ -679,3 +679,106 @@ agent_communication:
     /app/test_reports/iteration_24.json
     /app/test_reports/pytest/pytest_iter24.xml
     /app/backend/tests/test_iter23_shared_db.py   (updated: response-shape assertion + new platform-admin cross-test)
+
+---
+
+## Iteration 25 — WhatsApp Invoice Deep-Link Feature Verification (Frontend-only)
+
+- Test date: 2026-08-13
+- Feature under test: `sendWhatsAppInvoice` deep-link (wa.me), added `whatsapp-bill-btn` on `/bill/[id]` and `wa-btn-<id>` on `/history`
+- Scope: Frontend only (no backend changes)
+
+### Result: PASS on all critical flows
+
+- **Unit tests (node + sucrase):** 40/40 pass. File: `/app/frontend/__tests__/whatsappInvoice.test.js`
+  - Phone normalisation: 9 edge cases (10-digit, +91 spaced, (91)-prefix, 0-prefix strip, +1 US preserved, abc/empty/null → null)
+  - Message builder: 15 content assertions (bold biz name, invoice #, date, greeting, `*Services*` header, `•` bullets, item name + qty, subtotal/discount/tax/tip lines when applicable, bold total, italic `_Paid via …_`, thank-you, ₹ symbol)
+  - Optional-line suppression: 6 assertions
+  - sendWhatsAppInvoice send-path: 10 assertions (empty/invalid phone → alert + no URL; valid phone → URL captured with correct prefix + URL-encoded body)
+
+- **Live Playwright (390x844 mobile):**
+  - Bill detail footer renders 4 buttons at x=17/108/198/289, widths 79/79/79/84, all 60px tall (no overlap, meets 44-touch target).
+  - Tapping `whatsapp-bill-btn` fires `https://wa.me/919880012345?text=…` with fully valid encoded body (business name bold, invoice #, `*Services*` bullets, bold total, italic payment mode, thank-you).
+  - History row `wa-btn-<bill_id>` tap does NOT navigate (stopPropagation verified) and fires identical deep-link.
+  - Empty-phone bill: 0 wa.me URLs captured on both bill-detail and history taps. Guarantee upheld.
+  - React-Native-Web note: `Alert.alert` did not emit a browser dialog for empty-phone case, but the critical guarantee (no URL fired) is enforced. Native iOS/Android will display the alert as a modal.
+
+### Minor findings (report only — main agent to fix)
+
+1. `bill?.discount_amount` is `undefined` (API returns `bill.discount`) — Discount line will never appear in the WhatsApp message. Fix in `/app/frontend/app/bill/[id].tsx:369` and `/app/frontend/app/(tabs)/history.tsx:59`.
+2. `subtotal: bill?.services_net` mislabels the value when tips are present. Consider `bill?.subtotal`.
+3. `bill.payment_mode` is lowercase (`cash`, `qr`, `split`) → message reads `_Paid via cash_`. Consider uppercase/title-case.
+
+### Teardown
+
+- Test tenant `d7851b4a-f9df-4e25-aa1e-603dc0a57da1` (email `wa-test-27688@resend.dev`) deleted via `/api/platform/tenants/{tid}` — deleted users:1, branches:1, beauticians:1, services:1, tenants:1. Two test bills pre-deleted individually.
+
+Files added/updated:
+- `/app/frontend/__tests__/whatsappInvoice.test.js` (new)
+- `/app/frontend/__tests__/__rn_stub.js` (new)
+- `/app/test_reports/iteration_25.json` (new)
+
+
+---
+
+## Iteration 26 — WhatsApp Invoice minor-findings re-verification (Frontend only)
+
+- Test date: 2026-08-13
+- Scope: Re-verify iter25's 3 minor integration findings after main agent's fixes
+- Files under test:
+  - `/app/frontend/app/bill/[id].tsx` lines 358-374 (payload built for `buildWhatsAppInvoiceMessage`)
+  - `/app/frontend/app/(tabs)/history.tsx` lines 48-64 (identical payload for row wa-btn)
+
+### Result: PASS on all requested checks
+
+- **Legacy unit tests:** `whatsappInvoice.test.js` still 40/40 pass (no regressions).
+- **New unit suite:** `whatsappInvoice_iter26.test.js` — 27/27 pass:
+  - T1 (subtotal=2000, discount=200, tip=100, payment_mode='qr') → message body contains `Discount: -₹200.00`, `Subtotal: ₹2,000.00` (pre-discount, NOT services_net 1,800), `Tip: ₹100.00`, `*Total: ₹1,900.00*`, `_Paid via UPI_`, and does NOT contain `_Paid via qr_`.
+  - T2 payment_mode='cash' → `_Paid via Cash_`, not `_Paid via cash_`.
+  - T3 payment_mode='split' → `_Paid via Split_`, not `_Paid via split_`.
+  - T4 legacy `discount_amount` still renders (backwards-compat fallback for `bill.discount ?? bill.discount_amount`).
+  - T5 no discount & no bill.subtotal → subtotal line suppressed (helper omits when subtotal == grandTotal); still shows total.
+  - T6 empty phone & null phone → `sendWhatsAppInvoice` returns false, alert fired, no URL opened. Valid phone → URL captured with correct `wa.me/91...` prefix and body encodes `_Paid via UPI_`, `Discount: -₹200.00`, `Subtotal: ₹2,000.00`.
+
+- **Live Playwright (mobile 390x844):**
+  - Fresh test tenant seeded via public API. Bill `INV-20260813-0001` created with subtotal=2000, discount=200 (via item-level `discount_pct=10`), tip_amount=100, payment_mode='qr', grand_total=1900.
+  - Logged into UI via the actual sign-in form.
+  - `/bill/<id>` → tap `whatsapp-bill-btn` → captured URL `https://wa.me/919880012345?text=...`. Decoded body:
+    ```
+    *WA Iter26 1786612649*
+    Invoice #INV-20260813-0001
+    Aug 13, 2026, 09:17 AM
+
+    Hi Ravi,
+    Thank you for visiting! Here are your invoice details:
+
+    *Services*
+    • Haircut — ₹1,000.00
+    • Facial — ₹1,000.00
+
+    Subtotal: ₹2,000.00
+    Discount: -₹200.00
+    Tip: ₹100.00
+    *Total: ₹1,900.00*
+    _Paid via UPI_
+
+    We appreciate your business — see you again soon! 🙏
+    ```
+    ALL required lines present. ✓
+  - `/history` → tap `wa-btn-<bill_id>` → identical URL captured, URL did NOT change (stopPropagation still working, no navigation to bill detail). ✓
+
+### Teardown
+
+- Test tenant `db090aee-66c9-4703-874c-34ba2099851e` (email `wa-iter26-1786612649@resend.dev`) deleted via `/api/platform/tenants/{tid}`. Deleted: users=1, branches=1, bills=1, beauticians=1, services=2. Zero residual state.
+
+### Files added / updated
+
+- `/app/frontend/__tests__/whatsappInvoice_iter26.test.js` (new — 27 assertions)
+- `/app/test_reports/iteration_26.json`
+- `/app/test_reports/screenshots/iter26_bill_final.png`, `iter26_history_final.png`
+
+### Verdict
+
+All three iter25 minor findings are fixed. WhatsApp invoice feature is fully working end-to-end for admin/staff. No further action required for this feature.
+
+

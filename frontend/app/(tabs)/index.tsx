@@ -15,7 +15,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 const LOGO = require('../../assets/images/parlourpilot-logo.png');
 
 export default function DashboardScreen() {
-  const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout } = useAuth();
+  const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout, refreshTenant, refreshBranches } = useAuth();
   const { brandColor, brandTextColor } = useBrand();
   // Compute a darker shade for the hero gradient
   const hexToRgb = (h: string) => { const n = parseInt(h.replace('#', ''), 16); return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }; };
@@ -38,6 +38,9 @@ export default function DashboardScreen() {
       const [data, apts] = await Promise.all([
         api('/reports/summary'),
         appointmentApi.stats().catch(() => null),
+        // Refresh tenant + branches so logo/brand changes from web app propagate.
+        refreshTenant().catch(() => null),
+        refreshBranches().catch(() => null),
       ]);
       setSummary(data);
       setAptStats(apts as any);

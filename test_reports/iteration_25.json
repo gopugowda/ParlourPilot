@@ -1,0 +1,57 @@
+{
+  "summary": "Frontend-only verification of the new WhatsApp invoice deep-link feature. ALL CRITICAL FLOWS PASS. Executed 40 node-level unit tests for `normalisePhoneForWhatsApp` + `buildWhatsAppInvoiceMessage` + `sendWhatsAppInvoice` (40/40 pass). Live-app Playwright verification on mobile viewport 390x844 covers: (a) footer layout on /bill/[id] — 4 buttons rendered with no overlap, all ≥60px tall, (b) whatsapp-bill-btn click captures wa.me URL with correct E.164 phone `919880012345` (10-digit → prepends 91) and URL-encoded message body containing business name (bold), invoice #, date, customer greeting, `*Services*` header, `•` bullets, item name, bold total, thank-you line, and `_Paid via cash_`, (c) history-screen `wa-btn-<id>` renders per row, tap does NOT navigate to bill detail (stopPropagation works) and fires the same deep-link, (d) empty-phone bill click fires NO deep-link (the critical safety guarantee). Seed tenant + bills fully deleted via /api/platform/tenants/{tid} teardown.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "WhatsApp invoice message body — Discount line never appears",
+        "issue": "Both /app/frontend/app/bill/[id].tsx (line 369) and /app/frontend/app/(tabs)/history.tsx (line 59) pass `discount: bill?.discount_amount` to `buildWhatsAppInvoiceMessage`. But the /api/bills/{id} response uses the key `discount` (not `discount_amount`). Verified via live GET — response has {subtotal, discount, tax_amount, services_net, ...}, no `discount_amount` field. Consequence: for any bill with a non-zero discount, the WhatsApp message will NEVER show the `Discount: -₹…` line. Zero-discount bills are unaffected. Fix: change `bill?.discount_amount` → `bill?.discount` in both files.",
+        "affected_testIDs": ["whatsapp-bill-btn", "wa-btn-<bill_id>"]
+      },
+      {
+        "flow": "WhatsApp invoice — Subtotal semantics mismatch",
+        "issue": "bill/[id].tsx passes `subtotal: bill?.services_net` and history.tsx passes `subtotal: b.services_net`. The helper's rule is: show subtotal only when `subtotal !== grandTotal`. With services_net == grand_total (typical single-service bill, no tip), subtotal is correctly hidden. But for bills that include a tip, `services_net = grand_total - tip_amount`, so the message will show `Subtotal: <services_net>` which is misleadingly labelled — that's actually the pre-tip figure, not the true subtotal. Consider passing `bill?.subtotal` (the real pre-discount total) and letting the discount line explain the difference. Non-blocking cosmetic."
+      },
+      {
+        "flow": "WhatsApp invoice — payment mode shown lowercase",
+        "issue": "bill.payment_mode is stored as lowercase (`cash`, `qr`, `split`), so the message reads `_Paid via cash_` (grammatically awkward). Consider `.toUpperCase()` (as done elsewhere in the app) or Title-case before passing to buildWhatsAppInvoiceMessage. Cosmetic only."
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/__tests__/whatsappInvoice.test.js",
+    "/app/frontend/__tests__/__rn_stub.js"
+  ],
+  "action_items": [
+    "Fix discount field name: replace `bill?.discount_amount` with `bill?.discount` in /app/frontend/app/bill/[id].tsx:369 and /app/frontend/app/(tabs)/history.tsx:59 so discount lines appear in the WhatsApp message.",
+    "(Optional) Fix `subtotal` mapping so that when a tip is present the message doesn't mislabel services_net as `Subtotal:`. Pass `bill?.subtotal` instead.",
+    "(Optional) Uppercase / title-case payment_mode before passing to buildWhatsAppInvoiceMessage so message reads `_Paid via Cash_` instead of `_Paid via cash_`."
+  ],
+  "critical_code_review_comments": [
+    "whatsappInvoice.ts is well-written: pure functions, no side-effects except the send function. Correctly falls back to Linking.openURL for native + window.open/location.href for web.",
+    "Alert.alert on RN-Web does not always surface as a browser dialog on this Expo web preview — no dialog was captured by Playwright's page.on('dialog') for the empty-phone case. HOWEVER, the critical guarantee (do NOT fire wa.me URL when phone is invalid) IS honoured (verified 0 captured URLs in both empty-phone tests). On native iOS/Android the Alert modal will work as expected. Not a blocker.",
+    "Phone normaliser correctly handles: 10-digit prepend 91, +91 spaced, (91)-prefixed, 0-prefixed strip, +1 US preserved, abc/empty/null → null. All 9 documented edge cases pass.",
+    "Message builder correctly suppresses optional lines when values are 0 or equal to grandTotal (verified with msg2 assertions).",
+    "Footer layout on 390-wide mobile viewport: buttons at x=17/108/198/289 with widths 79/79/79/84 — no overlap, all 60px tall (≥44 touch target).",
+    "History-row WA button correctly calls e.stopPropagation() — Playwright verified page URL unchanged after tap."
+  ],
+  "updated_files": [
+    "/app/frontend/__tests__/whatsappInvoice.test.js (new — 40 node-level unit tests, uses sucrase/register)",
+    "/app/frontend/__tests__/__rn_stub.js (new — react-native stub for node)"
+  ],
+  "success_rate": {
+    "backend": "N/A (frontend-only review as requested)",
+    "frontend": "100% on critical flows (URL construction, encoding, stopPropagation, empty-phone guard, 4-button footer layout). Minor cosmetic + one non-fatal field-mapping bug for discount line in message body."
+  },
+  "seed_data_creation": "Created 1 tenant (TEST_WA_Salon_27688, id d7851b4a-…, email wa-test-27688@resend.dev), 1 branch, 1 service (TEST_Haircut), 1 beautician (TEST_Priya), 2 bills (INV-20260813-0001 with phone 9880012345, INV-20260813-0002 with empty phone). All deleted via /api/platform/tenants/{tid} — response confirmed: users:1 branches:1 bills:0 beauticians:1 services:1 tenants:1. (Bills were pre-deleted then tenant cascade returned 0 for bills — expected.)",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The WhatsApp deep-link feature is functionally solid. Only remaining fixes are the 3 integration issues listed above — all in /app/frontend/app/bill/[id].tsx and /app/frontend/app/(tabs)/history.tsx (NOT in the helper module). To regression-test the helper: `cd /app/frontend && node __tests__/whatsappInvoice.test.js` (uses sucrase/register — already installed). To live-test in Playwright, patch `window.open` early via add_init_script to capture wa.me URLs without navigating; use testIDs `whatsapp-bill-btn` and `wa-btn-<bill_id>`.",
+  "rca_of_issue": "N/A — this was feature verification, not a bug hunt. The only defect surfaced is a field-name mismatch (`discount_amount` vs `discount`) between the /api/bills/{id} response schema and the WhatsApp message-builder call sites. It silently suppresses the discount line but does not throw or break the deep-link. Fix is a 2-character rename in 2 files."
+}
