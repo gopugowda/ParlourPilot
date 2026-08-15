@@ -37,7 +37,8 @@ if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
 # --- Fallback: Emergent-managed proxy (legacy) ---
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"  # constant per playbook
+# Env-driven with playbook default so production can override if the integration host changes.
+EMAIL_BASE_URL = os.environ.get("INTEGRATION_PROXY_URL", "https://integrations.emergentagent.com")
 EMERGENT_EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "")
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", RESEND_FROM_NAME)
 

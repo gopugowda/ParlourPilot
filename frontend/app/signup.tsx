@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
-  Platform, ScrollView, ActivityIndicator, TouchableOpacity,
+  Platform, ScrollView, ActivityIndicator, TouchableOpacity, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -234,7 +234,21 @@ export default function SignupScreen() {
 
         <View style={styles.termsBox}>
           <Text style={styles.termsText}>
-            By creating an account you agree to ParlourPilot Terms of Service and Privacy Policy.
+            By creating an account you agree to ParlourPilot{' '}
+            <Text
+              style={styles.termsLink}
+              onPress={() => Linking.openURL('https://parlourpilot.com/terms')}
+            >
+              Terms of Service
+            </Text>
+            {' '}and{' '}
+            <Text
+              style={styles.termsLink}
+              onPress={() => Linking.openURL('https://parlourpilot.com/privacy')}
+            >
+              Privacy Policy
+            </Text>
+            .
           </Text>
         </View>
 
@@ -281,6 +295,7 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
   termsBox: { marginTop: spacing.lg, paddingHorizontal: spacing.sm },
   termsText: { fontSize: 11, color: colors.onSurfaceTertiary, textAlign: 'center', lineHeight: 16 },
+  termsLink: { color: colors.brandPrimary, fontWeight: '600', textDecorationLine: 'underline' },
   loginLink: { marginTop: spacing.lg, alignItems: 'center' },
   loginLinkText: { fontSize: 14, color: colors.onSurfaceSecondary },
 });
