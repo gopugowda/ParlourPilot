@@ -313,7 +313,7 @@ ${tipBlock}
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{bill.tip_beautician_name || 'Beautician'}</Text>
                 <Text style={styles.itemBy}>Paid via {String(bill.tip_via || '').toUpperCase()}</Text>
-                {bill.tip_via === 'qr' && (
+                {(bill.tip_via === 'qr' || bill.tip_via === 'card') && (
                   <Text style={[styles.itemDisc, { color: colors.warning }]}>
                     Give {fmtINR(bill.tip_amount)} cash from counter
                   </Text>
@@ -321,6 +321,25 @@ ${tipBlock}
               </View>
               <Text style={styles.itemAmt}>{fmtINR(bill.tip_amount)}</Text>
             </View>
+          </View>
+        )}
+
+        {/* Edit history */}
+        {Array.isArray(bill.edit_history) && bill.edit_history.length > 0 && (
+          <View style={styles.card}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="time-outline" size={16} color={colors.onSurfaceSecondary} />
+              <Text style={styles.cardTitle}>Edit History ({bill.edit_history.length})</Text>
+            </View>
+            {bill.edit_history.slice().reverse().map((h: any, i: number) => (
+              <View key={i} style={styles.historyRow}>
+                <View style={styles.historyDot} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.historyWho}>{h.edited_by_name || 'Someone'}</Text>
+                  <Text style={styles.historyWhen}>{new Date(h.edited_at).toLocaleString('en-IN')}</Text>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 
@@ -498,6 +517,10 @@ const styles = StyleSheet.create({
   tipIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
 
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  historyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 6 },
+  historyDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.brandPrimary },
+  historyWho: { fontSize: 13, fontWeight: '600', color: colors.onSurface },
+  historyWhen: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   totalLabel: { fontSize: 13, color: colors.onSurfaceSecondary },
   totalVal: { fontSize: 13, fontWeight: '600', color: colors.onSurface },
   grandLabel: { fontSize: 15, fontWeight: '700', color: colors.onSurface },

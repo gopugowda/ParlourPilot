@@ -1,0 +1,53 @@
+{
+  "summary": "Iter 28 (3 smaller parity items) — 4/4 backend pytest PASS + all 5 frontend flows PASS. Verified: (1) bill edit_history $push appends {edited_by, edited_by_name, edited_at} on every PUT (0→1→2 entries); (2) staff Members RBAC — POST + PUT allowed w/ tier_id persisted, DELETE=403 for staff, DELETE=200 for admin; (3) tenant member_tiers CRUD — PUT /api/tenants/me accepts array, GET returns verbatim (3 tiers verified id/name/discount_pct/min_price); (4) resolve_member_discount tier lookup — VIP (25% / min 500): line@600→25%, line@400→0 (below min), line@600 w/manual 30%→30% (manual wins). Frontend (390x844): (A) Edit History (N) card renders on modified bill with name+datetime; (B) Membership Tiers card + Add Tier button + Save persists (verified 4 rows after reload, then cleanup back to 3); (C) tier chips (None/Regular/Student/VIP) render in Add Member modal for owner, Student chip highlights on tap; (D) staff sees + button in Members header, can add+save a member with tier chip, edit modal shows NO m-delete button (0 elements); (E) staff Manage tab shows 'Reference (view only)' section, Services/Beauticians/Stock screens hide add-*/edit-* controls entirely. Environmental note below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "manage/salon-settings.tsx saveCompany",
+        "issue": "Tapping Save Company Info silently no-ops (fires Alert.alert('Invalid phone', ...) that most users may dismiss without reading) when the tenant's stored company phone is <6 digits. On React Native for Web these Alerts are routed to window.confirm and can be missed. The frontend enforces 6-15 digits but the backend accepted a shorter phone in the past (existing testuiowner tenant had phone='9999'), so any owner who never touched Company Info is blocked from saving Membership Tiers or brand changes. Reference: /app/frontend/app/manage/salon-settings.tsx:164-168. Fix suggestion: relax the front-end minimum to allow empty/legacy short numbers (e.g. only validate if length > 0 && length < 6, still show alert but auto-scroll to the phone field), or add server-side normalization on signup to require ≥6 digits.",
+        "testID": "save-company-btn",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter28_parity.py",
+    "/app/test_reports/pytest/pytest_iter28.xml",
+    "/app/test_reports/screenshots/iter28_A_edit_history.png",
+    "/app/test_reports/screenshots/iter28_B_tiers.png",
+    "/app/test_reports/screenshots/iter28_C_tier_modal.png",
+    "/app/test_reports/screenshots/iter28_D_staff_modal.png",
+    "/app/test_reports/screenshots/iter28_E_manage.png",
+    "/app/test_reports/screenshots/iter28_E_stock.png"
+  ],
+  "action_items": [
+    "Consider softening the phone validation in salon-settings.tsx saveCompany() so users aren't silently blocked when the stored tenant.phone was previously accepted with <6 digits (see ui_bugs above). At minimum, on validation failure, scroll the Company Phone field into view and focus it so the user knows why Save didn't fire.",
+    "Optional: on frontend Alert.alert paths, replace with an inline error banner (RN Web routes Alert.alert to window.confirm which is easy to miss).",
+    "Optional: promote the DEFAULT_MEMBER_TIERS seed (regular/student/vip) so brand-new tenants immediately have the 3 tiers without an admin having to save Company Info first (currently the frontend fabricates default tiers on-the-fly which is fine, but persistence requires a save)."
+  ],
+  "critical_code_review_comments": [
+    "salon-settings.tsx saveCompany() validates phone before submitting the entire payload (including member_tiers). If validation fails, tier edits are lost silently — consider decoupling tier CRUD into its own PUT (e.g. small 'Save Tiers' button on the Membership Tiers card) so tier edits aren't dependent on unrelated Company Info validity.",
+    "routes/tenants.py PUT /tenants/me accepts arbitrary member_tiers array without validating tier item shape ({id, name, discount_pct, min_price}). Malformed items would silently break resolve_member_discount. Add a Pydantic sub-model for MemberTier."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter28_parity.py (new — 4 tests)",
+    "/app/test_reports/iteration_28.json (new)",
+    "/app/test_reports/pytest/pytest_iter28.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (4/4)",
+    "frontend": "100% (A/B/C/D/E all pass)"
+  },
+  "seed_data_creation": "No new tenants. Fixed one field on the existing testuiowner@testparlourpilot.com tenant: phone was '9999' (4 digits, which blocked the salon-settings save flow) — reset to '9999999999' via PUT /api/tenants/me so the UI persistence flow could be validated end-to-end. All test members/bills created during tests were cleaned up.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "testuiowner@testparlourpilot.com / admin123 (owner) + teststaffui@testparlourpilot.com / staff123 (staff) remain valid on the shared Atlas DB. The owner tenant now has member_tiers=[regular(10%/100), student(20%/100), vip(25%/500)] persisted and phone='9999999999' (fixed during this run). test_iter28_parity.py reuses these credentials directly (no signup). If iter 29 adds more tenant fields, remember: /manage/salon-settings.tsx saveCompany() bundles ALL company fields — phone must be 6-15 digits or Save silently fails.",
+  "rca_of_issue": "One intermittent issue was investigated during frontend testing: 'Save Company Info' click never triggered a PUT /api/tenants/me despite the button being visible+enabled. Root cause: saveCompany() validates companyPhone as 6-15 digits (salon-settings.tsx:164-168) and returns early on failure. The pre-existing test tenant had tenant.phone='9999' (from an earlier iteration), which failed the validation. The resulting Alert.alert became a browser confirm dialog auto-dismissed by Playwright. Mitigation applied: normalized the tenant phone to a valid 10-digit number via API. Recommended long-term fix is in action_items above."
+}

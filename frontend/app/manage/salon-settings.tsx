@@ -37,6 +37,7 @@ export default function SalonSettingsScreen() {
   const [companyLogo, setCompanyLogo] = useState<string | null>(null); // fallback logo
   const [memberDiscount, setMemberDiscount] = useState('10');
   const [memberMinPrice, setMemberMinPrice] = useState('100');
+  const [memberTiers, setMemberTiers] = useState<{ id: string; name: string; discount_pct: number; min_price: number }[]>([]);
 
   // Branch selector
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
@@ -85,6 +86,11 @@ export default function SalonSettingsScreen() {
     setCompanyLogo(tenant.logo || null);
     setMemberDiscount(String(tenant.member_discount_pct ?? 10));
     setMemberMinPrice(String(tenant.member_min_price ?? 100));
+    const defaultTiers = [
+      { id: 'regular', name: 'Regular', discount_pct: 10, min_price: 100 },
+      { id: 'student', name: 'Student', discount_pct: 20, min_price: 100 },
+    ];
+    setMemberTiers(Array.isArray((tenant as any).member_tiers) && (tenant as any).member_tiers.length > 0 ? (tenant as any).member_tiers : defaultTiers);
   }, [tenant]);
 
   // Default-select head branch when branches load
@@ -183,6 +189,7 @@ export default function SalonSettingsScreen() {
         logo: companyLogo,
         member_discount_pct: parseFloat(memberDiscount) || 10,
         member_min_price: parseFloat(memberMinPrice) || 100,
+        member_tiers: memberTiers,
       };
       await tenantApi.updateMine(payload);
       await refreshTenant();
@@ -410,6 +417,78 @@ export default function SalonSettingsScreen() {
               <View style={{ flex: 1 }}><LabeledInput label="Min Service ₹" value={memberMinPrice} onChangeText={(v: string) => setMemberMinPrice(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" /></View>
             </View>
             <Text style={styles.helpText}>Auto-applied on member bills. Per-member overrides can be set on the Members screen.</Text>
+          </View>
+
+          <View style={styles.card}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={styles.cardTitle}>Membership Tiers</Text>
+              <TouchableOpacity
+                testID="add-tier-btn"
+                onPress={() => {
+                  const id = `tier_${Date.now()}`;
+                  setMemberTiers([...memberTiers, { id, name: 'New Tier', discount_pct: 15, min_price: 100 }]);
+                }}
+                style={styles.addTierBtn}
+              >
+                <Ionicons name="add" size={16} color={colors.brandPrimary} />
+                <Text style={styles.addTierText}>Add Tier</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.helpText}>Assign a tier to each member for a custom % and min price. Order shown to staff when creating a member.</Text>
+            {memberTiers.map((t, idx) => (
+              <View key={t.id} style={styles.tierRow} testID={`tier-row-${t.id}`}>
+                <TextInput
+                  testID={`tier-name-${t.id}`}
+                  value={t.name}
+                  onChangeText={(v) => {
+                    const copy = [...memberTiers];
+                    copy[idx] = { ...copy[idx], name: v };
+                    setMemberTiers(copy);
+                  }}
+                  placeholder="Name"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={[styles.tierInput, { flex: 2 }]}
+                />
+                <TextInput
+                  testID={`tier-pct-${t.id}`}
+                  value={String(t.discount_pct)}
+                  onChangeText={(v) => {
+                    const n = parseFloat(v.replace(/[^0-9.]/g, '')) || 0;
+                    const copy = [...memberTiers];
+                    copy[idx] = { ...copy[idx], discount_pct: n };
+                    setMemberTiers(copy);
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="10%"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={[styles.tierInput, { flex: 1 }]}
+                />
+                <TextInput
+                  testID={`tier-min-${t.id}`}
+                  value={String(t.min_price)}
+                  onChangeText={(v) => {
+                    const n = parseFloat(v.replace(/[^0-9.]/g, '')) || 0;
+                    const copy = [...memberTiers];
+                    copy[idx] = { ...copy[idx], min_price: n };
+                    setMemberTiers(copy);
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="₹100"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={[styles.tierInput, { flex: 1 }]}
+                />
+                <TouchableOpacity
+                  testID={`tier-delete-${t.id}`}
+                  onPress={() => setMemberTiers(memberTiers.filter((_, i) => i !== idx))}
+                  style={styles.tierDeleteBtn}
+                >
+                  <Ionicons name="trash-outline" size={16} color={colors.error} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            {memberTiers.length === 0 && (
+              <Text style={[styles.helpText, { textAlign: 'center', paddingVertical: spacing.md }]}>No tiers yet — tap Add Tier.</Text>
+            )}
           </View>
 
           <TouchableOpacity testID="save-company-btn" style={styles.saveBtn} onPress={saveCompany} disabled={savingCompany}>
@@ -645,6 +724,11 @@ const styles = StyleSheet.create({
   actionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.sm, paddingVertical: 8, paddingHorizontal: 12 },
   actionText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
   helpText: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  addTierBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary },
+  addTierText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
+  tierRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
+  tierInput: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface },
+  tierDeleteBtn: { padding: 8, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
 
   label: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
   input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.sm, fontSize: 15, color: colors.onSurface, minHeight: 44 },

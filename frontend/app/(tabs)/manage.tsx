@@ -45,10 +45,17 @@ export default function ManageScreen() {
       title: 'Daily Operations',
       items: [
         { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer bookings', route: '/manage/appointments' },
-        { icon: 'star-outline', label: 'Members', hint: 'View & search members · WhatsApp reminders', route: '/manage/members' },
+        { icon: 'star-outline', label: 'Members', hint: 'Add & renew members · WhatsApp reminders', route: '/manage/members' },
         { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
         { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
-        { icon: 'cube-outline', label: 'Stock', hint: 'View inventory · record usage', route: '/manage/stock' },
+      ],
+    },
+    {
+      title: 'Reference (view only)',
+      items: [
+        { icon: 'pricetags-outline', label: 'Services', hint: 'View salon service list & prices', route: '/manage/services' },
+        { icon: 'people-outline', label: 'Beauticians', hint: 'View staff roster', route: '/manage/beauticians' },
+        { icon: 'cube-outline', label: 'Stock', hint: 'View inventory & usage', route: '/manage/stock' },
       ],
     },
   ];

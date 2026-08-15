@@ -41,10 +41,20 @@ export default function MembersScreen() {
   const [joinedAt, setJoinedAt] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [discountPct, setDiscountPct] = useState(''); // per-member override
+  const [tierId, setTierId] = useState<string | null>(null);
   const [active, setActive] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Tenant-configured membership tiers (fallback to defaults).
+  const tiers: { id: string; name: string; discount_pct: number; min_price: number }[] =
+    (Array.isArray((tenant as any)?.member_tiers) && (tenant as any).member_tiers.length > 0)
+      ? (tenant as any).member_tiers
+      : [
+          { id: 'regular', name: 'Regular', discount_pct: 10, min_price: 100 },
+          { id: 'student', name: 'Student', discount_pct: 20, min_price: 100 },
+        ];
 
   const load = async () => { try { setList(await api('/members')); } catch {} };
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -56,13 +66,14 @@ export default function MembersScreen() {
     const nextYear = new Date(); nextYear.setFullYear(nextYear.getFullYear() + 1);
     setJoinedAt(today);
     setExpiresAt(nextYear.toISOString().slice(0, 10));
-    setDiscountPct('');
+    setDiscountPct(''); setTierId(null);
     setActive(true); setNotes(''); setErr(null); setEditOpen(true);
   };
   const openEdit = (m: Member) => {
     setEditing(m); setName(m.name); setPhone(m.phone);
     setJoinedAt(m.joined_at || ''); setExpiresAt(m.expires_at || '');
     setDiscountPct((m as any).discount_pct !== null && (m as any).discount_pct !== undefined ? String((m as any).discount_pct) : '');
+    setTierId((m as any).tier_id || null);
     setActive(m.active); setNotes(m.notes || ''); setErr(null); setEditOpen(true);
   };
 
@@ -89,6 +100,7 @@ export default function MembersScreen() {
         joined_at: joinedAt,
         expires_at: expiresAt,
         discount_pct: discOverride,
+        tier_id: tierId,
         active,
         notes: notes.trim(),
       };
@@ -155,8 +167,8 @@ export default function MembersScreen() {
           <Text style={styles.headerTitle}>Members</Text>
           <Text style={styles.headerSub}>{list.length} · {list.filter(m => m.status === 'active' || m.status === 'expiring_soon').length} active</Text>
         </View>
-        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={styles.headerBtn} disabled={!isAdmin}>
-          {isAdmin ? <Ionicons name="add" size={20} color="#fff" /> : <Ionicons name="lock-closed" size={16} color="rgba(255,255,255,0.6)" />}
+        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={styles.headerBtn}>
+          <Ionicons name="add" size={20} color="#fff" />
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -204,7 +216,7 @@ export default function MembersScreen() {
               {list.length === 0 && (
                 <Text style={styles.emptySub}>Yearly members get discount on services above minimum price</Text>
               )}
-              {isAdmin && list.length === 0 && (
+              {list.length === 0 && (
                 <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
                   <Ionicons name="add" size={18} color="#fff" />
                   <Text style={styles.ctaBtnText}>Add Member</Text>
@@ -218,8 +230,8 @@ export default function MembersScreen() {
             return (
               <View key={m.id} style={styles.row} testID={`member-row-${m.id}`}>
                 <TouchableOpacity
-                  onPress={() => isAdmin && openEdit(m)}
-                  activeOpacity={isAdmin ? 0.85 : 1}
+                  onPress={() => openEdit(m)}
+                  activeOpacity={0.85}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 }}
                 >
                   <View style={styles.avatar}>
@@ -274,6 +286,30 @@ export default function MembersScreen() {
                 </View>
               </View>
               <View style={styles.field}>
+                <Text style={styles.label}>Membership Tier</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+                  <TouchableOpacity
+                    testID="tier-none"
+                    onPress={() => setTierId(null)}
+                    style={[styles.tierChip, !tierId && styles.tierChipActive]}
+                  >
+                    <Text style={[styles.tierChipText, !tierId && styles.tierChipTextActive]}>None</Text>
+                  </TouchableOpacity>
+                  {tiers.map(t => (
+                    <TouchableOpacity
+                      key={t.id}
+                      testID={`tier-chip-${t.id}`}
+                      onPress={() => setTierId(t.id)}
+                      style={[styles.tierChip, tierId === t.id && styles.tierChipActive]}
+                    >
+                      <Text style={[styles.tierChipText, tierId === t.id && styles.tierChipTextActive]}>
+                        {t.name} · {t.discount_pct}%
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+              <View style={styles.field}>
                 <Text style={styles.label}>
                   Discount % Override
                   <Text style={{ color: colors.onSurfaceTertiary, fontWeight: '400' }}>
@@ -299,7 +335,7 @@ export default function MembersScreen() {
               <TouchableOpacity testID="m-save" style={styles.saveBtn} onPress={save} disabled={saving}>
                 {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update Member' : 'Add Member'}</Text>}
               </TouchableOpacity>
-              {editing && (
+              {editing && isAdmin && (
                 <TouchableOpacity testID="m-delete" style={styles.deleteBtn} onPress={() => { remove(editing); setEditOpen(false); }}>
                   <Ionicons name="trash-outline" size={16} color={colors.error} />
                   <Text style={styles.deleteText}>Delete</Text>
@@ -367,4 +403,8 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
   deleteText: { color: colors.error, fontWeight: '600' },
+  tierChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  tierChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  tierChipText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
+  tierChipTextActive: { color: '#fff' },
 });

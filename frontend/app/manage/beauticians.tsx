@@ -8,12 +8,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
 type Beautician = { id: string; name: string; role: string; phone: string; active: boolean };
 
 export default function BeauticiansScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Beautician[]>([]);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
@@ -67,9 +70,11 @@ export default function BeauticiansScreen() {
           <Text style={styles.headerTitle}>Beauticians</Text>
           <Text style={styles.headerSub}>{list.length} staff members</Text>
         </View>
-        <TouchableOpacity testID="add-header" onPress={openAdd} style={styles.headerBtn}>
-          <Ionicons name="add" size={20} color="#fff" />
-        </TouchableOpacity>
+        {isAdmin && (
+          <TouchableOpacity testID="add-header" onPress={openAdd} style={styles.headerBtn}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </TouchableOpacity>
+        )}
       </SafeAreaView>
 
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
@@ -78,9 +83,11 @@ export default function BeauticiansScreen() {
             <View style={styles.empty}>
               <Ionicons name="people-outline" size={48} color={colors.onSurfaceTertiary} />
               <Text style={styles.emptyTitle}>No beauticians yet</Text>
-              <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
-                <Text style={styles.ctaBtnText}>Add first beautician</Text>
-              </TouchableOpacity>
+              {isAdmin && (
+                <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
+                  <Text style={styles.ctaBtnText}>Add first beautician</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
           {list.map(b => (
@@ -98,12 +105,16 @@ export default function BeauticiansScreen() {
                   {b.phone ? <Text style={styles.rowMeta}>· {b.phone}</Text> : null}
                 </View>
               </View>
-              <TouchableOpacity testID={`bt-edit-${b.id}`} style={styles.smallBtn} onPress={() => openEdit(b)}>
-                <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
-              </TouchableOpacity>
-              <TouchableOpacity testID={`bt-del-${b.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(b)}>
-                <Ionicons name="trash" size={14} color={colors.error} />
-              </TouchableOpacity>
+              {isAdmin && (
+                <>
+                  <TouchableOpacity testID={`bt-edit-${b.id}`} style={styles.smallBtn} onPress={() => openEdit(b)}>
+                    <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity testID={`bt-del-${b.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(b)}>
+                    <Ionicons name="trash" size={14} color={colors.error} />
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           ))}
         </ScrollView>

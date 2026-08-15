@@ -54,7 +54,8 @@ async def lookup_member(phone: str, user=Depends(get_current_user_active)):
 
 
 @router.post("/members")
-async def create_member(body: MemberIn, user=Depends(require_admin_active)):
+async def create_member(body: MemberIn, user=Depends(get_current_user_active)):
+    # Staff can Add + Renew members (per spec §1)
     tid = tenant_id_of(user)
     phone_clean = body.phone.strip()
     if await db.members.find_one({"tenant_id": tid, "phone": phone_clean}):
@@ -77,6 +78,7 @@ async def create_member(body: MemberIn, user=Depends(require_admin_active)):
         "joined_at": joined,
         "expires_at": expires,
         "discount_pct": float(body.discount_pct) if body.discount_pct is not None else None,
+        "tier_id": body.tier_id,
         "notes": body.notes or "",
         "active": body.active,
         "created_at": now_iso(),
@@ -86,13 +88,15 @@ async def create_member(body: MemberIn, user=Depends(require_admin_active)):
 
 
 @router.put("/members/{mid}")
-async def update_member(mid: str, body: MemberIn, user=Depends(require_admin_active)):
+async def update_member(mid: str, body: MemberIn, user=Depends(get_current_user_active)):
+    # Staff can update (Renew) members; only Delete is admin-only (per spec §1).
     result = await db.members.find_one_and_update(
         tq(user, {"id": mid}),
         {"$set": {
             "name": body.name.strip(), "phone": body.phone.strip(),
             "joined_at": body.joined_at, "expires_at": body.expires_at,
             "discount_pct": float(body.discount_pct) if body.discount_pct is not None else None,
+            "tier_id": body.tier_id,
             "notes": body.notes or "", "active": body.active,
         }},
         return_document=True, projection={"_id": 0},

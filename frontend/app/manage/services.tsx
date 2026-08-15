@@ -8,12 +8,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
 type Service = { id: string; name: string; price: number; category: string; tax_percentage?: number; active: boolean };
 
 export default function ServicesScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
@@ -82,9 +85,11 @@ export default function ServicesScreen() {
           <Text style={styles.headerTitle}>Services</Text>
           <Text style={styles.headerSub}>{list.length} services</Text>
         </View>
-        <TouchableOpacity testID="add-service-header" onPress={openAdd} style={styles.headerBtn}>
-          <Ionicons name="add" size={20} color="#fff" />
-        </TouchableOpacity>
+        {isAdmin && (
+          <TouchableOpacity testID="add-service-header" onPress={openAdd} style={styles.headerBtn}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </TouchableOpacity>
+        )}
       </SafeAreaView>
 
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
@@ -93,9 +98,11 @@ export default function ServicesScreen() {
             <View style={styles.empty}>
               <Ionicons name="pricetags-outline" size={48} color={colors.onSurfaceTertiary} />
               <Text style={styles.emptyTitle}>No services yet</Text>
-              <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
-                <Text style={styles.ctaBtnText}>Add first service</Text>
-              </TouchableOpacity>
+              {isAdmin && (
+                <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
+                  <Text style={styles.ctaBtnText}>Add first service</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
           {list.map(s => (
@@ -109,12 +116,16 @@ export default function ServicesScreen() {
                 </Text>
               </View>
               <Text style={styles.rowPrice}>{fmtINR(s.price)}</Text>
-              <TouchableOpacity testID={`svc-edit-${s.id}`} style={styles.smallBtn} onPress={() => openEdit(s)}>
-                <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
-              </TouchableOpacity>
-              <TouchableOpacity testID={`svc-del-${s.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(s)}>
-                <Ionicons name="trash" size={14} color={colors.error} />
-              </TouchableOpacity>
+              {isAdmin && (
+                <>
+                  <TouchableOpacity testID={`svc-edit-${s.id}`} style={styles.smallBtn} onPress={() => openEdit(s)}>
+                    <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity testID={`svc-del-${s.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(s)}>
+                    <Ionicons name="trash" size={14} color={colors.error} />
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           ))}
         </ScrollView>
