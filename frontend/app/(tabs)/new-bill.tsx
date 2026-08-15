@@ -20,7 +20,7 @@ type Item = {
   service_id?: string; service_name: string; price: number;
   discount_pct: number; tax_percentage?: number;
   beautician_id?: string; beautician_name: string;
-  tip_amount?: number; tip_via?: 'cash' | 'qr';
+  tip_amount?: number; tip_via?: 'cash' | 'qr' | 'card';
 };
 
 export default function NewBillScreen() {
@@ -34,14 +34,14 @@ export default function NewBillScreen() {
   const [items, setItems] = useState<Item[]>([]);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [paymentMode, setPaymentMode] = useState<'cash' | 'qr' | 'split'>('cash');
+  const [paymentMode, setPaymentMode] = useState<'cash' | 'qr' | 'card' | 'split'>('cash');
   const [cashAmt, setCashAmt] = useState('');
-  const [qrAmt, setQrAmt] = useState('');
+  const [cardAmt, setCardAmt] = useState('');
   const [isMember, setIsMember] = useState(false);
   const [memberDiscountPct, setMemberDiscountPct] = useState<number | null>(null); // per-member override
   const [memberInfo, setMemberInfo] = useState<{ name: string; status: string; days_left: number | null } | null>(null);
   const [tipAmt, setTipAmt] = useState('');
-  const [tipVia, setTipVia] = useState<'cash' | 'qr'>('cash');
+  const [tipVia, setTipVia] = useState<'cash' | 'qr' | 'card'>('cash');
   const [tipBeauticianId, setTipBeauticianId] = useState<string | undefined>();
   const [tipBeauticianName, setTipBeauticianName] = useState<string>('');
   const [saving, setSaving] = useState(false);
@@ -77,7 +77,7 @@ export default function NewBillScreen() {
         })));
         setCustomerName(b.customer_name || ''); setCustomerPhone(b.customer_phone || '');
         setIsMember(!!b.is_member);
-        setPaymentMode(b.payment_mode); setCashAmt(String(b.cash_amount || '')); setQrAmt(String(b.qr_amount || ''));
+        setPaymentMode(b.payment_mode); setCashAmt(String(b.cash_amount || '')); setCardAmt(String(b.card_amount || ''));
         setTipAmt(b.tip_amount ? String(b.tip_amount - (b.items || []).reduce((s: number, it: any) => s + (it.tip_amount || 0), 0)) : '');
         setTipVia(b.tip_via || 'cash');
         setTipBeauticianId(b.tip_beautician_id); setTipBeauticianName(b.tip_beautician_name || '');
@@ -172,7 +172,7 @@ export default function NewBillScreen() {
 
   const resetForm = () => {
     setItems([]); setCustomerName(''); setCustomerPhone('');
-    setPaymentMode('cash'); setCashAmt(''); setQrAmt('');
+    setPaymentMode('cash'); setCashAmt(''); setCardAmt('');
     setIsMember(false); setMemberDiscountPct(null);
     setTipAmt(''); setTipVia('cash');
     setTipBeauticianId(undefined); setTipBeauticianName('');
@@ -188,13 +188,20 @@ export default function NewBillScreen() {
       if (!(Number(it.price) > 0)) { setErr('Price must be > 0'); return; }
     }
     if (Math.max(0, Number(tipAmt) || 0) > 0 && !tipBeauticianName) { setErr('Choose beautician who received the tip'); return; }
-    let cash = 0, qr = 0;
-    const payable = servicesNet + taxTotal;
-    if (paymentMode === 'cash') cash = payable;
-    else if (paymentMode === 'qr') qr = payable;
+    // Grand total = services_net + tax + ALL tips (spec §4). Split must total grand_total.
+    const grandTotal = servicesNet + taxTotal + tip;
+    let cash = 0, qr = 0, card = 0;
+    if (paymentMode === 'cash') cash = grandTotal;
+    else if (paymentMode === 'qr') qr = grandTotal;
+    else if (paymentMode === 'card') card = grandTotal;
     else {
-      cash = Number(cashAmt) || 0; qr = Number(qrAmt) || 0;
-      if (Math.abs(cash + qr - payable) > 0.01) { setErr(`Split for services + tax must total ${fmtINR(payable)}`); return; }
+      // Split: user enters cash + card; QR auto-fills as the balance.
+      cash = Math.max(0, Number(cashAmt) || 0);
+      card = Math.max(0, Number(cardAmt) || 0);
+      qr = Math.max(0, grandTotal - cash - card);
+      if (Math.abs(cash + qr + card - grandTotal) > 0.01) {
+        setErr(`Split amounts must total ${fmtINR(grandTotal)}`); return;
+      }
     }
     setSaving(true);
     try {
@@ -210,7 +217,7 @@ export default function NewBillScreen() {
           tip_via: (Number(it.tip_amount) || 0) > 0 ? (it.tip_via || 'cash') : null,
         })),
         payment_mode: paymentMode,
-        cash_amount: cash, qr_amount: qr,
+        cash_amount: cash, qr_amount: qr, card_amount: card,
         is_member: isMember,
         tip_amount: Math.max(0, Number(tipAmt) || 0),
         tip_via: (Number(tipAmt) || 0) > 0 ? tipVia : null,
@@ -385,10 +392,10 @@ export default function NewBillScreen() {
                       />
                     </View>
                     {(Number(it.tip_amount) || 0) > 0 && (
-                      <View style={[styles.smallField, { flex: 1 }]}>
+                      <View style={[styles.smallField, { flex: 1.2 }]}>
                         <Text style={styles.smallLabel}>Tip via</Text>
                         <View style={{ flexDirection: 'row', gap: 4, marginTop: 2 }}>
-                          {(['cash', 'qr'] as const).map(v => (
+                          {(['cash', 'qr', 'card'] as const).map(v => (
                             <TouchableOpacity
                               key={v}
                               testID={`item-tipvia-${i}-${v}`}
@@ -402,7 +409,7 @@ export default function NewBillScreen() {
                       </View>
                     )}
                   </View>
-                  {(Number(it.tip_amount) || 0) > 0 && it.tip_via === 'qr' && (
+                  {(Number(it.tip_amount) || 0) > 0 && (it.tip_via === 'qr' || it.tip_via === 'card') && (
                     <View style={styles.tipNote}>
                       <Ionicons name="information-circle" size={12} color={colors.warning} />
                       <Text style={styles.tipNoteText}>
@@ -473,7 +480,7 @@ export default function NewBillScreen() {
               <View style={[styles.smallField, { flex: 1.4 }]}>
                 <Text style={styles.smallLabel}>Paid via</Text>
                 <View style={{ flexDirection: 'row', gap: 4, marginTop: 2 }}>
-                  {(['cash', 'qr'] as const).map(v => (
+                  {(['cash', 'qr', 'card'] as const).map(v => (
                     <TouchableOpacity
                       key={v}
                       testID={`tip-via-${v}`}
@@ -481,8 +488,8 @@ export default function NewBillScreen() {
                       onPress={() => { Haptics.selectionAsync(); setTipVia(v); }}
                       style={[styles.tipViaChip, tipVia === v && styles.tipViaChipActive, tip <= 0 && { opacity: 0.5 }]}
                     >
-                      <Ionicons name={v === 'cash' ? 'cash-outline' : 'qr-code-outline'} size={12} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
-                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : 'QR'}</Text>
+                      <Ionicons name={v === 'cash' ? 'cash-outline' : v === 'qr' ? 'qr-code-outline' : 'card-outline'} size={12} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
+                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : v === 'qr' ? 'QR' : 'Card'}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -501,7 +508,7 @@ export default function NewBillScreen() {
                 <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
               </TouchableOpacity>
             )}
-            {tip > 0 && tipVia === 'qr' && (
+            {tip > 0 && (tipVia === 'qr' || tipVia === 'card') && (
               <View style={styles.tipNote}>
                 <Ionicons name="information-circle" size={14} color={colors.warning} />
                 <Text style={styles.tipNoteText}>
@@ -513,12 +520,13 @@ export default function NewBillScreen() {
 
           {/* Payment */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Payment Mode (Services)</Text>
-            <Text style={styles.hintText}>How the customer paid for services + tax: {fmtINR(servicesNet + taxTotal)}</Text>
+            <Text style={styles.cardTitle}>Payment Mode</Text>
+            <Text style={styles.hintText}>How the customer paid for the grand total: {fmtINR(total)}</Text>
             <View style={styles.segmentRow}>
               {[
                 { k: 'cash', label: 'Cash', icon: 'cash-outline' },
-                { k: 'qr', label: 'QR / UPI', icon: 'qr-code-outline' },
+                { k: 'qr', label: 'QR/UPI', icon: 'qr-code-outline' },
+                { k: 'card', label: 'Card', icon: 'card-outline' },
                 { k: 'split', label: 'Split', icon: 'git-branch-outline' },
               ].map(o => (
                 <TouchableOpacity
@@ -533,34 +541,52 @@ export default function NewBillScreen() {
               ))}
             </View>
 
-            {paymentMode === 'split' && (
-              <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
-                <View style={[styles.smallField, { flex: 1 }]}>
-                  <Text style={styles.smallLabel}>Cash (₹)</Text>
-                  <TextInput
-                    testID="split-cash-input"
-                    value={cashAmt}
-                    onChangeText={(v) => setCashAmt(v.replace(/[^0-9.]/g, ''))}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    style={styles.smallInput}
-                  />
+            {paymentMode === 'split' && (() => {
+              // QR = balance auto-fill (spec §4)
+              const c = Math.max(0, Number(cashAmt) || 0);
+              const cd = Math.max(0, Number(cardAmt) || 0);
+              const qr = Math.max(0, total - c - cd);
+              const over = (c + cd) > total + 0.01;
+              return (
+                <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                  <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                    <View style={[styles.smallField, { flex: 1 }]}>
+                      <Text style={styles.smallLabel}>Cash (₹)</Text>
+                      <TextInput
+                        testID="split-cash-input"
+                        value={cashAmt}
+                        onChangeText={(v) => setCashAmt(v.replace(/[^0-9.]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={colors.onSurfaceTertiary}
+                        style={styles.smallInput}
+                      />
+                    </View>
+                    <View style={[styles.smallField, { flex: 1 }]}>
+                      <Text style={styles.smallLabel}>Card (₹)</Text>
+                      <TextInput
+                        testID="split-card-input"
+                        value={cardAmt}
+                        onChangeText={(v) => setCardAmt(v.replace(/[^0-9.]/g, ''))}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={colors.onSurfaceTertiary}
+                        style={styles.smallInput}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.splitBalance}>
+                    <Ionicons name="qr-code-outline" size={14} color={colors.info} />
+                    <Text style={styles.splitBalanceText}>
+                      QR / UPI (balance): <Text style={{ fontWeight: '700' }}>{fmtINR(qr)}</Text>
+                    </Text>
+                  </View>
+                  {over && (
+                    <Text style={styles.err}>Cash + Card exceeds grand total of {fmtINR(total)}</Text>
+                  )}
                 </View>
-                <View style={[styles.smallField, { flex: 1 }]}>
-                  <Text style={styles.smallLabel}>QR (₹)</Text>
-                  <TextInput
-                    testID="split-qr-input"
-                    value={qrAmt}
-                    onChangeText={(v) => setQrAmt(v.replace(/[^0-9.]/g, ''))}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    style={styles.smallInput}
-                  />
-                </View>
-              </View>
-            )}
+              );
+            })()}
           </View>
 
           {err && <Text style={styles.err} testID="bill-error">{err}</Text>}
@@ -721,6 +747,8 @@ const styles = StyleSheet.create({
   tipViaTextActive: { color: '#fff' },
   tipNote: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#FDF6E7', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0DCA6' },
   tipNoteText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary },
+  splitBalance: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#EAF3FB', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: '#BFDCF0' },
+  splitBalanceText: { flex: 1, fontSize: 13, color: colors.onSurfaceSecondary },
   footerHint: { fontSize: 11, color: colors.success, fontWeight: '600' },
 
   footer: {

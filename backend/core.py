@@ -40,6 +40,12 @@ TRIAL_DAYS = 15
 DEFAULT_MEMBER_DISCOUNT_PCT = 10.0
 DEFAULT_MEMBER_MIN_PRICE = 100.0
 
+# Default membership tiers (used when tenant has none configured).
+DEFAULT_MEMBER_TIERS: List[Dict[str, Any]] = [
+    {"id": "regular", "name": "Regular", "discount_pct": 10.0, "min_price": 100.0},
+    {"id": "student", "name": "Student", "discount_pct": 20.0, "min_price": 100.0},
+]
+
 SUBSCRIPTION_PLANS: List[Dict[str, Any]] = [
     {
         "id": "monthly", "name": "Monthly", "billing_period": "month",
@@ -157,6 +163,27 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
 async def require_admin(user=Depends(get_current_user)):
     if user.get("role") not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def compute_is_owner(user: dict) -> bool:
+    """Owner = earliest-created admin/owner in the tenant."""
+    tid = user.get("tenant_id")
+    if not tid or user.get("role") not in ("admin", "owner"):
+        return False
+    earliest = await db.users.find_one(
+        {"tenant_id": tid, "role": {"$in": ["admin", "owner"]}, "is_active": {"$ne": False}},
+        sort=[("created_at", 1)],
+        projection={"_id": 0, "id": 1},
+    )
+    return bool(earliest and earliest.get("id") == user.get("id"))
+
+
+async def require_owner(user=Depends(get_current_user)):
+    if user.get("role") not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="Only the salon owner can perform this action")
+    if not await compute_is_owner(user):
+        raise HTTPException(status_code=403, detail="Only the salon owner can perform this action")
     return user
 
 
@@ -346,9 +373,10 @@ def _member_settings_for(tenant: Optional[dict]):
     )
 
 
-def apply_member_discount(items, is_member: bool, tenant: Optional[dict], member_discount_pct: Optional[float] = None):
-    tenant_disc_pct, min_price = _member_settings_for(tenant)
+def apply_member_discount(items, is_member: bool, tenant: Optional[dict], member_discount_pct: Optional[float] = None, member_min_price: Optional[float] = None):
+    tenant_disc_pct, tenant_min_price = _member_settings_for(tenant)
     disc_pct = float(member_discount_pct) if (member_discount_pct is not None) else tenant_disc_pct
+    min_price = float(member_min_price) if (member_min_price is not None) else tenant_min_price
     out = []
     for it in items:
         base = it.model_dump()
@@ -358,6 +386,53 @@ def apply_member_discount(items, is_member: bool, tenant: Optional[dict], member
         base["member_applied"] = member_pct > 0 and member_pct >= (it.discount_pct or 0)
         out.append(base)
     return out
+
+
+async def resolve_member_discount(tenant: Optional[dict], tenant_id: str, phone: Optional[str], is_member: bool):
+    """
+    Look up a member by phone (tenant-scoped, active) and return (disc_pct_override, min_price_override).
+    Follows spec: explicit member.discount_pct wins; else tier's discount_pct + min_price; else no override.
+    Returns (None, None) if no override applies. Safe to call when is_member=False (returns (None, None)).
+    """
+    if not is_member or not phone:
+        return None, None
+    m = await db.members.find_one({"tenant_id": tenant_id, "phone": phone, "active": True}, {"_id": 0})
+    if not m:
+        return None, None
+    # 1) Explicit member discount takes precedence; min_price stays tenant default (None).
+    if m.get("discount_pct") is not None:
+        return float(m["discount_pct"]), None
+    # 2) Tier lookup
+    tier_id = m.get("tier_id")
+    if tier_id:
+        tiers = (tenant or {}).get("member_tiers") or DEFAULT_MEMBER_TIERS
+        tier = next((t for t in tiers if t.get("id") == tier_id), None)
+        if tier:
+            return float(tier.get("discount_pct") or 0), float(tier.get("min_price") or DEFAULT_MEMBER_MIN_PRICE)
+    return None, None
+
+
+def bill_payment_split(bill: dict):
+    """
+    Version-aware payment breakdown for reports / cash closing.
+    Returns (cash_sales, digital_sales, tips_owed_cash) — all rounded to 2 decimals.
+    """
+    cash = float(bill.get("cash_amount") or 0)
+    qr = float(bill.get("qr_amount") or 0)
+    card = float(bill.get("card_amount") or 0)
+    if bill.get("split_v2"):
+        tips_owed = float(bill.get("tip_owed_total") or 0)
+        cash_sales = cash - tips_owed
+        digital_sales = qr + card
+    else:
+        # Legacy: only QR tips were tracked separately.
+        tip_qr = float(bill.get("tip_qr_total") or 0)
+        if not tip_qr and bill.get("tip_via") == "qr":
+            tip_qr = float(bill.get("tip_amount") or 0)
+        tips_owed = tip_qr
+        cash_sales = cash - tip_qr
+        digital_sales = qr + tip_qr
+    return round(cash_sales, 2), round(digital_sales, 2), round(tips_owed, 2)
 
 
 def compute_bill_totals(items_effective):

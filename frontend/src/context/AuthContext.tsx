@@ -14,6 +14,7 @@ export type User = {
   name: string;
   email: string;
   role: 'admin' | 'owner' | 'staff' | 'platform_admin' | 'platform_staff';
+  is_owner?: boolean;
 };
 
 export type Branch = {

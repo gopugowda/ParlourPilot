@@ -13,6 +13,7 @@ from core import (
     tenant_id_of, tq, bq_from, resolve_branch_id, load_tenant, tenant_status,
     check_subscription, BranchScope, branch_scope, branch_scope_required,
     branch_scope_admin, apply_member_discount, compute_bill_totals,
+    bill_payment_split,
     _member_settings_for, _member_status, _plan_end_iso, get_razorpay, razorpay_enabled,
     RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
     BRANCH_PLAN_PAISE, TENANT_PLAN_PAISE, BRANCH_PLAN_PRICES_INR,
@@ -54,8 +55,13 @@ async def reports_summary(scope: BranchScope = Depends(branch_scope)):
     def tip_qr_of(b):
         if "tip_qr_total" in b: return b.get("tip_qr_total", 0)
         return b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0
-    today_cash = sum(b.get("cash_amount", 0) for b in today_bills) - sum(tip_qr_of(b) for b in today_bills)
-    today_qr = sum(b.get("qr_amount", 0) for b in today_bills) + sum(tip_qr_of(b) for b in today_bills)
+    # Version-aware payment mix (cash net of owed tips; qr+card grouped as digital).
+    today_cash = 0.0
+    today_qr = 0.0
+    for b in today_bills:
+        c, dg, _ = bill_payment_split(b)
+        today_cash += c
+        today_qr += dg
     today_tips = sum(b.get("tip_amount", 0) for b in today_bills)
 
     per_beautician: dict = {}
@@ -145,11 +151,10 @@ async def reports_daily(days: int = 30, scope: BranchScope = Depends(branch_scop
         rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
         by_day[day]["total"] += rev
         by_day[day]["count"] += 1
-        tip_qr = b.get("tip_qr_total", b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0)
-        tip = b.get("tip_amount", 0)
-        by_day[day]["cash"] += b.get("cash_amount", 0) - tip_qr
-        by_day[day]["qr"] += b.get("qr_amount", 0) + tip_qr
-        by_day[day]["tips"] += tip
+        c, dg, _ = bill_payment_split(b)
+        by_day[day]["cash"] += c
+        by_day[day]["qr"] += dg
+        by_day[day]["tips"] += b.get("tip_amount", 0)
     for e in all_exp:
         day = e["date"]
         by_day.setdefault(day, {"date": day, "total": 0.0, "count": 0, "cash": 0.0, "qr": 0.0, "tips": 0.0, "expenses": 0.0})
@@ -226,11 +231,10 @@ async def reports_range(
         rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
         by_day[day]["total"] += rev
         by_day[day]["count"] += 1
-        tip_via = b.get("tip_via")
-        tip = b.get("tip_amount", 0)
-        by_day[day]["cash"] += b.get("cash_amount", 0) - (tip if tip_via == "qr" else 0)
-        by_day[day]["qr"] += b.get("qr_amount", 0) + (tip if tip_via == "qr" else 0)
-        by_day[day]["tips"] += tip
+        c, dg, _ = bill_payment_split(b)
+        by_day[day]["cash"] += c
+        by_day[day]["qr"] += dg
+        by_day[day]["tips"] += b.get("tip_amount", 0)
     for e in exps:
         if e["date"] in by_day: by_day[e["date"]]["expenses"] += e["amount"]
 

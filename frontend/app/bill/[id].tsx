@@ -19,6 +19,7 @@ export default function BillDetailScreen() {
   const insets = useSafeAreaInsets();
   const { user, tenant, branches } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  const isOwner = !!(user as any)?.is_owner;
   const [bill, setBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -252,7 +253,12 @@ ${tipBlock}
           <Ionicons name="checkmark-circle" size={28} color={colors.success} />
           <View style={{ flex: 1 }}>
             <Text style={styles.bannerTitle}>Payment Received</Text>
-            <Text style={styles.bannerSub}>{bill.payment_mode === 'split' ? `Split · Cash ${fmtINR(bill.cash_amount)} + QR ${fmtINR(bill.qr_amount)}` : bill.payment_mode.toUpperCase()}</Text>
+            <Text style={styles.bannerSub}>{
+              bill.payment_mode === 'split'
+                ? `Split · Cash ${fmtINR(bill.cash_amount || 0)} + Card ${fmtINR(bill.card_amount || 0)} + QR ${fmtINR(bill.qr_amount || 0)}`
+                : bill.payment_mode === 'card' ? 'CARD'
+                : bill.payment_mode.toUpperCase()
+            }</Text>
           </View>
           <Text style={styles.bannerAmt}>{fmtINR(bill.grand_total)}</Text>
         </View>

@@ -60,6 +60,7 @@ class TenantUpdate(BaseModel):
     website: Optional[str] = None
     member_discount_pct: Optional[float] = None
     member_min_price: Optional[float] = None
+    member_tiers: Optional[list] = None
 
 
 class UserCreate(BaseModel):
@@ -124,19 +125,20 @@ class BillItem(BaseModel):
     beautician_id: Optional[str] = None
     beautician_name: str
     tip_amount: float = 0
-    tip_via: Optional[Literal["cash", "qr"]] = None
+    tip_via: Optional[Literal["cash", "qr", "card"]] = None
 
 
 class BillCreate(BaseModel):
     customer_name: Optional[str] = ""
     customer_phone: Optional[str] = ""
     items: List[BillItem]
-    payment_mode: Literal["cash", "qr", "split"]
+    payment_mode: Literal["cash", "qr", "card", "split"]
     cash_amount: float = 0
     qr_amount: float = 0
+    card_amount: float = 0
     is_member: bool = False
     tip_amount: float = 0
-    tip_via: Optional[Literal["cash", "qr"]] = None
+    tip_via: Optional[Literal["cash", "qr", "card"]] = None
     tip_beautician_id: Optional[str] = None
     tip_beautician_name: Optional[str] = ""
     notes: Optional[str] = ""
@@ -148,6 +150,7 @@ class MemberIn(BaseModel):
     joined_at: Optional[str] = None
     expires_at: Optional[str] = None
     discount_pct: Optional[float] = None
+    tier_id: Optional[str] = None
     notes: Optional[str] = ""
     active: bool = True
 

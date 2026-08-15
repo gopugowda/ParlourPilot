@@ -9,10 +9,12 @@ import os, re, uuid, io, csv, json, hmac, hashlib
 from core import (
     db, logger, now_iso, today_str, hash_password, verify_password, slugify,
     create_token, get_current_user, get_current_user_active, require_admin,
-    require_admin_active, require_platform_admin, require_platform_super,
+    require_admin_active, require_owner, compute_is_owner, require_platform_admin,
+    require_platform_super,
     tenant_id_of, tq, bq_from, resolve_branch_id, load_tenant, tenant_status,
     check_subscription, BranchScope, branch_scope, branch_scope_required,
     branch_scope_admin, apply_member_discount, compute_bill_totals,
+    resolve_member_discount, bill_payment_split,
     _member_settings_for, _plan_end_iso, get_razorpay, razorpay_enabled,
     RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
     BRANCH_PLAN_PAISE, TENANT_PLAN_PAISE, BRANCH_PLAN_PRICES_INR,
@@ -52,40 +54,49 @@ async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scop
     tenant = await load_tenant(tid)
     branch = await db.branches.find_one({"id": scope.branch_id, "tenant_id": tid}, {"_id": 0}) if scope.branch_id else None
 
-    # If is_member, look up the member's own discount override (members are tenant-scoped)
-    member_disc_override: Optional[float] = None
-    if body.is_member and body.customer_phone:
-        m = await db.members.find_one({"tenant_id": tid, "phone": body.customer_phone.strip(), "active": True})
-        if m and m.get("discount_pct") is not None:
-            member_disc_override = float(m["discount_pct"])
+    # Resolve member discount override (explicit % > tier % > tenant/default).
+    disc_override, min_price_override = await resolve_member_discount(
+        tenant, tid, (body.customer_phone or "").strip() or None, bool(body.is_member),
+    )
 
-    items_eff = apply_member_discount(body.items, body.is_member, tenant, member_disc_override)
+    items_eff = apply_member_discount(
+        body.items, body.is_member, tenant, disc_override, min_price_override,
+    )
     subtotal, discount, services_net, tax_total = compute_bill_totals(items_eff)
 
+    # Tips (per-line + bill-level). tip_via ∈ {cash, qr, card}.
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
     line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
-    line_tip_cash = line_tip_total - line_tip_qr
+    line_tip_card = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "card")
 
-    payable = round(services_net + tax_total, 2)
-
-    if body.payment_mode == "cash":
-        cash_amt = payable; qr_amt = 0.0
-    elif body.payment_mode == "qr":
-        cash_amt = 0.0; qr_amt = payable
-    else:
-        cash_amt = round(body.cash_amount, 2); qr_amt = round(body.qr_amount, 2)
-        if abs((cash_amt + qr_amt) - payable) > 0.01:
-            raise HTTPException(status_code=400, detail=f"Split amounts must total {payable}")
-
-    tip_amount = round(max(0.0, float(body.tip_amount or 0)), 2)
-    tip_via = body.tip_via if tip_amount > 0 else None
-    if tip_amount > 0 and tip_via not in ("cash", "qr"):
+    tip_amount_in = round(max(0.0, float(body.tip_amount or 0)), 2)
+    tip_via = body.tip_via if tip_amount_in > 0 else None
+    if tip_amount_in > 0 and tip_via not in ("cash", "qr", "card"):
         raise HTTPException(status_code=400, detail="tip_via required when tip_amount > 0")
 
-    total_tip_amount = round(tip_amount + line_tip_total, 2)
-    total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
-    total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
+    total_tip_amount = round(tip_amount_in + line_tip_total, 2)
+    total_tip_qr = round((tip_amount_in if tip_via == "qr" else 0) + line_tip_qr, 2)
+    total_tip_card = round((tip_amount_in if tip_via == "card" else 0) + line_tip_card, 2)
+    total_tip_owed = round(total_tip_qr + total_tip_card, 2)
+    total_tip_cash = round(total_tip_amount - total_tip_owed, 2)
+
+    # grand_total INCLUDES tips (payment split must cover the grand total).
     grand_total = round(services_net + tax_total + total_tip_amount, 2)
+
+    if body.payment_mode == "cash":
+        cash_amt, qr_amt, card_amt = grand_total, 0.0, 0.0
+    elif body.payment_mode == "qr":
+        cash_amt, qr_amt, card_amt = 0.0, grand_total, 0.0
+    elif body.payment_mode == "card":
+        cash_amt, qr_amt, card_amt = 0.0, 0.0, grand_total
+    elif body.payment_mode == "split":
+        cash_amt = round(float(body.cash_amount or 0), 2)
+        qr_amt = round(float(body.qr_amount or 0), 2)
+        card_amt = round(float(body.card_amount or 0), 2)
+        if abs((cash_amt + qr_amt + card_amt) - grand_total) > 0.01:
+            raise HTTPException(status_code=400, detail=f"Split amounts must total {grand_total}")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid payment_mode")
 
     # Prefer branch-level invoice prefix, then tenant
     inv_prefix = (branch or {}).get("invoice_prefix") or (tenant or {}).get("invoice_prefix") or ""
@@ -102,17 +113,21 @@ async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scop
         "tax_amount": tax_total,
         "services_net": services_net,
         "is_member": bool(body.is_member),
-        "member_discount_pct_applied": member_disc_override,
+        "member_discount_pct_applied": disc_override,
         "tip_amount": total_tip_amount,
         "tip_via": tip_via,
-        "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
-        "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount > 0 else "",
+        "tip_beautician_id": body.tip_beautician_id if tip_amount_in > 0 else None,
+        "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount_in > 0 else "",
         "tip_cash_total": total_tip_cash,
         "tip_qr_total": total_tip_qr,
+        "tip_card_total": total_tip_card,
+        "tip_owed_total": total_tip_owed,
         "grand_total": grand_total,
         "payment_mode": body.payment_mode,
         "cash_amount": cash_amt,
         "qr_amount": qr_amt,
+        "card_amount": card_amt,
+        "split_v2": True,
         "notes": body.notes or "",
         "created_by": scope.user["id"],
         "created_by_name": scope.user["name"],
@@ -130,10 +145,10 @@ async def list_bills(
     scope: BranchScope = Depends(branch_scope),
 ):
     query: dict = scope.filter()
+    # Staff can only see their OWN bills across time (spec §1).
     if scope.user.get("role") == "staff":
-        t = today_str()
-        query["created_at"] = {"$gte": f"{t}T00:00:00", "$lt": f"{t}T23:59:59.999999+00:00"}
-    elif date:
+        query["created_by"] = scope.user["id"]
+    if date:
         query["created_at"] = {"$gte": f"{date}T00:00:00", "$lt": f"{date}T23:59:59.999999+00:00"}
     if payment_mode and payment_mode != "all":
         query["payment_mode"] = payment_mode
@@ -151,35 +166,46 @@ async def update_bill(bid: str, body: BillCreate, scope: BranchScope = Depends(b
     if not body.items:
         raise HTTPException(status_code=400, detail="At least one service required")
 
-    member_disc_override: Optional[float] = None
-    if body.is_member and body.customer_phone:
-        m = await db.members.find_one({"tenant_id": tid, "phone": body.customer_phone.strip(), "active": True})
-        if m and m.get("discount_pct") is not None:
-            member_disc_override = float(m["discount_pct"])
+    disc_override, min_price_override = await resolve_member_discount(
+        tenant, tid, (body.customer_phone or "").strip() or None, bool(body.is_member),
+    )
 
-    items_eff = apply_member_discount(body.items, body.is_member, tenant, member_disc_override)
+    items_eff = apply_member_discount(
+        body.items, body.is_member, tenant, disc_override, min_price_override,
+    )
     subtotal, discount, services_net, tax_total = compute_bill_totals(items_eff)
 
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)
     line_tip_qr = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "qr")
+    line_tip_card = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff if it.get("tip_via") == "card")
 
-    payable = round(services_net + tax_total, 2)
+    tip_amount_in = round(max(0.0, float(body.tip_amount or 0)), 2)
+    tip_via = body.tip_via if tip_amount_in > 0 else None
+    if tip_amount_in > 0 and tip_via not in ("cash", "qr", "card"):
+        raise HTTPException(status_code=400, detail="tip_via required when tip_amount > 0")
+
+    total_tip_amount = round(tip_amount_in + line_tip_total, 2)
+    total_tip_qr = round((tip_amount_in if tip_via == "qr" else 0) + line_tip_qr, 2)
+    total_tip_card = round((tip_amount_in if tip_via == "card" else 0) + line_tip_card, 2)
+    total_tip_owed = round(total_tip_qr + total_tip_card, 2)
+    total_tip_cash = round(total_tip_amount - total_tip_owed, 2)
+
+    grand_total = round(services_net + tax_total + total_tip_amount, 2)
 
     if body.payment_mode == "cash":
-        cash_amt = payable; qr_amt = 0.0
+        cash_amt, qr_amt, card_amt = grand_total, 0.0, 0.0
     elif body.payment_mode == "qr":
-        cash_amt = 0.0; qr_amt = payable
+        cash_amt, qr_amt, card_amt = 0.0, grand_total, 0.0
+    elif body.payment_mode == "card":
+        cash_amt, qr_amt, card_amt = 0.0, 0.0, grand_total
+    elif body.payment_mode == "split":
+        cash_amt = round(float(body.cash_amount or 0), 2)
+        qr_amt = round(float(body.qr_amount or 0), 2)
+        card_amt = round(float(body.card_amount or 0), 2)
+        if abs((cash_amt + qr_amt + card_amt) - grand_total) > 0.01:
+            raise HTTPException(status_code=400, detail=f"Split amounts must total {grand_total}")
     else:
-        cash_amt = round(body.cash_amount, 2); qr_amt = round(body.qr_amount, 2)
-        if abs((cash_amt + qr_amt) - payable) > 0.01:
-            raise HTTPException(status_code=400, detail=f"Split amounts must total {payable}")
-
-    tip_amount = round(max(0.0, float(body.tip_amount or 0)), 2)
-    tip_via = body.tip_via if tip_amount > 0 else None
-    total_tip_amount = round(tip_amount + line_tip_total, 2)
-    total_tip_qr = round((tip_amount if tip_via == "qr" else 0) + line_tip_qr, 2)
-    total_tip_cash = round(total_tip_amount - total_tip_qr, 2)
-    grand_total = round(services_net + tax_total + total_tip_amount, 2)
+        raise HTTPException(status_code=400, detail="Invalid payment_mode")
 
     update = {
         "customer_name": body.customer_name or existing.get("customer_name", "Walk-in"),
@@ -190,24 +216,35 @@ async def update_bill(bid: str, body: BillCreate, scope: BranchScope = Depends(b
         "tax_amount": tax_total,
         "services_net": services_net,
         "is_member": bool(body.is_member),
-        "member_discount_pct_applied": member_disc_override,
+        "member_discount_pct_applied": disc_override,
         "tip_amount": total_tip_amount,
         "tip_via": tip_via,
-        "tip_beautician_id": body.tip_beautician_id if tip_amount > 0 else None,
-        "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount > 0 else "",
+        "tip_beautician_id": body.tip_beautician_id if tip_amount_in > 0 else None,
+        "tip_beautician_name": (body.tip_beautician_name or "") if tip_amount_in > 0 else "",
         "tip_cash_total": total_tip_cash,
         "tip_qr_total": total_tip_qr,
+        "tip_card_total": total_tip_card,
+        "tip_owed_total": total_tip_owed,
         "grand_total": grand_total,
         "payment_mode": body.payment_mode,
         "cash_amount": cash_amt,
         "qr_amount": qr_amt,
+        "card_amount": card_amt,
+        "split_v2": True,
         "notes": body.notes or "",
         "edited_by": scope.user["id"],
         "edited_by_name": scope.user["name"],
         "edited_at": now_iso(),
     }
+    # Append an edit-history entry (who/when).
+    history_entry = {
+        "edited_by": scope.user["id"],
+        "edited_by_name": scope.user["name"],
+        "edited_at": now_iso(),
+    }
     result = await db.bills.find_one_and_update(
-        scope.filter({"id": bid}), {"$set": update},
+        scope.filter({"id": bid}),
+        {"$set": update, "$push": {"edit_history": history_entry}},
         return_document=True, projection={"_id": 0},
     )
     return result
@@ -218,16 +255,21 @@ async def get_bill(bid: str, scope: BranchScope = Depends(branch_scope)):
     doc = await db.bills.find_one(scope.filter({"id": bid}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Bill not found")
-    if scope.user.get("role") == "staff":
-        t = today_str()
-        if not doc["created_at"].startswith(t):
-            raise HTTPException(status_code=403, detail="Staff can only view today's bills")
+    # Staff can only view their own bills.
+    if scope.user.get("role") == "staff" and doc.get("created_by") != scope.user["id"]:
+        raise HTTPException(status_code=403, detail="You can only view your own bills")
     return doc
 
 
 @router.delete("/bills/{bid}")
-async def delete_bill(bid: str, scope: BranchScope = Depends(branch_scope_admin)):
-    result = await db.bills.delete_one(scope.filter({"id": bid}))
+async def delete_bill(bid: str, user=Depends(require_owner), x_branch_id: Optional[str] = Header(default=None, alias="X-Branch-Id")):
+    # Owner-only. Branch scoping used for safety.
+    tid = tenant_id_of(user)
+    bid_scope = await resolve_branch_id(user, x_branch_id, required=False)
+    q: dict = {"id": bid, "tenant_id": tid}
+    if bid_scope:
+        q["branch_id"] = bid_scope
+    result = await db.bills.delete_one(q)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}

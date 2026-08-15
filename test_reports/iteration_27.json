@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 27 — Business Logic Parity: 13/13 backend tests PASS + all frontend UI checks PASS. Verified is_owner in /auth/login + /auth/me (admin=true, staff=false); Bill create split_v2 math for Case A (split with card tip), Case B (card single-mode with cash tip), Case C (split mismatch → 400); Cash Closing summary + POST math (cash_sales net of tip_owed_total; upi_sales = qr+card); Membership 'higher wins' (tenant default 10% vs manual 15%); RBAC — owner-only DELETE, staff bill scoping on list + GET, staff PUT bill blocked. Frontend: 4 payment mode chips (Cash / QR/UPI / Card / Split) render for BOTH admin and staff on New Bill; Split UI reveals Cash + Card inputs only (no QR input); QR/UPI shown as auto-calculated balance; over-limit warning fires. NOTE: admin@glowup.com / staff@glowup.com do NOT exist in the shared Atlas DB (ENABLE_DEMO_SEED=false). Tests use fresh signup tenants (TEST_Iter27_* + TEST_UI_SUFFIX) — this is proper hermetic test isolation, not demo seeding.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter27_business_logic_parity.py",
+    "/app/test_reports/pytest/pytest_iter27.xml",
+    "/app/test_reports/screenshots/iter27_admin_split_ui.png",
+    "/app/test_reports/screenshots/iter27_split_open.png",
+    "/app/test_reports/screenshots/iter27_staff_history.png"
+  ],
+  "action_items": [
+    "Consider auto-scrolling the New Bill ScrollView to the Payment Mode section when user taps Split, so Cash/Card inputs are immediately visible on small viewports (currently requires manual scroll on 390x844 mobile).",
+    "Optional: seed a fresh Glow Up demo tenant on preview via a startup guard if ENABLE_DEMO_SEED_FOR_PREVIEW=true, so future iterations can use the documented admin@glowup.com credentials without signing up a new tenant each time."
+  ],
+  "critical_code_review_comments": [
+    "bills.py create/update duplicate ~90 LOC of tip + split computation — consider extracting a helper `compute_payment_and_tips(body, items_eff)` to reduce drift risk. Not a bug, but a maintainability concern.",
+    "compute_is_owner is invoked on every /auth/me and /auth/login (extra DB round-trip). Fine at current scale; if needed later, cache 'is_owner' on the user doc at register/promotion time."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter27_business_logic_parity.py (new)",
+    "/app/test_reports/iteration_27.json (new)",
+    "/app/test_reports/pytest/pytest_iter27.xml (new)"
+  ],
+  "success_rate": { "backend": "100% (13/13)", "frontend": "100% (all UI checks pass)" },
+  "seed_data_creation": "Created two throwaway signup tenants on shared Atlas: (a) TEST_Iter27_iter27-<epoch>@testparlourpilot.com used by pytest run (auto-generated each run — trial expires in 15 days); (b) testuiowner@testparlourpilot.com + teststaffui@testparlourpilot.com used by the Playwright UI test (business name TEST_UI_SUFFIX, tenant id b4375f81-d72b-4567-89b5-1d42043b8fbc). These are unavoidable because admin@glowup.com/staff@glowup.com are not seeded in the shared Atlas DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "admin@glowup.com does NOT exist in the shared Atlas DB — E1 either needs to add a preview-only seed toggle or all iter tests must sign up a fresh tenant. The new test file `test_iter27_business_logic_parity.py` demonstrates the pattern: signup → login → register staff → run tests. Reuse this bootstrap function for future backend business-logic tests. Existing test tenant 'TEST_UI_SUFFIX' (testuiowner@testparlourpilot.com / admin123, staff: teststaffui@testparlourpilot.com / staff123) is available for immediate frontend re-verification without another signup.",
+  "rca_of_issue": "N/A — all specified business-logic parity checks pass. The only 'issue' encountered was environmental: credentials in /app/memory/test_credentials.md reference a Glow Up demo tenant that no longer exists on the shared Atlas DB (demo seed disabled). Worked around by using /api/tenants/signup + /api/auth/register to bootstrap admin+staff dynamically."
+}

@@ -13,6 +13,7 @@ from core import (
     tenant_id_of, tq, bq_from, resolve_branch_id, load_tenant, tenant_status,
     check_subscription, BranchScope, branch_scope, branch_scope_required,
     branch_scope_admin, apply_member_discount, compute_bill_totals,
+    bill_payment_split,
     _member_settings_for, _plan_end_iso, get_razorpay, razorpay_enabled,
     RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
     BRANCH_PLAN_PAISE, TENANT_PLAN_PAISE, BRANCH_PLAN_PRICES_INR,
@@ -35,11 +36,17 @@ async def _compute_day_totals(tid: str, branch_id: Optional[str], d: str):
     q_bills: dict = {"tenant_id": tid, "created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}}
     if branch_id: q_bills["branch_id"] = branch_id
     bills = await db.bills.find(q_bills, {"_id": 0}).to_list(3000)
-    services_net = sum(b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0)) for b in bills)
-    tip_total = sum(b.get("tip_amount", 0) for b in bills)
-    tip_qr = sum(b.get("tip_qr_total", b.get("tip_amount", 0) if b.get("tip_via") == "qr" else 0) for b in bills)
-    cash_sales = sum(b.get("cash_amount", 0) for b in bills) - tip_qr
-    upi_sales = sum(b.get("qr_amount", 0) for b in bills) + tip_qr
+    services_net = sum(float(b.get("services_net", (b.get("grand_total", 0) or 0) - (b.get("tip_amount", 0) or 0)) or 0) for b in bills)
+    tip_total = sum(float(b.get("tip_amount", 0) or 0) for b in bills)
+    # Version-aware breakdown: cash is net of owed tips; digital = QR + Card.
+    cash_sales = 0.0
+    upi_sales = 0.0
+    tips_owed = 0.0
+    for b in bills:
+        c, d_sales, owed = bill_payment_split(b)
+        cash_sales += c
+        upi_sales += d_sales
+        tips_owed += owed
     q_exp: dict = {"tenant_id": tid, "date": d}
     if branch_id: q_exp["branch_id"] = branch_id
     exps = await db.expenses.find(q_exp, {"_id": 0}).to_list(500)
@@ -50,6 +57,7 @@ async def _compute_day_totals(tid: str, branch_id: Optional[str], d: str):
         "cash_sales": round(cash_sales, 2),
         "upi_sales": round(upi_sales, 2),
         "tips": round(tip_total, 2),
+        "tips_owed": round(tips_owed, 2),
         "total_expenses": round(total_expenses, 2),
     }
 
@@ -92,6 +100,7 @@ async def create_cash_closing(body: CashClosingIn, scope: BranchScope = Depends(
         "total_expenses": totals["total_expenses"],
         "cash_expenses": cash_exp,
         "tips": totals["tips"],
+        "tips_owed": totals.get("tips_owed", 0),
         "bills_count": totals["bills_count"],
         "expected_closing": expected,
         "actual_closing": actual,

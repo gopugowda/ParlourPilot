@@ -10,6 +10,7 @@ from core import (
     db, logger, now_iso, today_str, hash_password, verify_password, slugify,
     create_token, get_current_user, get_current_user_active, require_admin,
     require_admin_active, require_platform_admin, require_platform_super,
+    compute_is_owner,
     tenant_id_of, tq, bq_from, resolve_branch_id, load_tenant, tenant_status,
     check_subscription, BranchScope, branch_scope, branch_scope_required,
     branch_scope_admin, apply_member_discount, compute_bill_totals,
@@ -95,6 +96,7 @@ async def login(body: LoginReq):
             "name": user["name"],
             "email": user["email"],
             "role": user["role"],
+            "is_owner": await compute_is_owner(user),
         },
         "tenant": tenant,
         "branches": branches,
@@ -112,7 +114,10 @@ async def me(user=Depends(get_current_user)):
         if tenant:
             subscription = tenant_status(tenant)
         branches = await db.branches.find({"tenant_id": user["tenant_id"], "active": True}, {"_id": 0}).sort("is_head", -1).to_list(500)
-    return {"user": user, "tenant": tenant, "branches": branches, "subscription": subscription}
+    # Enrich user with is_owner (earliest-created admin/owner).
+    user_out = dict(user)
+    user_out["is_owner"] = await compute_is_owner(user)
+    return {"user": user_out, "tenant": tenant, "branches": branches, "subscription": subscription}
 
 
 @router.get("/auth/users")
