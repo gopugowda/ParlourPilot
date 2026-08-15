@@ -54,9 +54,17 @@ async def root_health():
     return {"ok": True, "service": "parlourpilot-api", "docs": "/docs"}
 
 
+# Simple, unauthenticated health endpoint.
+# `/health` is reachable direct-to-pod (K8s liveness/readiness probes),
+# and `/api/health` is reachable through the Nginx ingress from the public URL.
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/api/health", include_in_schema=False)
 async def api_health():
-    return {"ok": True, "service": "parlourpilot-api"}
+    return {"status": "ok"}
 
 
 app.add_middleware(
