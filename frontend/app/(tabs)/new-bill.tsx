@@ -14,10 +14,13 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 const DEFAULT_MEMBER_PCT = 10;
 const DEFAULT_MEMBER_MIN_PRICE = 100;
 
-type Service = { id: string; name: string; price: number; category: string; tax_percentage?: number };
+type Service = { id: string; name: string; price: number; additional_price?: number; gender?: string; category: string; tax_percentage?: number };
 type Beautician = { id: string; name: string; role: string };
 type Item = {
   service_id?: string; service_name: string; price: number;
+  base_price?: number;        // the service's base price (for reference/reset)
+  addon_price?: number;       // additional_price captured at pick time (if any)
+  addon_applied?: boolean;    // has staff toggled the add-on for this line
   discount_pct: number; tax_percentage?: number;
   beautician_id?: string; beautician_name: string;
   tip_amount?: number; tip_via?: 'cash' | 'qr' | 'card';
@@ -346,6 +349,30 @@ export default function NewBillScreen() {
                     <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
                   </TouchableOpacity>
 
+                  {/* Variable Pricing add-on toggle (only if the service has additional_price > 0) */}
+                  {(it.addon_price || 0) > 0 && (
+                    <TouchableOpacity
+                      testID={`item-addon-toggle-${i}`}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        const applied = !it.addon_applied;
+                        const base = it.base_price || 0;
+                        const addon = it.addon_price || 0;
+                        updateItem(i, { addon_applied: applied, price: applied ? base + addon : base });
+                      }}
+                      style={[styles.addonChip, it.addon_applied && styles.addonChipActive]}
+                    >
+                      <Ionicons
+                        name={it.addon_applied ? 'checkmark-circle' : 'add-circle-outline'}
+                        size={16}
+                        color={it.addon_applied ? '#fff' : colors.brandPrimary}
+                      />
+                      <Text style={[styles.addonChipText, it.addon_applied && styles.addonChipTextActive]}>
+                        {it.addon_applied ? 'Add-on applied' : `+${fmtINR(it.addon_price || 0)} extra (long hair / add-on)`}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
                   <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                     <View style={[styles.smallField, { flex: 1 }]}>
                       <Text style={styles.smallLabel}>Price (₹)</Text>
@@ -402,7 +429,7 @@ export default function NewBillScreen() {
                               onPress={() => { Haptics.selectionAsync(); updateItem(i, { tip_via: v }); }}
                               style={[styles.tipViaChip, (it.tip_via || 'cash') === v && styles.tipViaChipActive]}
                             >
-                              <Text style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}>{v.toUpperCase()}</Text>
+                              <Text style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}>{v === 'qr' ? 'QR/UPI' : v.toUpperCase()}</Text>
                             </TouchableOpacity>
                           ))}
                         </View>
@@ -489,7 +516,7 @@ export default function NewBillScreen() {
                       style={[styles.tipViaChip, tipVia === v && styles.tipViaChipActive, tip <= 0 && { opacity: 0.5 }]}
                     >
                       <Ionicons name={v === 'cash' ? 'cash-outline' : v === 'qr' ? 'qr-code-outline' : 'card-outline'} size={12} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
-                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : v === 'qr' ? 'QR' : 'Card'}</Text>
+                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : v === 'qr' ? 'QR/UPI' : 'Card'}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -650,6 +677,9 @@ export default function NewBillScreen() {
                       updateItem(pickerFor.index, {
                         service_id: opt.id, service_name: opt.name,
                         price: opt.price,
+                        base_price: opt.price,
+                        addon_price: opt.additional_price || 0,
+                        addon_applied: false,
                         tax_percentage: opt.tax_percentage || 0,
                       });
                     } else if (pickerFor.type === 'beautician' && 'index' in pickerFor) {
@@ -662,8 +692,18 @@ export default function NewBillScreen() {
                   }}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.pickerName}>{opt.name}</Text>
-                    <Text style={styles.pickerSub}>{pickerFor?.type === 'service' ? opt.category : opt.role}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.pickerName}>{opt.name}</Text>
+                      {pickerFor?.type === 'service' && opt.gender && opt.gender !== 'unisex' && (
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: opt.gender === 'ladies' ? '#D9337B' : '#2E6BE6' }}>
+                          {opt.gender === 'ladies' ? 'LADIES' : 'MEN'}
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={styles.pickerSub}>
+                      {pickerFor?.type === 'service' ? opt.category : opt.role}
+                      {pickerFor?.type === 'service' && (opt.additional_price || 0) > 0 ? ` · +${fmtINR(opt.additional_price)} add-on` : ''}
+                    </Text>
                   </View>
                   {pickerFor?.type === 'service' && (
                     <Text style={styles.pickerPrice}>{fmtINR(opt.price)}</Text>
@@ -749,6 +789,10 @@ const styles = StyleSheet.create({
   tipNoteText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary },
   splitBalance: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#EAF3FB', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: '#BFDCF0' },
   splitBalanceText: { flex: 1, fontSize: 13, color: colors.onSurfaceSecondary },
+  addonChip: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary },
+  addonChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  addonChipText: { fontSize: 11, fontWeight: '700', color: colors.brandPrimary },
+  addonChipTextActive: { color: '#fff' },
   footerHint: { fontSize: 11, color: colors.success, fontWeight: '600' },
 
   footer: {

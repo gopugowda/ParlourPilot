@@ -45,6 +45,8 @@ async def create_service(body: ServiceIn, scope: BranchScope = Depends(branch_sc
         "branch_id": scope.branch_id,
         "name": body.name,
         "price": float(body.price),
+        "additional_price": float(body.additional_price or 0),
+        "gender": (body.gender or "unisex").lower(),
         "category": body.category or "General",
         "tax_percentage": float(body.tax_percentage or 0),
         "active": body.active,
@@ -60,6 +62,8 @@ async def update_service(sid: str, body: ServiceIn, scope: BranchScope = Depends
         scope.filter({"id": sid}),
         {"$set": {
             "name": body.name, "price": float(body.price),
+            "additional_price": float(body.additional_price or 0),
+            "gender": (body.gender or "unisex").lower(),
             "category": body.category,
             "tax_percentage": float(body.tax_percentage or 0),
             "active": body.active,
@@ -69,6 +73,19 @@ async def update_service(sid: str, body: ServiceIn, scope: BranchScope = Depends
     if not result:
         raise HTTPException(status_code=404, detail="Service not found")
     return result
+
+
+@router.get("/services/categories")
+async def list_service_categories(scope: BranchScope = Depends(branch_scope)):
+    """Return distinct categories in current tenant (used by the mobile 'Pick or Type' category input)."""
+    cats = await db.services.distinct("category", scope.filter())
+    # Ensure a couple of sane defaults are always suggested.
+    defaults = ["Hair", "Skin", "Nails", "Facial", "Bridal", "Massage", "Waxing", "Threading", "General"]
+    seen = []
+    for c in [*defaults, *sorted([c for c in cats if c])]:
+        if c and c not in seen:
+            seen.append(c)
+    return seen
 
 
 @router.delete("/services/{sid}")

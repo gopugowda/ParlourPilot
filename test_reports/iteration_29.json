@@ -1,0 +1,44 @@
+{
+  "summary": "Iter 29 — Full Feature Sync (Variable Pricing + Gender + Pick-or-Type Category) — 8/8 backend PASS + all 5 frontend flows PASS on mobile viewport 390x844. Backend: (1) Service CRUD w/ new fields — POST/GET/PUT/DELETE all persist additional_price, gender, category, tax_percentage correctly; (2) /api/services/categories endpoint returns array of strings including all 9 defaults (Hair, Skin, Nails, Facial, Bridal, Massage, Waxing, Threading, General) merged with tenant-specific categories (verified 'TEST_HennaArt' appeared after creation); (3) Backward compat — service POST w/o additional_price+gender defaults to 0/unisex; existing /api/bills still listable. Frontend (owner): (A) Add Service modal shows Name, Ladies/Men/Unisex segmented, Base Price, Additional ₹, Tax %, Category (pick or type) w/ horizontal chip suggestions; tapping 'Ladies' chip highlights + tapping 'Hair'/'Bridal' chips populates category input; saved 'TEST_UI_Bridal Makeup' @ ₹2500 base + ₹500 add-on + Tax 5% + Ladies + Bridal → row displays with pink 'Ladies' pill and 'Bridal · Tax 5% · +₹500 add-on' meta line. (B) Gender filter chips (All/Ladies/Men/Unisex) above list — tapping Ladies filters to only ladies rows, tapping All restores. (C) Staff Manage screen shows 'REFERENCE (VIEW ONLY)' section, Services screen has NO '+' in header (add-service-header=null), NO svc-edit-*/svc-del-* icons on rows (0/0 count), gender pills + '+₹500 add-on' hint still render. (D) New Bill picker shows service option with 'Bridal · +₹500 add-on' meta; on line row, chip renders '+₹500 extra (long hair / add-on)' — tap flips to solid 'Add-on applied' + price 2500→3000, tap again reverts 3000→2500. (E) QR/UPI naming — payment_mode segmented control shows 'QR/UPI' label (pay-mode-qr testID), Tip Paid Via chips show 'QR/UPI' (verified visible in body). Bill detail banner 'QR / UPI' verified in /app/frontend/app/bill/[id].tsx:260 (bill.payment_mode==='qr' → 'QR / UPI').",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter29_services_v2.py",
+    "/app/test_reports/pytest/pytest_iter29.xml",
+    "/app/test_reports/screenshots/iter29_services.png",
+    "/app/test_reports/screenshots/iter29_A_add_modal.png",
+    "/app/test_reports/screenshots/iter29_A_row.png",
+    "/app/test_reports/screenshots/iter29_D_picker.png",
+    "/app/test_reports/screenshots/iter29_E_paymode.png",
+    "/app/test_reports/screenshots/iter29_C_staff_manage.png",
+    "/app/test_reports/screenshots/iter29_C_staff_services.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services.py PUT /services/{sid} uses body.category directly (no fallback to 'General') while POST falls back to 'General' — minor inconsistency; not a bug because ServiceIn already defaults category='General' at Pydantic layer, but worth aligning to POST's `body.category or 'General'` for defense-in-depth.",
+    "services.py list_service_categories returns strings but relies on db.services.distinct() which returns whatever value was stored — no lowercasing/normalization, so 'hair' and 'Hair' would appear as separate categories. Consider normalizing category on write (title-case) or on read (dedupe case-insensitively).",
+    "manage/services.tsx additionalPrice validation only fires if the field is non-empty; empty string is coerced to Number('') = 0 (fine). But `Number.isFinite(ap)` on line 74 is checked only inside the guard — when additionalPrice is empty string, ap = NaN → still Number.isFinite(ap) is false, but the guard is skipped due to falsy additionalPrice. That works but is fragile; a clearer implementation would be `const ap = additionalPrice.trim() ? Number(additionalPrice) : 0`."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter29_services_v2.py (new — 8 tests)",
+    "/app/test_reports/iteration_29.json (new)",
+    "/app/test_reports/pytest/pytest_iter29.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8)",
+    "frontend": "100% (A/B/C/D/E all pass)"
+  },
+  "seed_data_creation": "Created and CLEANED UP a single test service 'TEST_UI_Bridal Makeup' (Ladies, Bridal, ₹2500 base + ₹500 add-on) during UI walkthrough — deleted at the end via API. No bills persisted (final process-payment did not commit because Playwright didn't wire a beautician selection; QR/UPI banner verification instead relied on the source code at /app/frontend/app/bill/[id].tsx:260 which unambiguously maps payment_mode==='qr' → 'QR / UPI'). No new tenants. testuiowner + teststaffui credentials continue to work.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 29 delivered clean. Persistent test tenant (testuiowner@testparlourpilot.com / admin123) has 0 services after cleanup — future tests that need a service must POST one first. /api/services/categories always returns the 9 seeded defaults plus any tenant-created categories (case-sensitive de-dup only). Frontend testIDs of note: services screen (services-screen), add-service-header, svc-gender-filter-{all|ladies|men|unisex}, svc-gender-{ladies|men|unisex}, svc-cat-chip-{name}, svc-category-input, svc-additional-price-input, svc-save-btn; new-bill (new-bill-screen), add-service-btn, item-service-{i}, item-addon-toggle-{i}, item-price-{i}, item-beautician-{i}, pay-mode-{cash|qr|card|split}, tip-via-{cash|qr|card}, process-payment-btn. Login uses login-email-input / login-password-input / login-submit-button.",
+  "rca_of_issue": "N/A — no failures encountered."
+}

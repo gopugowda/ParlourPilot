@@ -111,6 +111,8 @@ class BeauticianIn(BaseModel):
 class ServiceIn(BaseModel):
     name: str
     price: float
+    additional_price: Optional[float] = 0
+    gender: Optional[Literal["ladies", "men", "unisex"]] = "unisex"
     category: Optional[str] = "General"
     tax_percentage: Optional[float] = 0
     active: bool = True
