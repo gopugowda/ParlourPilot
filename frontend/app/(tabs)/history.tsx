@@ -22,7 +22,7 @@ const chips = [
   { key: 'all', label: 'All', icon: 'apps-outline' },
   { key: 'today', label: 'Today', icon: 'today-outline' },
   { key: 'cash', label: 'Cash', icon: 'cash-outline' },
-  { key: 'qr', label: 'QR', icon: 'qr-code-outline' },
+  { key: 'qr', label: 'QR / Online', icon: 'qr-code-outline' },
   { key: 'split', label: 'Split', icon: 'git-branch-outline' },
 ];
 

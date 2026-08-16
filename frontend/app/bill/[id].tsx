@@ -257,7 +257,7 @@ ${tipBlock}
               bill.payment_mode === 'split'
                 ? `Split · Cash ${fmtINR(bill.cash_amount || 0)} + Card ${fmtINR(bill.card_amount || 0)} + QR ${fmtINR(bill.qr_amount || 0)}`
                 : bill.payment_mode === 'card' ? 'CARD'
-                : bill.payment_mode === 'qr' ? 'QR / UPI'
+                : bill.payment_mode === 'qr' ? 'QR / Online'
                 : bill.payment_mode.toUpperCase()
             }</Text>
           </View>

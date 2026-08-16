@@ -195,7 +195,7 @@ export default function AppointmentsScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.custName}>{a.customer_name}</Text>
                       <Text style={styles.meta} numberOfLines={1}>
-                        {a.beautician_name || 'Any beautician'}
+                        {a.beautician_name || 'Any staff'}
                         {a.service_names && a.service_names.length > 0 ? ` · ${a.service_names.join(', ')}` : ''}
                       </Text>
                       {a.customer_phone ? <Text style={styles.metaMuted}>📞 {a.customer_phone}</Text> : null}
@@ -520,10 +520,10 @@ function AppointmentEditor({
               <LabeledInput label="Duration (minutes)" value={duration} onChangeText={(v: string) => setDuration(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" testID="apt-duration" />
 
               <View>
-                <Text style={styles.label}>Beautician</Text>
+                <Text style={styles.label}>Staff</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   <TouchableOpacity onPress={() => setBeauticianId(null)} style={[styles.pill, beauticianId === null && styles.pillActive]}>
-                    <Text style={[styles.pillText, beauticianId === null && styles.pillTextActive]}>Any</Text>
+                    <Text style={[styles.pillText, beauticianId === null && styles.pillTextActive]}>Any staff</Text>
                   </TouchableOpacity>
                   {beauticians.map(b => {
                     const sel = beauticianId === b.id;

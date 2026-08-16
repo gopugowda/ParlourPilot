@@ -278,7 +278,7 @@ export default function DashboardScreen() {
                       <View style={{ flex: 1 }}>
                         <Text style={styles.upcomingName} numberOfLines={1}>{a.customer_name}</Text>
                         <Text style={styles.upcomingMeta} numberOfLines={1}>
-                          {a.beautician_name || 'Any beautician'}
+                          {a.beautician_name || 'Any staff'}
                           {a.service_names && a.service_names.length > 0 ? ` · ${a.service_names.join(', ')}` : ''}
                         </Text>
                       </View>

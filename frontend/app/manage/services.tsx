@@ -194,17 +194,17 @@ export default function ServicesScreen() {
             <Pressable style={styles.sheet} onPress={() => {}}>
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
                 <View style={styles.handle} />
-                <Text style={styles.sheetTitle}>{editing ? 'Edit Service' : 'Add Service'}</Text>
+                <Text style={styles.sheetTitle}>{editing ? 'Edit service' : 'Add service'}</Text>
                 <View style={styles.field}>
-                  <Text style={styles.label}>Name</Text>
-                  <TextInput testID="svc-name-input" value={name} onChangeText={setName} placeholder="e.g. Haircut" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+                  <Text style={styles.label}>Service name</Text>
+                  <TextInput testID="svc-name-input" value={name} onChangeText={setName} placeholder="e.g. Hair Spa" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
 
-                {/* Gender selector */}
+                {/* Service type (optional) — Ladies / Men / Unisex */}
                 <View style={styles.field}>
-                  <Text style={styles.label}>Who is this for?</Text>
+                  <Text style={styles.label}>Service type (optional)</Text>
                   <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: 4 }}>
-                    {(['ladies', 'men', 'unisex'] as Gender[]).map(g => (
+                    {(['unisex', 'ladies', 'men'] as Gender[]).map(g => (
                       <TouchableOpacity
                         key={g}
                         testID={`svc-gender-${g}`}
@@ -227,11 +227,31 @@ export default function ServicesScreen() {
                 {/* Pricing */}
                 <View style={{ flexDirection: 'row', gap: spacing.md }}>
                   <View style={[styles.field, { flex: 1 }]}>
-                    <Text style={styles.label}>Base Price (₹)</Text>
+                    <Text style={styles.label}>Base price (₹)</Text>
                     <TextInput testID="svc-price-input" value={price} onChangeText={(v) => setPrice(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                   </View>
-                  <View style={[styles.field, { flex: 1 }]}>
-                    <Text style={styles.label}>Additional (₹)</Text>
+                  <View style={[styles.field, { flex: 0.8 }]}>
+                    <Text style={styles.label}>Tax %</Text>
+                    <TextInput testID="svc-tax-input" value={taxPct} onChangeText={(v) => setTaxPct(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+                  </View>
+                </View>
+
+                {/* Variable price toggle */}
+                <View style={styles.variableRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Variable price</Text>
+                    <Text style={styles.helpText}>Allow an extra amount on top of base price at billing</Text>
+                  </View>
+                  <Switch
+                    testID="svc-variable-price"
+                    value={(Number(additionalPrice) || 0) > 0}
+                    onValueChange={(on) => setAdditionalPrice(on ? (additionalPrice || '100') : '')}
+                    trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }}
+                  />
+                </View>
+                {(Number(additionalPrice) || 0) > 0 && (
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Suggested add-on (₹)</Text>
                     <TextInput
                       testID="svc-additional-price-input"
                       value={additionalPrice}
@@ -242,14 +262,7 @@ export default function ServicesScreen() {
                       style={styles.input}
                     />
                   </View>
-                  <View style={[styles.field, { flex: 0.8 }]}>
-                    <Text style={styles.label}>Tax %</Text>
-                    <TextInput testID="svc-tax-input" value={taxPct} onChangeText={(v) => setTaxPct(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
-                  </View>
-                </View>
-                <Text style={styles.helpText}>
-                  Additional Price is an optional variable add-on (e.g., long hair) that staff can toggle on a bill line.
-                </Text>
+                )}
 
                 {/* Pick or Type Category */}
                 <View style={styles.field}>
@@ -281,9 +294,14 @@ export default function ServicesScreen() {
                   <Switch testID="svc-active-switch" value={active} onValueChange={setActive} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} />
                 </View>
                 {err && <Text style={styles.err}>{err}</Text>}
-                <TouchableOpacity testID="svc-save-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
-                  {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add'}</Text>}
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <TouchableOpacity onPress={() => setEditOpen(false)} style={styles.cancelBtn}>
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity testID="svc-save-btn" style={[styles.saveBtn, { flex: 1 }]} onPress={save} disabled={saving}>
+                    {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save</Text>}
+                  </TouchableOpacity>
+                </View>
               </ScrollView>
             </Pressable>
           </KeyboardAvoidingView>
@@ -327,7 +345,10 @@ const styles = StyleSheet.create({
   err: { color: colors.error, fontSize: 13 },
   saveBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', marginTop: spacing.sm },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  helpText: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: -4 },
+  cancelBtn: { paddingVertical: 14, paddingHorizontal: 18, borderRadius: radius.md, alignItems: 'center', backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  cancelBtnText: { color: colors.onSurfaceSecondary, fontWeight: '700', fontSize: 15 },
+  variableRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  helpText: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
 
   genderPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, borderWidth: 1 },
   genderPillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },

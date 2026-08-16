@@ -348,7 +348,7 @@ export default function NewBillScreen() {
                   >
                     <Ionicons name="person-outline" size={16} color={colors.onSurfaceTertiary} />
                     <Text style={[styles.selectText, !it.beautician_name && styles.selectPlaceholder]} numberOfLines={1}>
-                      {it.beautician_name || 'Assign beautician'}
+                      {it.beautician_name || 'Assign staff'}
                     </Text>
                     <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
                   </TouchableOpacity>
@@ -433,7 +433,7 @@ export default function NewBillScreen() {
                               onPress={() => { Haptics.selectionAsync(); updateItem(i, { tip_via: v }); }}
                               style={[styles.tipViaChip, (it.tip_via || 'cash') === v && styles.tipViaChipActive]}
                             >
-                              <Text style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}>{v === 'qr' ? 'QR/UPI' : v.toUpperCase()}</Text>
+                              <Text style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}>{v === 'qr' ? 'QR / Online' : v.toUpperCase()}</Text>
                             </TouchableOpacity>
                           ))}
                         </View>
@@ -493,7 +493,7 @@ export default function NewBillScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Tip (optional)</Text>
             <Text style={styles.hintText}>
-              Tip goes to the beautician. If paid via QR/UPI, cash from counter is given to beautician.
+              Tip goes to the staff. If paid via QR / Online, cash from counter is given to staff.
             </Text>
             <View style={{ flexDirection: 'row', gap: spacing.sm }}>
               <View style={[styles.smallField, { flex: 1 }]}>
@@ -520,7 +520,7 @@ export default function NewBillScreen() {
                       style={[styles.tipViaChip, tipVia === v && styles.tipViaChipActive, tip <= 0 && { opacity: 0.5 }]}
                     >
                       <Ionicons name={v === 'cash' ? 'cash-outline' : v === 'qr' ? 'qr-code-outline' : 'card-outline'} size={12} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
-                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : v === 'qr' ? 'QR/UPI' : 'Card'}</Text>
+                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : v === 'qr' ? 'QR / Online' : 'Card'}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -556,7 +556,7 @@ export default function NewBillScreen() {
             <View style={styles.segmentRow}>
               {[
                 { k: 'cash', label: 'Cash', icon: 'cash-outline' },
-                { k: 'qr', label: 'QR/UPI', icon: 'qr-code-outline' },
+                { k: 'qr', label: 'QR / Online', icon: 'qr-code-outline' },
                 { k: 'card', label: 'Card', icon: 'card-outline' },
                 { k: 'split', label: 'Split', icon: 'git-branch-outline' },
               ].map(o => (
@@ -609,7 +609,7 @@ export default function NewBillScreen() {
                   <View style={styles.splitBalance}>
                     <Ionicons name="qr-code-outline" size={14} color={colors.info} />
                     <Text style={styles.splitBalanceText}>
-                      QR / UPI (balance): <Text style={{ fontWeight: '700' }}>{fmtINR(qr)}</Text>
+                      QR / Online (balance): <Text style={{ fontWeight: '700' }}>{fmtINR(qr)}</Text>
                     </Text>
                   </View>
                   {over && (

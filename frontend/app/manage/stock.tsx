@@ -232,7 +232,7 @@ export default function StockScreen() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit Item' : 'Add Item'}</Text>
+              <Text style={styles.sheetTitle}>{editing ? 'Edit item' : 'Add item'}</Text>
               <View style={styles.field}><Text style={styles.label}>Name</Text><TextInput testID="s-name" value={name} onChangeText={setName} placeholder="e.g. Shampoo" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
               <View style={styles.field}>
                 <Text style={styles.label}>Unit</Text>
@@ -260,7 +260,7 @@ export default function StockScreen() {
               </View>
               {err && <Text style={styles.err}>{err}</Text>}
               <TouchableOpacity testID="s-save" style={styles.saveBtn} onPress={save} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Item'}</Text>}
+                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Save' : 'Add item'}</Text>}
               </TouchableOpacity>
               {editing && isAdmin && (
                 <TouchableOpacity testID="s-delete" style={styles.deleteBtn} onPress={() => { remove(editing); setEditOpen(false); }}>

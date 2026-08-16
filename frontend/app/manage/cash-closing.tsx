@@ -135,7 +135,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
                 <Text style={styles.statVal}>{fmtINR(cashSales)}</Text>
               </View>
               <View style={styles.statBox}>
-                <Text style={styles.statLabel}>UPI</Text>
+                <Text style={styles.statLabel}>QR / Online</Text>
                 <Text style={styles.statVal}>{fmtINR(summary?.upi_sales || 0)}</Text>
               </View>
               <View style={styles.statBox}>
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
   summaryVal: { color: colors.brandSecondary, fontSize: 30, fontWeight: '900', marginTop: 4 },
   rowStats: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   statBox: { flex: 1, backgroundColor: 'rgba(228,192,112,0.12)', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: 'rgba(228,192,112,0.3)' },
-  statLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  statLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 10, fontWeight: '700' },
   statVal: { color: '#fff', fontSize: 13, fontWeight: '800', marginTop: 2 },
 
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, gap: spacing.md, ...shadows.card },

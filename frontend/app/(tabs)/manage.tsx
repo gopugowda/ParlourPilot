@@ -19,7 +19,7 @@ export default function ManageScreen() {
         { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations · switch active branch', route: '/manage/branches' },
         { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings' },
         { icon: 'pricetags-outline', label: 'Services', hint: 'Add, edit, remove services', route: '/manage/services' },
-        { icon: 'people-outline', label: 'Beauticians', hint: 'Manage staff & barbers', route: '/manage/beauticians' },
+        { icon: 'people-outline', label: 'Staff', hint: "Manage your team's roster", route: '/manage/beauticians' },
         { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto discount', route: '/manage/members' },
         { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock' },
       ],
@@ -54,7 +54,7 @@ export default function ManageScreen() {
       title: 'Reference (view only)',
       items: [
         { icon: 'pricetags-outline', label: 'Services', hint: 'View salon service list & prices', route: '/manage/services' },
-        { icon: 'people-outline', label: 'Beauticians', hint: 'View staff roster', route: '/manage/beauticians' },
+        { icon: 'people-outline', label: 'Staff', hint: 'View team roster', route: '/manage/beauticians' },
         { icon: 'cube-outline', label: 'Stock', hint: 'View inventory & usage', route: '/manage/stock' },
       ],
     },

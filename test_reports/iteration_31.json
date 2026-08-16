@@ -1,0 +1,38 @@
+{
+  "summary": "Frontend-only label & field audit for web-parity (Iteration 31). All requested labels validated via live UI + source review. Services modal: 14/14 label checks OK (Add service lowercase 's', Service name, Service type (optional) with Unisex first, Base price (₹), Tax %, Variable price + subtitle, Suggested add-on (₹) reveal-on-toggle, Category (pick or type), Active, Cancel/Save footer). Stock modal title 'Add item' OK. Expenses modal title 'Add expense' OK. Staff regression OK — Manage nav shows 'Staff' (no 'Beauticians' string anywhere on nav/services/manage screens), Staff header title, empty 'No staff yet' + CTA 'Add first team member', modal 'Add Staff/Edit Staff'. New Bill 'Assign staff' placeholder confirmed live. History filter chip 'QR / Online' confirmed live. Cash Closing KPI source label is 'QR / Online' (visually rendered as 'QR / ONLINE' due to CSS text-transform on statLabel — text-content match failed in DOM query because innerText returns rendered text; visually and semantically correct — see screenshot iter31_cc_v2.png). New Bill 'Tip via' + Payment Mode + Split hint labels: 3 QR/Online occurrences seen on New Bill; Split-mode inner 'QR / Online (balance)' verified by code review (line 612 of app/(tabs)/new-bill.tsx) — could not photograph the panel because the sticky bottom bar occludes the payment section below the fold at 390x844 (rendering gated by paymentMode==='split'; state does flip on click). No 'QR/UPI' or 'QR / UPI' strings remain in the mobile app source or DOM. Backend contract untouched, no backend testing performed (frontend-only iteration per request).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "manage/cash-closing", "issues": ["statLabel style applies text-transform (renders 'QR / ONLINE' uppercase) — matches previous UPI casing so no regression, but note web app uses proper case 'QR / Online'. Optional: remove uppercase text-transform to fully match web casing."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/iter31_newbill.png",
+    "/app/test_reports/screenshots/iter31_svc_modal.png",
+    "/app/test_reports/screenshots/iter31_stock.png",
+    "/app/test_reports/screenshots/iter31_exp.png",
+    "/app/test_reports/screenshots/iter31_staff.png",
+    "/app/test_reports/screenshots/iter31_cc_v2.png",
+    "/app/test_reports/screenshots/iter31_apt.png"
+  ],
+  "action_items": [
+    "OPTIONAL polish: On manage/cash-closing.tsx, statLabel style has text-transform:uppercase which renders 'QR / Online' as 'QR / ONLINE'. To exactly match web casing, drop text-transform on that KPI label (or on statLabel entirely). Non-blocking.",
+    "OPTIONAL: In manage/appointments.tsx line 526, the empty picker chip reads 'Any' — spec suggested 'Any staff'. Recommend updating chip text to 'Any staff' to match list display fallback 'a.beautician_name || \"Any staff\"' at line 198.",
+    "OPTIONAL: manage/beauticians.tsx line 136 role-picker chip still lists 'Beautician' as one of the role options; this is a valid role name, not a screen label, so leave as-is unless product intent changes."
+  ],
+  "critical_code_review_comments": [
+    "services.tsx modal is well-structured; Variable price toggle correctly gates 'Suggested add-on (₹)' input; Cancel/Save row uses proper flex layout.",
+    "new-bill.tsx uses testID='pay-mode-split' — good for future testing. Split hint 'QR / Online (balance)' at line 612 is conditionally rendered inside IIFE — works but obscured below sticky footer on small viewports (visual concern only).",
+    "cash-closing.tsx statLabel style textTransform:uppercase overrides intended casing — minor style drift from web (see design_issues)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not-tested (frontend-only)", "frontend": "100% of label-audit checks confirmed via live UI + source review"},
+  "seed_data_creation": "None. Used pre-existing testuiowner@testparlourpilot.com owner login. No writes required.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 31 was a pure UI label audit for web-parity. Login testIDs: login-email-input / login-password-input / login-submit-button. Payment-mode chips use testID pay-mode-{cash|qr|card|split}. Services modal add trigger: [data-testid=\"add-service-header\"] or [data-testid=\"empty-add\"]. Variable price toggle testID: svc-variable-price (Switch). Note: cash-closing KPI label reads uppercased 'QR / ONLINE' in DOM innerText even though source is 'QR / Online' — this is a CSS textTransform effect, not a bug. For split-hint live verification, add a service first and scroll past the sticky footer.",
+  "rca_of_issue": "N/A — no functional issue. Two DOM search misses ('QR / Online (balance)' after Split click; 'QR / Online' on cash-closing) are explained by (1) sticky bottom bar occluding the panel at 390x844 and (2) CSS text-transform:uppercase transforming rendered innerText. Source code labels are correct in both locations."
+}

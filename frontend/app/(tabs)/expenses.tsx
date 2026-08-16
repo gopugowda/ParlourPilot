@@ -230,7 +230,7 @@ export default function ExpensesScreen() {
               <Text style={styles.emptySub}>Tap + to add materials, water bill, salary, etc.</Text>
               <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
                 <Ionicons name="add" size={18} color="#fff" />
-                <Text style={styles.ctaBtnText}>Add Expense</Text>
+                <Text style={styles.ctaBtnText}>Add expense</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -265,7 +265,7 @@ export default function ExpensesScreen() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit Expense' : 'Add Expense'}</Text>
+              <Text style={styles.sheetTitle}>{editing ? 'Edit expense' : 'Add expense'}</Text>
 
               <View style={styles.field}>
                 <Text style={styles.label}>Category</Text>
@@ -325,7 +325,7 @@ export default function ExpensesScreen() {
 
               <TouchableOpacity testID="exp-save-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
                 {saving ? <ActivityIndicator color="#fff" /> : (
-                  <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Expense'}</Text>
+                  <Text style={styles.saveBtnText}>{editing ? 'Save' : 'Add expense'}</Text>
                 )}
               </TouchableOpacity>
 

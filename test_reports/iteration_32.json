@@ -1,0 +1,23 @@
+{
+  "summary": "Iter 31 follow-up: verified both polish label fixes on mobile web preview (390x844). (1) Cash Closing 'Today's Business' KPI labels now render in natural case — Cash, QR / Online, Tips, Bills (computed textTransform: none, fontSize 10px). No ALL-CAPS variants present. (2) Appointments 'New Booking' modal Staff picker first pill now reads 'Any staff' exactly (active, selected by default). No regressions observed navigating owner → Manage → Cash Closing and owner → Manage → Appointments → New Booking.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Console warning still emitted app-wide: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — cosmetic; can be addressed later.",
+    "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — cosmetic."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not-tested", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 31 follow-up verified. Cash Closing stat labels are natural case; Appointments New Booking modal shows 'Any staff' pill. Owner login (testuiowner@testparlourpilot.com / admin123) working. Navigate to /manage/appointments then tap 'New Booking' (empty state) or FAB '+'. First staff pill = 'Any staff'.",
+  "rca_of_issue": "N/A — verification only, both fixes confirmed present in code (cash-closing.tsx line 299 has no textTransform on statLabel; appointments.tsx line 526 uses 'Any staff' text) and visually confirmed in web preview."
+}

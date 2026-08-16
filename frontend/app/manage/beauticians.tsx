@@ -67,7 +67,7 @@ export default function BeauticiansScreen() {
           <Ionicons name="home-outline" size={20} color="#3A3937" />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Beauticians</Text>
+          <Text style={styles.headerTitle}>Staff</Text>
           <Text style={styles.headerSub}>{list.length} staff members</Text>
         </View>
         {isAdmin && (
@@ -82,10 +82,10 @@ export default function BeauticiansScreen() {
           {list.length === 0 && (
             <View style={styles.empty}>
               <Ionicons name="people-outline" size={48} color={colors.onSurfaceTertiary} />
-              <Text style={styles.emptyTitle}>No beauticians yet</Text>
+              <Text style={styles.emptyTitle}>No staff yet</Text>
               {isAdmin && (
                 <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
-                  <Text style={styles.ctaBtnText}>Add first beautician</Text>
+                  <Text style={styles.ctaBtnText}>Add first team member</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -125,7 +125,7 @@ export default function BeauticiansScreen() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit Beautician' : 'Add Beautician'}</Text>
+              <Text style={styles.sheetTitle}>{editing ? 'Edit Staff' : 'Add Staff'}</Text>
               <View style={styles.field}>
                 <Text style={styles.label}>Name</Text>
                 <TextInput testID="bt-name-input" value={name} onChangeText={setName} placeholder="Full name" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
