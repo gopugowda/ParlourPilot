@@ -259,6 +259,92 @@ async def reports_range(
     return {"from": from_str, "to": to_str, "days": len(rows), "totals": totals, "rows": rows}
 
 
+@router.get("/reports/revenue-by-gender")
+async def reports_revenue_by_gender(
+    preset: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    scope: BranchScope = Depends(branch_scope),
+):
+    """
+    Type Revenue Split — aggregates net line revenue by service gender (ladies / men / unisex).
+    Uses the same preset & custom-range semantics as /reports/range so the UI can share the
+    date picker. Line revenue = price * (1 - effective_discount%/100). Tips are excluded.
+    """
+    today = datetime.now(timezone.utc).date()
+
+    if preset == "today":
+        d_from = d_to = today
+    elif preset == "yesterday":
+        d_from = d_to = today - timedelta(days=1)
+    elif preset == "week":
+        d_from = today - timedelta(days=6); d_to = today
+    elif preset == "month":
+        d_from = today.replace(day=1); d_to = today
+    elif preset == "last_month":
+        first_this = today.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        d_from = last_prev.replace(day=1); d_to = last_prev
+    else:
+        try:
+            d_from = datetime.strptime(from_date, "%Y-%m-%d").date() if from_date else today.replace(day=1)
+            d_to = datetime.strptime(to_date, "%Y-%m-%d").date() if to_date else today
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date format (use YYYY-MM-DD)")
+
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+
+    if scope.user.get("role") == "staff":
+        earliest = today - timedelta(days=1)
+        if d_from < earliest: d_from = earliest
+        if d_to < earliest: d_to = earliest
+
+    from_str = d_from.strftime("%Y-%m-%d")
+    to_str = d_to.strftime("%Y-%m-%d")
+
+    bills = await db.bills.find(
+        scope.filter({"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}}),
+        {"_id": 0, "items": 1},
+    ).to_list(20000)
+
+    buckets: dict = {
+        "ladies": {"revenue": 0.0, "count": 0},
+        "men": {"revenue": 0.0, "count": 0},
+        "unisex": {"revenue": 0.0, "count": 0},
+    }
+    for b in bills:
+        for it in (b.get("items") or []):
+            g = (it.get("service_gender") or "unisex").lower()
+            if g not in buckets:
+                g = "unisex"
+            price = float(it.get("price") or 0)
+            eff_disc = float(it.get("effective_discount_pct") or it.get("discount_pct") or 0)
+            net = price * (1.0 - eff_disc / 100.0)
+            buckets[g]["revenue"] += net
+            buckets[g]["count"] += 1
+
+    total_revenue = sum(v["revenue"] for v in buckets.values())
+    for k in buckets:
+        buckets[k]["revenue"] = round(buckets[k]["revenue"], 2)
+        buckets[k]["share_pct"] = round((buckets[k]["revenue"] / total_revenue) * 100, 1) if total_revenue > 0 else 0
+
+    # Also return the winning segment (highest revenue) for a quick UI highlight.
+    top_key = max(buckets, key=lambda k: buckets[k]["revenue"]) if total_revenue > 0 else None
+
+    return {
+        "from": from_str,
+        "to": to_str,
+        "total_revenue": round(total_revenue, 2),
+        "top_segment": top_key,
+        "segments": [
+            {"key": "ladies", "label": "Ladies", **buckets["ladies"]},
+            {"key": "men", "label": "Men", **buckets["men"]},
+            {"key": "unisex", "label": "Unisex", **buckets["unisex"]},
+        ],
+    }
+
+
 @router.get("/reports/staff-performance")
 async def reports_staff_performance(
     preset: Optional[str] = None,

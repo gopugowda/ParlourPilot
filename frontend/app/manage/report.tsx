@@ -43,6 +43,7 @@ export default function ReportScreen() {
   const [pickingField, setPickingField] = useState<'from' | 'to'>('from');
   const [shareOpen, setShareOpen] = useState(false);
   const [data, setData] = useState<{ from: string; to: string; totals: any; rows: Row[] } | null>(null);
+  const [genderData, setGenderData] = useState<{ total_revenue: number; top_segment: string | null; segments: { key: string; label: string; revenue: number; count: number; share_pct: number }[] } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -55,8 +56,12 @@ export default function ReportScreen() {
       const params = preset === 'custom'
         ? `preset=custom&from_date=${fromDate}&to_date=${toDate}`
         : `preset=${preset}`;
-      const res: any = await api(`/reports/range?${params}`);
-      setData(res);
+      const [res, gender] = await Promise.all([
+        api(`/reports/range?${params}`),
+        api(`/reports/revenue-by-gender?${params}`).catch(() => null),
+      ]);
+      setData(res as any);
+      setGenderData(gender as any);
     } catch {} finally { setLoading(false); }
   };
 
@@ -215,6 +220,55 @@ export default function ReportScreen() {
               <Text style={styles.expLine}>Expenses: {fmtINR(data?.totals?.expenses || 0)} · Tips: {fmtINR(data?.totals?.tips || 0)}</Text>
             )}
           </View>
+
+          {/* Type Revenue Split — Ladies / Men / Unisex */}
+          {isAdmin && genderData && (genderData.total_revenue > 0 ? (
+            <View style={styles.genderCard} testID="revenue-by-gender-card">
+              <View style={styles.genderHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="people-circle-outline" size={18} color={colors.brandPrimary} />
+                  <Text style={styles.genderTitle}>Revenue by Segment</Text>
+                </View>
+                {genderData.top_segment && (
+                  <View style={styles.topBadge}>
+                    <Ionicons name="trophy" size={11} color="#B77400" />
+                    <Text style={styles.topBadgeText}>
+                      Top: {genderData.segments.find(s => s.key === genderData.top_segment)?.label}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              {genderData.segments.map(s => {
+                const isTop = s.key === genderData.top_segment;
+                const color = s.key === 'ladies' ? '#D9337B' : s.key === 'men' ? '#2E6BE6' : colors.brandPrimary;
+                return (
+                  <View key={s.key} style={styles.genderRow} testID={`rev-gender-${s.key}`}>
+                    <View style={styles.genderRowHead}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={[styles.genderDot, { backgroundColor: color }]} />
+                        <Text style={[styles.genderLabel, isTop && { color, fontWeight: '800' }]}>{s.label}</Text>
+                        <Text style={styles.genderCount}>· {s.count} items</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={[styles.genderAmt, isTop && { color, fontWeight: '800' }]}>{fmtINR(s.revenue)}</Text>
+                        <Text style={styles.genderShare}>{s.share_pct.toFixed(1)}%</Text>
+                      </View>
+                    </View>
+                    <View style={styles.gTrack}>
+                      <View style={[styles.gFill, { width: `${Math.min(100, s.share_pct)}%`, backgroundColor: color }]} />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={[styles.genderCard, { alignItems: 'center', paddingVertical: spacing.lg }]} testID="revenue-by-gender-empty">
+              <Ionicons name="people-circle-outline" size={28} color={colors.onSurfaceTertiary} />
+              <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 6 }}>
+                No segmented revenue yet — tag services with Ladies / Men / Unisex.
+              </Text>
+            </View>
+          ))}
 
           {(data?.rows || []).length === 0 ? (
             <View style={styles.empty}>
@@ -414,6 +468,21 @@ const styles = StyleSheet.create({
   statLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
   statVal: { color: '#fff', fontSize: 12, fontWeight: '800', marginTop: 2 },
   expLine: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: spacing.md, fontWeight: '600' },
+
+  genderCard: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md, ...shadows.sm, gap: spacing.sm },
+  genderHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  genderTitle: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
+  topBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: '#FFF3D6', borderWidth: 1, borderColor: '#F0DCA6' },
+  topBadgeText: { fontSize: 10, fontWeight: '700', color: '#B77400' },
+  genderRow: { gap: 4 },
+  genderRowHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  genderDot: { width: 8, height: 8, borderRadius: 4 },
+  genderLabel: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  genderCount: { fontSize: 10, color: colors.onSurfaceTertiary },
+  genderAmt: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  genderShare: { fontSize: 10, color: colors.onSurfaceTertiary },
+  gTrack: { height: 6, backgroundColor: colors.surfaceTertiary, borderRadius: 3, overflow: 'hidden' },
+  gFill: { height: '100%', borderRadius: 3 },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
   rowDate: { fontSize: 14, fontWeight: '700', color: colors.onSurface },

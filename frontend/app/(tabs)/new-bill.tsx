@@ -17,7 +17,9 @@ const DEFAULT_MEMBER_MIN_PRICE = 100;
 type Service = { id: string; name: string; price: number; additional_price?: number; gender?: string; category: string; tax_percentage?: number };
 type Beautician = { id: string; name: string; role: string };
 type Item = {
-  service_id?: string; service_name: string; price: number;
+  service_id?: string; service_name: string;
+  service_gender?: 'ladies' | 'men' | 'unisex';
+  price: number;
   base_price?: number;        // the service's base price (for reference/reset)
   addon_price?: number;       // additional_price captured at pick time (if any)
   addon_applied?: boolean;    // has staff toggled the add-on for this line
@@ -73,6 +75,7 @@ export default function NewBillScreen() {
         const b: any = await api(`/bills/${editBillId}`);
         setItems((b.items || []).map((it: any) => ({
           service_id: it.service_id, service_name: it.service_name,
+          service_gender: it.service_gender || 'unisex',
           price: it.price, discount_pct: it.discount_pct || 0,
           tax_percentage: it.tax_percentage || 0,
           beautician_id: it.beautician_id, beautician_name: it.beautician_name,
@@ -213,6 +216,7 @@ export default function NewBillScreen() {
         customer_phone: customerPhone,
         items: items.map(it => ({
           service_id: it.service_id, service_name: it.service_name,
+          service_gender: it.service_gender || 'unisex',
           price: Number(it.price), discount_pct: Number(it.discount_pct) || 0,
           tax_percentage: Number(it.tax_percentage) || 0,
           beautician_id: it.beautician_id, beautician_name: it.beautician_name,
@@ -676,6 +680,7 @@ export default function NewBillScreen() {
                     if (pickerFor.type === 'service' && 'index' in pickerFor) {
                       updateItem(pickerFor.index, {
                         service_id: opt.id, service_name: opt.name,
+                        service_gender: (opt.gender || 'unisex') as any,
                         price: opt.price,
                         base_price: opt.price,
                         addon_price: opt.additional_price || 0,

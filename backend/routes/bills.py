@@ -46,6 +46,25 @@ async def _next_bill_number(tid: str, branch_id: Optional[str], prefix_override:
     return f"{date_prefix}-{count + 1:04d}"
 
 
+async def _enrich_items_with_service_gender(items: list, tid: str) -> None:
+    """
+    Ensure every bill line carries `service_gender` so downstream reports (Type Revenue
+    Split) don't have to join back to the services collection. Client may already send
+    the correct value; if a line has service_id but no gender we look it up server-side.
+    """
+    missing_ids = list({(it.get("service_id") or "") for it in items if it.get("service_id") and not it.get("service_gender")})
+    lookup: dict = {}
+    if missing_ids:
+        cursor = db.services.find({"tenant_id": tid, "id": {"$in": missing_ids}}, {"_id": 0, "id": 1, "gender": 1})
+        async for svc in cursor:
+            lookup[svc.get("id")] = (svc.get("gender") or "unisex").lower()
+    for it in items:
+        g = it.get("service_gender")
+        if not g and it.get("service_id"):
+            g = lookup.get(it["service_id"])
+        it["service_gender"] = (g or "unisex").lower()
+
+
 @router.post("/bills")
 async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scope_required)):
     if not body.items:
@@ -62,6 +81,7 @@ async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scop
     items_eff = apply_member_discount(
         body.items, body.is_member, tenant, disc_override, min_price_override,
     )
+    await _enrich_items_with_service_gender(items_eff, tid)
     subtotal, discount, services_net, tax_total = compute_bill_totals(items_eff)
 
     # Tips (per-line + bill-level). tip_via ∈ {cash, qr, card}.
@@ -173,6 +193,7 @@ async def update_bill(bid: str, body: BillCreate, scope: BranchScope = Depends(b
     items_eff = apply_member_discount(
         body.items, body.is_member, tenant, disc_override, min_price_override,
     )
+    await _enrich_items_with_service_gender(items_eff, tid)
     subtotal, discount, services_net, tax_total = compute_bill_totals(items_eff)
 
     line_tip_total = sum(float(it.get("tip_amount", 0) or 0) for it in items_eff)

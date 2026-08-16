@@ -121,6 +121,7 @@ class ServiceIn(BaseModel):
 class BillItem(BaseModel):
     service_id: Optional[str] = None
     service_name: str
+    service_gender: Optional[Literal["ladies", "men", "unisex"]] = None
     price: float
     discount_pct: float = 0
     tax_percentage: float = 0

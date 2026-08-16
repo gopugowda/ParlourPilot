@@ -1,0 +1,43 @@
+{
+  "summary": "Iter 30 — Type Revenue Split (Ladies vs Men vs Unisex) — 11/11 backend PASS + all frontend flows PASS on mobile viewport 390x844. Backend: (1) BillItem.service_gender persists explicitly for the 3 bills A/B/C (ladies/men/unisex). (2) Server enrichment works — 4th bill sent with only service_id (no service_gender) is enriched to 'ladies' via _enrich_items_with_service_gender. (3) GET /api/reports/revenue-by-gender?preset=today returns exact shape {from,to,total_revenue,top_segment,segments[]} with total_revenue=1900.0, top_segment='ladies', ladies=1200/2/63.2%, men=300/1/15.8%, unisex=400/1/21.1%; share_pct sums to 100.1 (within 0.5 tolerance). (4) Custom range preset=custom&from_date=<yesterday>&to_date=<today> returns same aggregation over the window; invalid dates -> 400. (5) Empty range (2000-01-01..2000-01-31) returns total_revenue=0, top_segment=null, all segments zero with share_pct=0. (6) Staff scoping — teststaffui GET /reports/revenue-by-gender returns 200 (no 403); segments length=3, revenue >= 0, no branch leakage (staff-branch-scoped bills only). Frontend (owner, mobile 390x844): (A) After seeding 4 test bills via API, Daily Report → 'Today' preset renders the new 'Revenue by Segment' card BETWEEN the totals summary (cardTop=300px) and the daily rows (dayTop=495px). Card header 'Revenue by Segment' with people-circle icon + top-right trophy badge 'Top: Ladies' both present. 3 rows visible with testIDs rev-gender-ladies ('Ladies · 2 items ₹1,200 63.2%'), rev-gender-men ('Men · 1 items ₹300 15.8%'), rev-gender-unisex ('Unisex · 1 items ₹400 21.1%'), each with colored dot and share-pct progress bar (Ladies pink #D9337B, Men blue #2E6BE6, Unisex brand). (B) 'Last Month' preset (no bills in that window) → revenue-by-gender-empty visible with 'No segmented revenue yet — tag services with Ladies / Men / Unisex' text, no crash, revenue-by-gender-card hidden. (C) End-to-end integration validated via the 4th seeded bill that omitted service_gender — server enriched it and it aggregated correctly into ladies bucket (ladies count went 1→2 and revenue 600→1200, verified in UI). All 4 test bills + 3 test services CLEANED UP via API after screenshots.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter30_revenue_by_gender.py",
+    "/app/test_reports/pytest/pytest_iter30.xml",
+    "/app/test_reports/screenshots/iter30_today_card.png",
+    "/app/test_reports/screenshots/iter30_empty.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/reports.py revenue_by_gender: buckets are hardcoded to {ladies, men, unisex} and any unknown value gets coerced to 'unisex' (line 319-320). Fine today because ServiceIn already restricts gender to those 3 literals, but if a future migration adds a new option (e.g. 'kids'), those lines will silently misattribute revenue. Consider using a Literal-derived list to stay in sync with the model.",
+    "routes/reports.py:290-291 custom-preset default when no from_date/to_date differs from /reports/range (which defaults both to today). revenue_by_gender defaults from_date to first-of-month and to_date to today. This is a behavioural inconsistency — either both should default to first-of-month or both to today, otherwise sharing the same picker UI can lead to subtle differences.",
+    "routes/reports.py:307 uses '<' upper bound with time '23:59:59.999999+00:00' but the '$lt' + max-microsecond string comparison excludes bills whose created_at ends in a >23:59:59.999999 timestamp (which shouldn't happen in practice). Consistent with /reports/range but worth flagging; a '$lte' + '{day}T23:59:59.999999Z' or '$lt' + next day is safer.",
+    "routes/bills.py _enrich_items_with_service_gender does a single per-request lookup for lines missing gender but does NOT verify the service actually belongs to the calling tenant. It does filter by {tenant_id: tid, id: {$in: missing_ids}} — good. Just noting the isolation is correct.",
+    "app/manage/report.tsx line 61 uses .catch(() => null) which silently swallows any backend error for the gender endpoint. If /reports/revenue-by-gender starts returning 500, the card just quietly disappears with no toast — consider surfacing a small inline error to help debugging."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter30_revenue_by_gender.py (new — 11 tests)",
+    "/app/test_reports/iteration_30.json (new)",
+    "/app/test_reports/pytest/pytest_iter30.xml (new)",
+    "/app/test_reports/screenshots/iter30_today_card.png",
+    "/app/test_reports/screenshots/iter30_empty.png"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11)",
+    "frontend": "100% (A/B/C all pass)"
+  },
+  "seed_data_creation": "Seeded 3 services (TEST_Iter30_UI_Ladies/Men/Unisex) and 4 bills (ladies x2, men, unisex — total ₹1900) for the UI walkthrough. CLEANED UP all 7 objects via DELETE /api/services/{id} and DELETE /api/bills/{id} at the end of testing. Beautician TEST_Iter30_B kept (reused from earlier iterations if present). No new tenants. testuiowner + teststaffui credentials continue to work.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 30 delivered clean. Endpoint /api/reports/revenue-by-gender is stable, staff-scoped, and shares preset semantics with /api/reports/range. BillItem now carries service_gender persistently — bills created before Iter 30 will not have this field, so aggregations over old windows may show inflated 'unisex' counts (server defaults missing gender to unisex). Frontend testIDs of note for Reports screen: report-screen, preset-{today|yesterday|week|month|last_month|custom}, revenue-by-gender-card, revenue-by-gender-empty, rev-gender-{ladies|men|unisex}, apply-range, share-report-btn.",
+  "rca_of_issue": "N/A — no failures encountered."
+}
