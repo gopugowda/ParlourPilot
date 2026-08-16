@@ -969,3 +969,20 @@ Cash Closing is now 1:1 with the web layout, wording, and formula semantics — 
 ### Verdict
 Full contract met — a backdated bill created on mobile shows on the correct date in Bill History, Cash Closing, and Reports; and any bill written from the web with a `billing_date` shows up correctly in the mobile UI too (same shared MongoDB).
 
+
+## Iteration 34.5 — New Bill chip overlap fix (Tip Paid-via & Payment Mode)
+
+**User bug**: on narrow phones (≤ 380px), "QR / Online" text wrapped to two lines and overlapped the small chip icon in the Tip *Paid via* row and the *Payment Mode* row.
+
+### Root cause
+Both chip rows used `flexDirection: 'row'` + `flex: 1` per chip. When the label wrapped, the vertically-centered icon and the two text lines competed for horizontal space and visually collided.
+
+### Fix (`/app/frontend/app/(tabs)/new-bill.tsx`)
+- `segment` (Payment Mode) → column layout, `minHeight: 62`, icon on top, `fontSize: 12`, text `textAlign: 'center'`, `flexShrink: 1`.
+- `tipViaChip` (Tip → Paid via) → same column layout, `minHeight: 54`, `fontSize: 11`.
+- No other chip rows had the same constraints (verified across `expenses.tsx`, `history.tsx`, `report.tsx`).
+
+### Verified
+- Screenshot at 360×800 viewport — both rows render cleanly, no overlap, "QR / Online" wraps within its own row below the icon.
+- Touch targets still ≥ 44 pt.
+

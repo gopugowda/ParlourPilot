@@ -1009,12 +1009,13 @@ const styles = StyleSheet.create({
 
   segmentRow: { flexDirection: 'row', gap: spacing.sm },
   segment: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 12, backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm,
+    flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+    paddingVertical: 10, paddingHorizontal: 4, minHeight: 62,
+    backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm,
     borderWidth: 1, borderColor: colors.border,
   },
   segmentActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
-  segmentText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 13 },
+  segmentText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 12, textAlign: 'center', flexShrink: 1 },
   segmentTextActive: { color: '#fff' },
 
   err: { color: colors.error, fontSize: 13, textAlign: 'center', marginTop: spacing.sm },
@@ -1031,9 +1032,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.sm, marginTop: spacing.sm,
   },
   memberDetectText: { flex: 1, fontSize: 12, color: colors.onSurface, fontWeight: '600' },
-  tipViaChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  tipViaChip: { flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 8, paddingHorizontal: 4, minHeight: 54, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   tipViaChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
-  tipViaText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
+  tipViaText: { fontSize: 11, fontWeight: '600', color: colors.onSurfaceSecondary, textAlign: 'center', flexShrink: 1 },
   tipViaTextActive: { color: '#fff' },
   tipNote: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#FDF6E7', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0DCA6' },
   tipNoteText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary },
