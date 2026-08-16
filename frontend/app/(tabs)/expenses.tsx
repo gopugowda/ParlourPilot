@@ -7,14 +7,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
+type PaymentMode = 'cash' | 'upi' | 'card' | 'bank' | 'other';
 type Expense = {
   id: string; category: string; description: string; amount: number;
-  date: string; notes?: string; created_by_name?: string; created_at: string;
+  date: string; payment_mode?: PaymentMode; notes?: string;
+  created_by_name?: string; created_at: string;
 };
 
 const CATEGORY_ICON: Record<string, any> = {
@@ -25,6 +28,14 @@ const CATEGORY_ICON: Record<string, any> = {
   Maintenance: 'construct-outline',
   Other: 'ellipsis-horizontal-outline',
 };
+
+const PAY_MODES: { key: PaymentMode; label: string; icon: any }[] = [
+  { key: 'cash', label: 'Cash', icon: 'cash-outline' },
+  { key: 'upi',  label: 'UPI',  icon: 'qr-code-outline' },
+  { key: 'card', label: 'Card', icon: 'card-outline' },
+  { key: 'bank', label: 'Bank Transfer', icon: 'business-outline' },
+  { key: 'other', label: 'Other', icon: 'ellipsis-horizontal-outline' },
+];
 
 export default function ExpensesScreen() {
   const { user, tenant } = useAuth();
@@ -42,9 +53,12 @@ export default function ExpensesScreen() {
   const [cat, setCat] = useState('Material');
   const [desc, setDesc] = useState('');
   const [amt, setAmt] = useState('');
+  const [expDate, setExpDate] = useState<string>('');
+  const [payMode, setPayMode] = useState<PaymentMode>('cash');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
@@ -69,22 +83,36 @@ export default function ExpensesScreen() {
   useFocusEffect(useCallback(() => { load(); }, [filter]));
 
   const openAdd = () => {
-    setEditing(null); setCat('Material'); setDesc(''); setAmt(''); setNotes(''); setErr(null); setEditOpen(true);
+    setEditing(null); setCat('Material'); setDesc(''); setAmt('');
+    setExpDate(today); setPayMode('cash');
+    setNotes(''); setErr(null); setEditOpen(true);
   };
   const openEdit = (e: Expense) => {
     if (!isAdmin) return;
     setEditing(e); setCat(e.category); setDesc(e.description);
-    setAmt(String(e.amount)); setNotes(e.notes || ''); setErr(null); setEditOpen(true);
+    setAmt(String(e.amount));
+    setExpDate(e.date || today);
+    setPayMode((e.payment_mode as PaymentMode) || 'cash');
+    setNotes(e.notes || ''); setErr(null); setEditOpen(true);
   };
 
   const save = async () => {
     setErr(null);
+    if (!cat.trim()) { setErr('Category required'); return; }
     if (!desc.trim()) { setErr('Description required'); return; }
     const n = Number(amt);
     if (!(n > 0)) { setErr('Amount must be > 0'); return; }
+    if (!expDate) { setErr('Date required'); return; }
     setSaving(true);
     try {
-      const body = { category: cat, description: desc.trim(), amount: n, notes: notes.trim(), date: editing?.date };
+      const body = {
+        category: cat.trim(),
+        description: desc.trim(),
+        amount: n,
+        date: expDate,
+        payment_mode: payMode,
+        notes: notes.trim(),
+      };
       if (editing) await api(`/expenses/${editing.id}`, { method: 'PUT', body });
       else await api('/expenses', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -249,7 +277,9 @@ export default function ExpensesScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.expDesc}>{e.description}</Text>
                   <Text style={styles.expMeta}>
-                    {e.category} · {e.date}{e.created_by_name ? ` · ${e.created_by_name}` : ''}
+                    {e.category} · {e.date}
+                    {e.payment_mode ? ` · ${(PAY_MODES.find(m => m.key === e.payment_mode)?.label || e.payment_mode)}` : ''}
+                    {e.created_by_name ? ` · ${e.created_by_name}` : ''}
                   </Text>
                 </View>
                 <Text style={styles.expAmt}>{fmtINR(e.amount)}</Text>
@@ -264,12 +294,24 @@ export default function ExpensesScreen() {
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit expense' : 'Add expense'}</Text>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
+                <View style={styles.handle} />
+                <Text style={styles.sheetTitle}>{editing ? 'Edit expense' : 'Add expense'}</Text>
+                <Text style={styles.sheetSubtitle}>Category-tagged daily expenses (type a custom category to add your own).</Text>
 
               <View style={styles.field}>
-                <Text style={styles.label}>Category</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                <Text style={styles.label}>
+                  Category (pick or type custom) <Text style={styles.req}>*</Text>
+                </Text>
+                <TextInput
+                  testID="exp-category-input"
+                  value={cat}
+                  onChangeText={setCat}
+                  placeholder="e.g. Rent, Electricity, Marketing"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingTop: 6 }}>
                   {categories.map(c => (
                     <TouchableOpacity
                       key={c}
@@ -277,33 +319,65 @@ export default function ExpensesScreen() {
                       onPress={() => { Haptics.selectionAsync(); setCat(c); }}
                       style={[styles.catChip, cat === c && styles.catChipActive]}
                     >
-                      <Ionicons name={CATEGORY_ICON[c]} size={14} color={cat === c ? '#fff' : colors.brandPrimary} />
+                      <Ionicons name={CATEGORY_ICON[c] || 'pricetag-outline'} size={14} color={cat === c ? '#fff' : colors.brandPrimary} />
                       <Text style={[styles.catChipText, cat === c && styles.catChipTextActive]}>{c}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
               </View>
 
+              <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                <View style={[styles.field, { flex: 1 }]}>
+                  <Text style={styles.label}>Amount (₹) <Text style={styles.req}>*</Text></Text>
+                  <TextInput
+                    testID="exp-amount-input"
+                    value={amt}
+                    onChangeText={(v) => setAmt(v.replace(/[^0-9.]/g, ''))}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    style={styles.input}
+                  />
+                </View>
+                <View style={[styles.field, { flex: 1 }]}>
+                  <Text style={styles.label}>Date</Text>
+                  <TouchableOpacity
+                    testID="exp-date-pick"
+                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                    onPress={() => { Haptics.selectionAsync(); setDatePickerOpen(true); }}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color={colors.onSurfaceTertiary} />
+                    <Text style={{ fontSize: 14, color: expDate ? colors.onSurface : colors.onSurfaceTertiary }}>
+                      {expDate || 'Pick a date'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
               <View style={styles.field}>
-                <Text style={styles.label}>Description</Text>
+                <Text style={styles.label}>Payment mode <Text style={styles.req}>*</Text></Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                  {PAY_MODES.map(m => (
+                    <TouchableOpacity
+                      key={m.key}
+                      testID={`paymode-${m.key}`}
+                      onPress={() => { Haptics.selectionAsync(); setPayMode(m.key); }}
+                      style={[styles.catChip, payMode === m.key && styles.catChipActive]}
+                    >
+                      <Ionicons name={m.icon} size={14} color={payMode === m.key ? '#fff' : colors.brandPrimary} />
+                      <Text style={[styles.catChipText, payMode === m.key && styles.catChipTextActive]}>{m.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Description <Text style={styles.req}>*</Text></Text>
                 <TextInput
                   testID="exp-desc-input"
                   value={desc}
                   onChangeText={setDesc}
                   placeholder="e.g. Shampoo stock, Electricity bill"
-                  placeholderTextColor={colors.onSurfaceTertiary}
-                  style={styles.input}
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Amount (₹)</Text>
-                <TextInput
-                  testID="exp-amount-input"
-                  value={amt}
-                  onChangeText={(v) => setAmt(v.replace(/[^0-9.]/g, ''))}
-                  keyboardType="numeric"
-                  placeholder="0"
                   placeholderTextColor={colors.onSurfaceTertiary}
                   style={styles.input}
                 />
@@ -317,7 +391,8 @@ export default function ExpensesScreen() {
                   onChangeText={setNotes}
                   placeholder="e.g. Paid by owner in cash"
                   placeholderTextColor={colors.onSurfaceTertiary}
-                  style={styles.input}
+                  style={[styles.input, { minHeight: 60 }]}
+                  multiline
                 />
               </View>
 
@@ -335,8 +410,43 @@ export default function ExpensesScreen() {
                   <Text style={styles.deleteBtnText}>Delete</Text>
                 </TouchableOpacity>
               )}
+              </ScrollView>
             </Pressable>
           </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
+      {/* Date picker modal (react-native-calendars) */}
+      <Modal visible={datePickerOpen} transparent animationType="fade" onRequestClose={() => setDatePickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDatePickerOpen(false)}>
+          <Pressable style={styles.datePickerSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Pick a date</Text>
+            <Calendar
+              testID="exp-calendar"
+              current={expDate || today}
+              maxDate={today}
+              onDayPress={(d) => {
+                Haptics.selectionAsync();
+                setExpDate(d.dateString);
+                setDatePickerOpen(false);
+              }}
+              markedDates={expDate ? { [expDate]: { selected: true, selectedColor: colors.brandPrimary } } : {}}
+              theme={{
+                backgroundColor: colors.surface,
+                calendarBackground: colors.surface,
+                selectedDayBackgroundColor: colors.brandPrimary,
+                selectedDayTextColor: '#fff',
+                todayTextColor: colors.brandPrimary,
+                dayTextColor: colors.onSurface,
+                monthTextColor: colors.onSurface,
+                arrowColor: colors.brandPrimary,
+              }}
+            />
+            <TouchableOpacity style={styles.datePickerClose} onPress={() => setDatePickerOpen(false)}>
+              <Text style={styles.datePickerCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -428,6 +538,8 @@ const styles = StyleSheet.create({
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, maxHeight: '90%' },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
   sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  sheetSubtitle: { fontSize: 12, color: colors.onSurfaceTertiary, textAlign: 'center', marginTop: -8, marginBottom: 4 },
+  req: { color: colors.error, fontWeight: '800' },
   field: { gap: 6 },
   label: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
   input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface },
@@ -451,4 +563,8 @@ const styles = StyleSheet.create({
   shareDesc: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   shareCancel: { paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
   shareCancelText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 14 },
+
+  datePickerSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, marginTop: 'auto', maxWidth: 480, width: '100%', alignSelf: 'center' },
+  datePickerClose: { paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
+  datePickerCloseText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 14 },
 });

@@ -163,6 +163,7 @@ class ExpenseIn(BaseModel):
     description: str
     amount: float
     date: Optional[str] = None
+    payment_mode: Optional[Literal["cash", "upi", "card", "bank", "other"]] = "cash"
     notes: Optional[str] = ""
 
 

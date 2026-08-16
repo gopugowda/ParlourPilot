@@ -32,8 +32,14 @@ router = APIRouter()
 
 # ============ Expenses ============
 @router.get("/expenses/categories")
-async def expense_categories(user=Depends(get_current_user_active)):
-    return EXPENSE_CATEGORIES
+async def expense_categories(scope: BranchScope = Depends(branch_scope)):
+    """Return default expense categories + any custom ones already used in the tenant."""
+    used = await db.expenses.distinct("category", scope.filter())
+    seen: list = []
+    for c in [*EXPENSE_CATEGORIES, *sorted([c for c in used if c])]:
+        if c and c not in seen:
+            seen.append(c)
+    return seen
 
 
 @router.get("/expenses")
@@ -60,7 +66,8 @@ async def create_expense(body: ExpenseIn, scope: BranchScope = Depends(branch_sc
         raise HTTPException(status_code=400, detail="Amount must be > 0")
     if not body.description.strip():
         raise HTTPException(status_code=400, detail="Description required")
-    cat = body.category if body.category in EXPENSE_CATEGORIES else "Other"
+    # Web app supports custom categories — accept any non-empty string, fall back to "Other".
+    cat = (body.category or "").strip() or "Other"
     d = body.date or today_str()
     doc = {
         "id": str(uuid.uuid4()),
@@ -70,6 +77,7 @@ async def create_expense(body: ExpenseIn, scope: BranchScope = Depends(branch_sc
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
         "date": d,
+        "payment_mode": (body.payment_mode or "cash"),
         "notes": body.notes or "",
         "created_by": scope.user["id"],
         "created_by_name": scope.user["name"],
@@ -83,13 +91,14 @@ async def create_expense(body: ExpenseIn, scope: BranchScope = Depends(branch_sc
 async def update_expense(eid: str, body: ExpenseIn, scope: BranchScope = Depends(branch_scope_admin)):
     if not (body.amount and body.amount > 0):
         raise HTTPException(status_code=400, detail="Amount must be > 0")
-    cat = body.category if body.category in EXPENSE_CATEGORIES else "Other"
+    cat = (body.category or "").strip() or "Other"
     result = await db.expenses.find_one_and_update(
         scope.filter({"id": eid}),
         {"$set": {
             "category": cat, "description": body.description.strip(),
             "amount": round(float(body.amount), 2),
             "date": body.date or today_str(),
+            "payment_mode": (body.payment_mode or "cash"),
             "notes": body.notes or "",
         }},
         return_document=True, projection={"_id": 0},

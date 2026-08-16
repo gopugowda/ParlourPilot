@@ -869,3 +869,31 @@ Converted `/app/backend/routes/reports.py` (750 lines) → package `/app/backend
 ### Verdict
 Zero-behaviour-change refactor completed. Codebase is now easier to navigate and extend (each concern lives in its own <150-line file).
 
+
+## Iteration 34.2 — Add Expense field parity with web
+
+**User request**: Web Add Expense modal has `Date` picker and `Payment mode` fields that were missing on mobile; category was pick-only vs web's "pick or type custom".
+
+### Changes
+**Backend** (`/app/backend/`):
+- `models.py` — added `payment_mode: Optional[Literal["cash","upi","card","bank","other"]] = "cash"` to `ExpenseIn`.
+- `routes/expenses.py`:
+  - Removed the `EXPENSE_CATEGORIES` whitelist so custom categories (e.g. "Marketing") are accepted verbatim (web-parity).
+  - `/expenses/categories` now returns defaults ∪ any tenant-custom categories seen in bills so mobile can suggest them.
+  - POST + PUT persist `payment_mode`.
+
+**Frontend** (`/app/frontend/app/(tabs)/expenses.tsx`):
+- Modal header now says "Add expense" + subtitle "Category-tagged daily expenses (type a custom category to add your own)." — matches web verbatim.
+- Category converted from chip-only → free-text input + chip suggestions (pick-or-type).
+- Amount and Date now on the same row; Date opens a `react-native-calendars` picker.
+- New **Payment mode** row: Cash / UPI / Card / Bank Transfer / Other chips.
+- Description marked required (`*`); Notes textarea multi-line.
+- Expense row meta now displays `payment_mode` label alongside category & date.
+
+### Verification
+- Backend curl smoke: POST `{category:"Marketing", payment_mode:"upi", date:"2026-08-10"}` → 200 with payload echoed correctly.
+- Frontend screenshot verified: all 6 fields (Category, Amount, Date, Payment mode, Description, Notes) render in exact web order.
+
+### Verdict
+Add Expense is now 1:1 with web. Other "Add" forms (Member, Service, Staff, Stock, Appointment) may still have drift — pending user screenshots to audit exhaustively.
+
