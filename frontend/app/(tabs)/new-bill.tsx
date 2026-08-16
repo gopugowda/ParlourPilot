@@ -493,7 +493,12 @@ export default function NewBillScreen() {
                               onPress={() => { Haptics.selectionAsync(); updateItem(i, { tip_via: v }); }}
                               style={[styles.tipViaChip, (it.tip_via || 'cash') === v && styles.tipViaChipActive]}
                             >
-                              <Text style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}>{v === 'qr' ? 'QR / Online' : v.toUpperCase()}</Text>
+                              <Text
+                                style={[styles.tipViaText, (it.tip_via || 'cash') === v && styles.tipViaTextActive]}
+                                numberOfLines={2}
+                                adjustsFontSizeToFit
+                                minimumFontScale={0.8}
+                              >{v === 'qr' ? 'QR / Online' : v.toUpperCase()}</Text>
                             </TouchableOpacity>
                           ))}
                         </View>
@@ -579,8 +584,15 @@ export default function NewBillScreen() {
                       onPress={() => { Haptics.selectionAsync(); setTipVia(v); }}
                       style={[styles.tipViaChip, tipVia === v && styles.tipViaChipActive, tip <= 0 && { opacity: 0.5 }]}
                     >
-                      <Ionicons name={v === 'cash' ? 'cash-outline' : v === 'qr' ? 'qr-code-outline' : 'card-outline'} size={12} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
-                      <Text style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}>{v === 'cash' ? 'Cash' : v === 'qr' ? 'QR / Online' : 'Card'}</Text>
+                      <Ionicons name={v === 'cash' ? 'cash-outline' : v === 'qr' ? 'qr-code-outline' : 'card-outline'} size={16} color={tipVia === v ? '#fff' : colors.onSurfaceSecondary} />
+                      <Text
+                        style={[styles.tipViaText, tipVia === v && styles.tipViaTextActive]}
+                        numberOfLines={2}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                      >
+                        {v === 'cash' ? 'Cash' : v === 'qr' ? 'QR / Online' : 'Card'}
+                      </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -626,8 +638,15 @@ export default function NewBillScreen() {
                   onPress={() => { Haptics.selectionAsync(); setPaymentMode(o.k as any); }}
                   style={[styles.segment, paymentMode === o.k && styles.segmentActive]}
                 >
-                  <Ionicons name={o.icon as any} size={16} color={paymentMode === o.k ? '#fff' : colors.onSurfaceTertiary} />
-                  <Text style={[styles.segmentText, paymentMode === o.k && styles.segmentTextActive]}>{o.label}</Text>
+                  <Ionicons name={o.icon as any} size={18} color={paymentMode === o.k ? '#fff' : colors.onSurfaceTertiary} />
+                  <Text
+                    style={[styles.segmentText, paymentMode === o.k && styles.segmentTextActive]}
+                    numberOfLines={2}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.8}
+                  >
+                    {o.label}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
