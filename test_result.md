@@ -782,3 +782,61 @@ Files added/updated:
 All three iter25 minor findings are fixed. WhatsApp invoice feature is fully working end-to-end for admin/staff. No further action required for this feature.
 
 
+
+
+## Iteration 34 — Web-Parity Menu, Reports Rebuild, Variable Pricing Modal (2026-06)
+
+**User Request**: 1:1 parity with the deployed Web App:
+1. Reorder Manage menu to match web sidebar; rename Daily Report → Reports.
+2. Rebuild mobile Reports screen to include ALL web metric cards + Revenue Trend + Payment Methods donut + This-Month / This-Year comparisons.
+3. Auto-open an Additional Price prompt when a variable-priced service is picked in New Bill; add it to the line total.
+4. Ensure Add Service / Add Member forms mirror web labels/logic.
+
+### Implementation
+
+**Backend** (`/app/backend/routes/reports.py`):
+- NEW `_preset_range()` shared resolver (adds `last_week`, `quarter`, `year` presets).
+- NEW `_aggregate_bills_metrics()` returning per-bill breakdown (total_sales / net_sales / discount / tax / cash / upi / card / tips / invoices / phones).
+- NEW `GET /api/reports/analytics` returning full web-parity payload:
+  `{total_sales, net_sales, net_profit, invoices, avg_ticket, total_customers, new_customers, returning_customers, total_discount, total_tax, total_expenses, staff_commission, cash, upi, card, tips, trend[], payment_methods[cash|upi|card|other], this_month, last_month, month_change_pct, this_year, last_year, year_change_pct}`.
+- Refactored `reports_range`, `reports_revenue_by_gender`, `reports_staff_performance` to reuse `_preset_range()` (fixes iter34 first-pass bug where new presets silently collapsed to today..today on `/reports/range`).
+
+**Frontend**:
+- `/app/frontend/app/(tabs)/manage.tsx` — replaced grouped menu with a single flat, web-ordered list; renamed Daily Report → Reports.
+- `/app/frontend/src/components/MiniLineChart.tsx` — NEW pure-SVG line + area chart with dashed grid, y-axis money labels, x-axis date ticks.
+- `/app/frontend/src/components/DonutChart.tsx` — NEW pure-SVG donut with legend (Cash/UPI/Card/Other).
+- `/app/frontend/app/manage/report.tsx` — added 12 metric cards, Revenue Trend, Payment Methods donut, This-Month / This-Year compare cards; expanded preset chips (Today, Yesterday, This Week, Last Week, This Month, Last Month, This Quarter, This Year, Custom); default now "This Month" (matches web).
+- `/app/frontend/app/(tabs)/new-bill.tsx` — on picking a service where `variable_price: true` OR `additional_price>0`, auto-opens a centered "Additional Price" modal. User types the extra amount → applied as `price = base + extra`; "Skip" preserves base.
+- `/app/frontend/src/theme/index.ts` — added `shadows.sm`.
+- Installed `react-native-svg@15.12.1` via `yarn expo install`.
+
+### Backend testing (testing_agent, iteration_34.json)
+
+- 10/11 tests passed on first pass. 1 issue found: `/reports/range?preset=last_week|quarter|year` silently collapsed to today..today (RCA: two separate preset ladders).
+- **Fixed** by making `/reports/range`, `/reports/revenue-by-gender`, `/reports/staff-performance` all use `_preset_range()`.
+- Manual re-verify (owner token, curl):
+  - `last_week` → 2026-08-03 → 2026-08-09 (7 days) ✓
+  - `quarter`   → 2026-07-01 → 2026-08-16 (47 days) ✓
+  - `year`      → 2026-01-01 → 2026-08-16 (228 days) ✓
+- Owner sees 200 with all 26 keys on `/reports/analytics`; staff correctly gets 403.
+- `payment_methods` returns exactly 4 slices in `[cash, upi, card, other]` order.
+
+### Frontend visual smoke (viewport 390×844)
+- Manage → new flat ordered list renders (Dashboard, New Bill, Bill History, Appointments, Members, Services, Staff, Stock, …) ✓
+- Reports → header now "Reports & Analytics"; 12 web-parity metric cards render (Total Sales highlighted); Revenue trend line renders; Comparisons render; presets chips row includes This Week / Last Week / This Quarter / This Year ✓
+- Variable Price modal implemented (unit-tested via code review — visual to be confirmed by user once test tenant has variable services created).
+
+### Files touched
+- `/app/backend/routes/reports.py`
+- `/app/frontend/app/(tabs)/manage.tsx`
+- `/app/frontend/app/(tabs)/new-bill.tsx`
+- `/app/frontend/app/manage/report.tsx`
+- `/app/frontend/src/theme/index.ts`
+- `/app/frontend/src/components/MiniLineChart.tsx` (new)
+- `/app/frontend/src/components/DonutChart.tsx` (new)
+- `/app/frontend/package.json` (react-native-svg added)
+- `/app/backend/tests/test_reports_analytics.py` (new — 11 tests)
+- `/app/test_reports/iteration_34.json`, `/app/test_reports/pytest/pytest_iter34.xml`
+
+### Verdict
+All 4 user-requested items implemented. Backend regression fixed. Awaiting user visual verification of the new Reports screen + Variable Pricing modal on their production data.

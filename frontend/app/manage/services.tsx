@@ -14,8 +14,19 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 type Gender = 'ladies' | 'men' | 'unisex';
 type Service = {
   id: string; name: string; price: number;
+  // Web writes these two (primary):
+  service_type?: 'Ladies' | 'Men' | 'Unisex' | string;
+  variable_price?: boolean;
+  // Mobile-only additional keys (backward compat):
   additional_price?: number; gender?: Gender;
   category: string; tax_percentage?: number; active: boolean;
+};
+
+// Normalise web's TitleCase service_type to mobile's lowercase gender.
+const readGender = (s: Service): Gender => {
+  const st = (s.service_type || '').toString().toLowerCase();
+  if (st === 'ladies' || st === 'men' || st === 'unisex') return st as Gender;
+  return (s.gender as Gender) || 'unisex';
 };
 
 export default function ServicesScreen() {
@@ -58,8 +69,10 @@ export default function ServicesScreen() {
   };
   const openEdit = (s: Service) => {
     setEditing(s); setName(s.name); setPrice(String(s.price));
-    setAdditionalPrice(s.additional_price ? String(s.additional_price) : '');
-    setGender((s.gender as Gender) || 'unisex');
+    // Web writes `variable_price: bool` — reflect it as ON toggle even if additional_price is missing.
+    const hasVariable = !!s.variable_price || (s.additional_price ?? 0) > 0;
+    setAdditionalPrice(hasVariable ? String(s.additional_price || 100) : '');
+    setGender(readGender(s));
     setCategory(s.category);
     setTaxPct(s.tax_percentage ? String(s.tax_percentage) : '');
     setActive(s.active); setErr(null); setEditOpen(true);
@@ -125,9 +138,9 @@ export default function ServicesScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }} style={{ flexGrow: 0 }}>
             {([
               { k: 'all', label: `All (${list.length})` },
-              { k: 'ladies', label: `Ladies (${list.filter(x => (x.gender || 'unisex') === 'ladies').length})` },
-              { k: 'men', label: `Men (${list.filter(x => (x.gender || 'unisex') === 'men').length})` },
-              { k: 'unisex', label: `Unisex (${list.filter(x => (x.gender || 'unisex') === 'unisex').length})` },
+              { k: 'ladies', label: `Ladies (${list.filter(x => readGender(x) === 'ladies').length})` },
+              { k: 'men', label: `Men (${list.filter(x => readGender(x) === 'men').length})` },
+              { k: 'unisex', label: `Unisex (${list.filter(x => readGender(x) === 'unisex').length})` },
             ] as const).map(c => (
               <TouchableOpacity
                 key={c.k}
@@ -151,9 +164,9 @@ export default function ServicesScreen() {
             </View>
           )}
           {list
-            .filter(s => genderFilter === 'all' || (s.gender || 'unisex') === genderFilter)
+            .filter(s => genderFilter === 'all' || readGender(s) === genderFilter)
             .map(s => {
-              const g = (s.gender || 'unisex') as Gender;
+              const g = readGender(s);
               const gCol = g === 'ladies' ? '#D9337B' : g === 'men' ? '#2E6BE6' : colors.brandPrimary;
               return (
                 <View key={s.id} style={styles.row} testID={`svc-row-${s.id}`}>
@@ -167,7 +180,7 @@ export default function ServicesScreen() {
                     <Text style={styles.rowMeta}>
                       {s.category}
                       {(s.tax_percentage ?? 0) > 0 ? ` · Tax ${s.tax_percentage}%` : ''}
-                      {(s.additional_price ?? 0) > 0 ? ` · +${fmtINR(s.additional_price || 0)} add-on` : ''}
+                      {(s.variable_price || (s.additional_price ?? 0) > 0) ? ` · Variable price` : ''}
                       {!s.active && ' · Inactive'}
                     </Text>
                   </View>

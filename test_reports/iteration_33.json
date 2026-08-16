@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 33 — Web ↔ Mobile field-name sync fully verified end-to-end. BACKEND: 12/12 pytest cases pass in /app/backend/tests/test_iter33_web_mobile_sync.py — POST/PUT /services writes both schemas (service_type Ladies/Men/Unisex TitleCase + variable_price bool AND gender lowercase + additional_price float); GET /services returns both key sets; PUT to unisex flips both keys; PROD read-only login works and prod services carry service_type; bill create enriches service_gender from service_type when only service_type is present on the service record. FRONTEND (390x844 preview): (A) Login as book@glowupunisexsalon.com/Gopi_1511 lands on dashboard with 'Glow Up Unisex Salon', 'Hi, Glow · 14d trial left', 'Head Branch' pill. (B) Manage → Services shows pink Ladies pill and blue Men pill correctly using readGender helper (verified via 3 seeded services). Filter chips render All(4)/Ladies(2)/Men(1)/Unisex(1); tapping Ladies filters to only Ladies rows. Rows correctly display '· Variable price' for services with additional_price>0 OR variable_price===true. (C) New Bill → Services card → Add → Select service opens picker modal showing LADIES / MEN badges next to service names (2 LADIES + 1 MEN badges verified). Selecting a service adds it to the bill line with correct price. (D) Platform admin (platform@parlourpilot.com/platform123) logs in to /platform showing tenant list including Glow Up. No console errors during any flow (only two pre-existing cosmetic warnings from prior iters: shadow*/pointerEvents deprecation).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter33_web_mobile_sync.py",
+    "/app/test_reports/pytest/pytest_iter33.xml",
+    "/app/test_reports/screenshots/iter33_dashboard.png",
+    "/app/test_reports/screenshots/iter33B_services_all.png",
+    "/app/test_reports/screenshots/iter33B_services_ladies.png",
+    "/app/test_reports/screenshots/iter33C_picker_open.png",
+    "/app/test_reports/screenshots/iter33C_after_select.png",
+    "/app/test_reports/screenshots/iter33_platform.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Console warning still emitted app-wide: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — pre-existing cosmetic.",
+    "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — pre-existing cosmetic.",
+    "Note: preview DB only had 1 service ('Hair Cut' Unisex) for Glow Up tenant before seeding — the 152-service count mentioned in the request is on production only. This is expected and does not affect functional verification."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter33_web_mobile_sync.py (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (A/B/C/D)"},
+  "seed_data_creation": "Created and then deleted 3 SEED_* services via API (SEED_Ladies_Facial, SEED_Ladies_Haircut, SEED_Men_Shave) to visually verify pink LADIES pill, blue MEN pill and 'Variable price' hint in Services list and New Bill picker. All seed data cleaned up post-test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter 33 sync validated end-to-end. Backend writes both web (service_type TitleCase + variable_price) and mobile (gender lowercase + additional_price) keys on POST/PUT /services. Bill create enriches service_gender from service_type when only service_type is present. Frontend Services and New Bill picker read either schema via readGender helper. Test file: /app/backend/tests/test_iter33_web_mobile_sync.py — run with `pytest backend/tests/test_iter33_web_mobile_sync.py -v`. Only 1 pre-existing service (Hair Cut) currently exists for Glow Up on preview DB; production has ~152.",
+  "rca_of_issue": "N/A — verification pass, all fixes confirmed working."
+}

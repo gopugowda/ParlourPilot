@@ -51,13 +51,24 @@ async def _enrich_items_with_service_gender(items: list, tid: str) -> None:
     Ensure every bill line carries `service_gender` so downstream reports (Type Revenue
     Split) don't have to join back to the services collection. Client may already send
     the correct value; if a line has service_id but no gender we look it up server-side.
+
+    Sync-aware: reads either `gender` (mobile schema) OR `service_type` (web schema) from
+    the service record so revenue-by-gender works consistently for services created on
+    either app.
     """
     missing_ids = list({(it.get("service_id") or "") for it in items if it.get("service_id") and not it.get("service_gender")})
     lookup: dict = {}
     if missing_ids:
-        cursor = db.services.find({"tenant_id": tid, "id": {"$in": missing_ids}}, {"_id": 0, "id": 1, "gender": 1})
+        cursor = db.services.find(
+            {"tenant_id": tid, "id": {"$in": missing_ids}},
+            {"_id": 0, "id": 1, "gender": 1, "service_type": 1},
+        )
         async for svc in cursor:
-            lookup[svc.get("id")] = (svc.get("gender") or "unisex").lower()
+            g = (svc.get("gender") or svc.get("service_type") or "unisex")
+            g = str(g).lower()
+            if g not in ("ladies", "men", "unisex"):
+                g = "unisex"
+            lookup[svc.get("id")] = g
     for it in items:
         g = it.get("service_gender")
         if not g and it.get("service_id"):

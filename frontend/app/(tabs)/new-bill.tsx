@@ -14,7 +14,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 const DEFAULT_MEMBER_PCT = 10;
 const DEFAULT_MEMBER_MIN_PRICE = 100;
 
-type Service = { id: string; name: string; price: number; additional_price?: number; gender?: string; category: string; tax_percentage?: number };
+type Service = { id: string; name: string; price: number; additional_price?: number; variable_price?: boolean; gender?: string; service_type?: string; category: string; tax_percentage?: number };
 type Beautician = { id: string; name: string; role: string };
 type Item = {
   service_id?: string; service_name: string;
@@ -51,6 +51,12 @@ export default function NewBillScreen() {
   const [tipBeauticianName, setTipBeauticianName] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Variable price prompt — auto-opens when a variable-priced service is picked.
+  const [variablePrompt, setVariablePrompt] = useState<null | {
+    index: number; serviceName: string; base: number; suggested: number;
+  }>(null);
+  const [variableInput, setVariableInput] = useState('');
 
   // Picker modals — 'tip-beautician' picks the beautician who received the tip
   const [pickerFor, setPickerFor] = useState<{ index: number; type: 'service' | 'beautician' } | { type: 'tip-beautician' } | null>(null);
@@ -678,15 +684,33 @@ export default function NewBillScreen() {
                   onPress={() => {
                     if (!pickerFor) return;
                     if (pickerFor.type === 'service' && 'index' in pickerFor) {
+                      const rawG = (opt.service_type || opt.gender || 'unisex').toString().toLowerCase();
+                      const g = (['ladies', 'men', 'unisex'].includes(rawG) ? rawG : 'unisex') as any;
+                      const suggested = Number(opt.additional_price) || 0;
+                      const isVariable = !!opt.variable_price || suggested > 0;
                       updateItem(pickerFor.index, {
                         service_id: opt.id, service_name: opt.name,
-                        service_gender: (opt.gender || 'unisex') as any,
+                        service_gender: g,
                         price: opt.price,
                         base_price: opt.price,
-                        addon_price: opt.additional_price || 0,
+                        addon_price: suggested,
                         addon_applied: false,
                         tax_percentage: opt.tax_percentage || 0,
                       });
+                      Haptics.selectionAsync();
+                      const idxCaptured = pickerFor.index;
+                      setPickerFor(null);
+                      // Auto-open "Additional price" modal for variable-priced services
+                      if (isVariable) {
+                        setVariableInput(suggested > 0 ? String(suggested) : '');
+                        setVariablePrompt({
+                          index: idxCaptured,
+                          serviceName: opt.name,
+                          base: Number(opt.price) || 0,
+                          suggested,
+                        });
+                      }
+                      return;
                     } else if (pickerFor.type === 'beautician' && 'index' in pickerFor) {
                       updateItem(pickerFor.index, { beautician_id: opt.id, beautician_name: opt.name });
                     } else if (pickerFor.type === 'tip-beautician') {
@@ -699,15 +723,16 @@ export default function NewBillScreen() {
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <Text style={styles.pickerName}>{opt.name}</Text>
-                      {pickerFor?.type === 'service' && opt.gender && opt.gender !== 'unisex' && (
-                        <Text style={{ fontSize: 9, fontWeight: '800', color: opt.gender === 'ladies' ? '#D9337B' : '#2E6BE6' }}>
-                          {opt.gender === 'ladies' ? 'LADIES' : 'MEN'}
-                        </Text>
-                      )}
+                      {pickerFor?.type === 'service' && (() => {
+                        const g = (opt.service_type || opt.gender || 'unisex').toString().toLowerCase();
+                        if (g === 'ladies') return <Text style={{ fontSize: 9, fontWeight: '800', color: '#D9337B' }}>LADIES</Text>;
+                        if (g === 'men') return <Text style={{ fontSize: 9, fontWeight: '800', color: '#2E6BE6' }}>MEN</Text>;
+                        return null;
+                      })()}
                     </View>
                     <Text style={styles.pickerSub}>
                       {pickerFor?.type === 'service' ? opt.category : opt.role}
-                      {pickerFor?.type === 'service' && (opt.additional_price || 0) > 0 ? ` · +${fmtINR(opt.additional_price)} add-on` : ''}
+                      {pickerFor?.type === 'service' && (opt.variable_price || (opt.additional_price || 0) > 0) ? ' · Variable price' : ''}
                     </Text>
                   </View>
                   {pickerFor?.type === 'service' && (
@@ -717,6 +742,91 @@ export default function NewBillScreen() {
               ))}
             </ScrollView>
           </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Variable Price prompt — auto-opens when a variable-priced service is picked */}
+      <Modal
+        visible={!!variablePrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setVariablePrompt(null)}
+      >
+        <Pressable style={styles.varBackdrop} onPress={() => setVariablePrompt(null)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <Pressable style={styles.varSheet} onPress={() => {}}>
+              <View style={{ alignItems: 'center', gap: 4 }}>
+                <View style={styles.varIcon}>
+                  <Ionicons name="cash-outline" size={22} color={colors.brandPrimary} />
+                </View>
+                <Text style={styles.varTitle}>Additional Price</Text>
+                <Text style={styles.varSub}>
+                  {variablePrompt?.serviceName ? `"${variablePrompt.serviceName}"` : 'Variable service'} has a variable price.
+                </Text>
+                <Text style={styles.varSub}>
+                  Base {fmtINR(variablePrompt?.base || 0)} — add any extra amount.
+                </Text>
+              </View>
+              <View style={styles.varInputWrap}>
+                <Text style={styles.varInputPrefix}>₹</Text>
+                <TextInput
+                  testID="var-price-input"
+                  value={variableInput}
+                  onChangeText={(v) => setVariableInput(v.replace(/[^0-9.]/g, ''))}
+                  keyboardType="numeric"
+                  autoFocus
+                  placeholder={variablePrompt?.suggested ? `Suggested ${variablePrompt.suggested}` : '0'}
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.varInput}
+                />
+              </View>
+              {variablePrompt && (Number(variableInput) || 0) > 0 && (
+                <View style={styles.varPreview}>
+                  <Text style={styles.varPreviewLabel}>New price</Text>
+                  <Text style={styles.varPreviewValue}>
+                    {fmtINR((variablePrompt.base || 0) + (Number(variableInput) || 0))}
+                  </Text>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+                <TouchableOpacity
+                  testID="var-skip"
+                  style={styles.varCancelBtn}
+                  onPress={() => {
+                    // Keep base price, no add-on
+                    if (variablePrompt) {
+                      updateItem(variablePrompt.index, {
+                        price: variablePrompt.base,
+                        addon_applied: false,
+                      });
+                    }
+                    setVariablePrompt(null);
+                    setVariableInput('');
+                  }}
+                >
+                  <Text style={styles.varCancelText}>Skip</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="var-apply"
+                  style={styles.varApplyBtn}
+                  onPress={() => {
+                    if (!variablePrompt) return;
+                    const extra = Math.max(0, Number(variableInput) || 0);
+                    updateItem(variablePrompt.index, {
+                      price: (variablePrompt.base || 0) + extra,
+                      addon_price: extra,
+                      addon_applied: extra > 0,
+                    });
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    setVariablePrompt(null);
+                    setVariableInput('');
+                  }}
+                >
+                  <Text style={styles.varApplyText}>Add to Total</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
         </Pressable>
       </Modal>
     </View>
@@ -837,4 +947,21 @@ const styles = StyleSheet.create({
   pickerSub: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   pickerPrice: { fontSize: 15, fontWeight: '700', color: colors.brandPrimary },
   emptyText: { color: colors.onSurfaceTertiary, fontSize: 13, textAlign: 'center', padding: spacing.xl },
+
+  // Variable Price prompt
+  varBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
+  varSheet: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md, width: '100%', maxWidth: 360, ...shadows.strong },
+  varIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
+  varTitle: { fontSize: 18, fontWeight: '800', color: colors.onSurface, marginTop: 4 },
+  varSub: { fontSize: 12, color: colors.onSurfaceTertiary, textAlign: 'center' },
+  varInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.brandPrimary },
+  varInputPrefix: { fontSize: 22, fontWeight: '800', color: colors.brandPrimary, marginRight: 8 },
+  varInput: { flex: 1, paddingVertical: 12, fontSize: 20, color: colors.onSurface, fontWeight: '700' },
+  varPreview: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FDF3E1', borderRadius: radius.sm, padding: spacing.sm, borderWidth: 1, borderColor: '#F0DCA6' },
+  varPreviewLabel: { fontSize: 11, fontWeight: '700', color: '#B47712', letterSpacing: 0.3, textTransform: 'uppercase' },
+  varPreviewValue: { fontSize: 16, fontWeight: '800', color: '#3A2A08' },
+  varCancelBtn: { paddingVertical: 14, paddingHorizontal: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  varCancelText: { color: colors.onSurfaceSecondary, fontWeight: '700', fontSize: 14 },
+  varApplyBtn: { flex: 1, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center' },
+  varApplyText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

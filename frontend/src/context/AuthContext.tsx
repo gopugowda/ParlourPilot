@@ -13,7 +13,7 @@ export type User = {
   branch_id?: string | null;
   name: string;
   email: string;
-  role: 'admin' | 'owner' | 'staff' | 'platform_admin' | 'platform_staff';
+  role: 'admin' | 'owner' | 'staff' | 'platform_admin' | 'platform_staff' | 'super_admin';
   is_owner?: boolean;
 };
 
@@ -160,7 +160,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (['expired','suspended','cancelled'].includes(res.subscription.status)) setSubscriptionExpired(true);
       else setSubscriptionExpired(false);
     } else {
+      // Platform accounts have no tenant/subscription — ensure the expired-flag never leaks
+      // between account switches (e.g. sign out of an expired tenant → sign in as platform_admin).
       setSubscription(null);
+      setSubscriptionExpired(false);
     }
     const brs: Branch[] = res.branches || [];
     setBranches(brs);

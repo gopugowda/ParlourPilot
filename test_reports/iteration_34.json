@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only test of NEW GET /api/reports/analytics + shared _preset_range. 10/11 tests passed (90.9%). All 8 owner presets (today, yesterday, week, last_week, month, last_month, quarter, year) return 200 with the full web-parity payload (all 26 top-level keys present). payment_methods has exactly 4 entries in fixed order [cash, upi, card, other] with share_pct summing to ~100 whenever total>0 (and 0 when range is empty). Staff correctly gets 403 via branch_scope_admin. Custom range preset=custom&from_date=2026-08-01&to_date=2026-08-16 echoes both dates. ONE FAILURE: /api/reports/range?preset=last_week returns 200 but the local (duplicated) preset resolver in /reports/range does NOT know about last_week/quarter/year, so the request silently collapses to today..today instead of the 7-day Monday-based last-week window. Same silent collapse applies to preset=quarter and preset=year on /reports/range.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/reports/range",
+        "issue": "New presets last_week / quarter / year are NOT accepted by /reports/range. The route has its own inline preset ladder (reports.py lines ~183-200) that only handles today/yesterday/week/month/last_month; anything else falls through to the from_date/to_date parser and defaults both to today. Response is 200 but from==to==today. Fix: replace the inline ladder in reports_range() with a call to _preset_range(preset, from_date, to_date) so the shared resolver is the single source of truth. Reference: /app/backend/routes/reports.py:173-208 vs _preset_range at :262-296."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reports_analytics.py",
+    "/app/test_reports/pytest/pytest_iter34.xml"
+  ],
+  "action_items": [
+    "In /app/backend/routes/reports.py::reports_range (line 173), replace the local preset ladder with `d_from, d_to = _preset_range(preset, from_date, to_date)` so last_week / quarter / year work identically on /reports/range and /reports/analytics. Keep the subsequent staff-clamp block."
+  ],
+  "critical_code_review_comments": [
+    "Duplicated preset logic between /reports/range (inline) and /reports/analytics (via _preset_range) violates DRY and caused the /reports/range?preset=last_week regression. Consolidate on _preset_range.",
+    "reports.py is 750 lines — consider splitting analytics vs range vs gender-breakdown into sub-modules for maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reports_analytics.py (new)"
+  ],
+  "success_rate": {"backend": "90.9% (10/11)", "frontend": "N/A (skipped per request)"},
+  "seed_data_creation": "None. Used existing testuiowner@testparlourpilot.com (owner) and teststaffui@testparlourpilot.com (staff) test tenant.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent updates /reports/range to use _preset_range, re-run: pytest /app/backend/tests/test_reports_analytics.py::test_reports_range_accepts_last_week -v. Full analytics coverage lives in the same file and can be reused as regression.",
+  "rca_of_issue": "RCA: /reports/analytics was correctly wired to the new shared helper _preset_range(...) which understands the three new presets (last_week, quarter, year). However /reports/range (older sibling endpoint) still has its own inline preset if/elif ladder that only recognises today/yesterday/week/month/last_month. When preset='last_week' is passed to /reports/range, the ladder's final `else` branch is taken; from_date and to_date are None, so both d_from and d_to are set to today, producing a 0-day window. HTTP 200 is returned but the payload is functionally wrong. Reproduction: `curl -H 'Authorization: Bearer <owner>' '$API/reports/range?preset=last_week'` -> from==to==today. Mitigation: call _preset_range in reports_range() (one-line change) so both endpoints share the same preset semantics."
+}

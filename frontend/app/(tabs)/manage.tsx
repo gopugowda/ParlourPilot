@@ -12,53 +12,31 @@ export default function ManageScreen() {
   const onBrand = contrastText(brandColor || colors.brandPrimary);
   const onBrandSoft = onBrand === '#FFFFFF' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)';
 
-  const groups = (user?.role === 'admin' || user?.role === 'owner') ? [
-    {
-      title: 'Salon Management',
-      items: [
-        { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations · switch active branch', route: '/manage/branches' },
-        { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings' },
-        { icon: 'pricetags-outline', label: 'Services', hint: 'Add, edit, remove services', route: '/manage/services' },
-        { icon: 'people-outline', label: 'Staff', hint: "Manage your team's roster", route: '/manage/beauticians' },
-        { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto discount', route: '/manage/members' },
-        { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock' },
-      ],
-    },
-    {
-      title: 'Daily Operations',
-      items: [
-        { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer appointments', route: '/manage/appointments' },
-        { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
-        { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
-        { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Revenue per staff · top performer · payroll export', route: '/manage/staff-performance' },
-      ],
-    },
-    {
-      title: 'Admin',
-      items: [
-        { icon: 'person-add-outline', label: 'Users', hint: 'Add admin or staff logins', route: '/manage/users' },
-        { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription' },
-      ],
-    },
-  ] : [
-    {
-      title: 'Daily Operations',
-      items: [
-        { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer bookings', route: '/manage/appointments' },
-        { icon: 'star-outline', label: 'Members', hint: 'Add & renew members · WhatsApp reminders', route: '/manage/members' },
-        { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
-        { icon: 'bar-chart-outline', label: 'Daily Report', hint: 'Last 30 days performance', route: '/manage/report' },
-      ],
-    },
-    {
-      title: 'Reference (view only)',
-      items: [
-        { icon: 'pricetags-outline', label: 'Services', hint: 'View salon service list & prices', route: '/manage/services' },
-        { icon: 'people-outline', label: 'Staff', hint: 'View team roster', route: '/manage/beauticians' },
-        { icon: 'cube-outline', label: 'Stock', hint: 'View inventory & usage', route: '/manage/stock' },
-      ],
-    },
+  // Web sidebar order (single ordered menu, 1:1 with the web app):
+  // Dashboard, New Bill, Bill History, Appointments, Members, Services, Staff,
+  // Stock, Expenses, Cash Closing, Reports, Staff Performance, Branches, Users,
+  // Salon Settings, Subscription.
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  const allItems: { icon: string; label: string; hint: string; route: string; adminOnly?: boolean }[] = [
+    { icon: 'grid-outline', label: 'Dashboard', hint: 'Business snapshot & KPIs', route: '/(tabs)' },
+    { icon: 'add-circle-outline', label: 'New Bill', hint: 'Create a fresh invoice', route: '/(tabs)/new-bill' },
+    { icon: 'receipt-outline', label: 'Bill History', hint: 'Browse past invoices', route: '/(tabs)/history' },
+    { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer bookings', route: '/manage/appointments' },
+    { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto discount', route: '/manage/members' },
+    { icon: 'pricetags-outline', label: 'Services', hint: 'Salon services & prices', route: '/manage/services' },
+    { icon: 'people-outline', label: 'Staff', hint: "Manage your team's roster", route: '/manage/beauticians' },
+    { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock' },
+    { icon: 'wallet-outline', label: 'Expenses', hint: 'Track daily expenses', route: '/(tabs)/expenses' },
+    { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing' },
+    { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report' },
+    { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Revenue per staff · top performer · payroll export', route: '/manage/staff-performance', adminOnly: true },
+    { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', adminOnly: true },
+    { icon: 'person-add-outline', label: 'Users', hint: 'Add admin or staff logins', route: '/manage/users', adminOnly: true },
+    { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', adminOnly: true },
+    { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', adminOnly: true },
   ];
+  const items = allItems.filter(it => isAdmin || !it.adminOnly);
+  const groups = [{ title: 'Menu', items }];
 
   return (
     <View style={styles.root} testID="manage-screen">

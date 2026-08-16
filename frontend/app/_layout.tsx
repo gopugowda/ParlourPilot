@@ -33,9 +33,8 @@ function AuthGate() {
       return;
     }
 
-    // Logged in
-    // Platform admin/staff have their own home
-    if (user.role === 'platform_admin' || user.role === 'platform_staff') {
+    // Platform admin/staff (and super_admin alias) have their own home
+    if (user.role === 'platform_admin' || user.role === 'platform_staff' || user.role === 'super_admin') {
       if (seg0 !== 'platform' && seg0 !== 'platform-users' && seg0 !== 'tenant-detail') router.replace('/platform');
       return;
     }

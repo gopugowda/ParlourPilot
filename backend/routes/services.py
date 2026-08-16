@@ -39,14 +39,22 @@ async def list_services(scope: BranchScope = Depends(branch_scope)):
 
 @router.post("/services")
 async def create_service(body: ServiceIn, scope: BranchScope = Depends(branch_scope_admin)):
+    # Sync both schemas: web writes `service_type` (Ladies/Men/Unisex TitleCase) + `variable_price` (bool)
+    g = (body.gender or "unisex").lower()
+    svc_type = "Ladies" if g == "ladies" else "Men" if g == "men" else "Unisex"
+    ap = float(body.additional_price or 0)
     doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": scope.tenant_id,
         "branch_id": scope.branch_id,
         "name": body.name,
         "price": float(body.price),
-        "additional_price": float(body.additional_price or 0),
-        "gender": (body.gender or "unisex").lower(),
+        # Web-schema keys (primary — this is what the web app reads):
+        "service_type": svc_type,
+        "variable_price": ap > 0,
+        # Mobile-only enhancement keys (kept for backward compat with mobile UI):
+        "additional_price": ap,
+        "gender": g,
         "category": body.category or "General",
         "tax_percentage": float(body.tax_percentage or 0),
         "active": body.active,
@@ -58,12 +66,17 @@ async def create_service(body: ServiceIn, scope: BranchScope = Depends(branch_sc
 
 @router.put("/services/{sid}")
 async def update_service(sid: str, body: ServiceIn, scope: BranchScope = Depends(branch_scope_admin)):
+    g = (body.gender or "unisex").lower()
+    svc_type = "Ladies" if g == "ladies" else "Men" if g == "men" else "Unisex"
+    ap = float(body.additional_price or 0)
     result = await db.services.find_one_and_update(
         scope.filter({"id": sid}),
         {"$set": {
             "name": body.name, "price": float(body.price),
-            "additional_price": float(body.additional_price or 0),
-            "gender": (body.gender or "unisex").lower(),
+            "service_type": svc_type,
+            "variable_price": ap > 0,
+            "additional_price": ap,
+            "gender": g,
             "category": body.category,
             "tax_percentage": float(body.tax_percentage or 0),
             "active": body.active,

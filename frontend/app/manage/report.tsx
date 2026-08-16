@@ -12,15 +12,34 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
+import { MiniLineChart } from '@/src/components/MiniLineChart';
+import { DonutChart, DonutLegend } from '@/src/components/DonutChart';
 
 type Row = { date: string; total: number; count: number; cash: number; qr: number; tips: number; expenses: number; net: number };
+type PaymentSlice = { key: string; label: string; amount: number; share_pct: number };
+type PeriodSummary = { revenue: number; invoices: number };
+type Analytics = {
+  from: string; to: string;
+  total_sales: number; net_sales: number; net_profit: number;
+  invoices: number; avg_ticket: number;
+  total_customers: number; new_customers: number; returning_customers: number;
+  total_discount: number; total_tax: number; total_expenses: number; staff_commission: number;
+  cash: number; upi: number; card: number; tips: number;
+  trend: { date: string; value: number }[];
+  payment_methods: PaymentSlice[];
+  this_month: PeriodSummary; last_month: PeriodSummary; month_change_pct: number | null;
+  this_year: PeriodSummary; last_year: PeriodSummary; year_change_pct: number | null;
+};
 
 const ADMIN_PRESETS = [
   { k: 'today', label: 'Today' },
   { k: 'yesterday', label: 'Yesterday' },
-  { k: 'week', label: 'Last 7 Days' },
+  { k: 'week', label: 'This Week' },
+  { k: 'last_week', label: 'Last Week' },
   { k: 'month', label: 'This Month' },
   { k: 'last_month', label: 'Last Month' },
+  { k: 'quarter', label: 'This Quarter' },
+  { k: 'year', label: 'This Year' },
   { k: 'custom', label: 'Custom' },
 ];
 
@@ -35,7 +54,7 @@ export default function ReportScreen() {
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const presets = isAdmin ? ADMIN_PRESETS : STAFF_PRESETS;
 
-  const [preset, setPreset] = useState<string>('week');
+  const [preset, setPreset] = useState<string>('month');
   const today = new Date().toISOString().slice(0, 10);
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
@@ -44,6 +63,7 @@ export default function ReportScreen() {
   const [shareOpen, setShareOpen] = useState(false);
   const [data, setData] = useState<{ from: string; to: string; totals: any; rows: Row[] } | null>(null);
   const [genderData, setGenderData] = useState<{ total_revenue: number; top_segment: string | null; segments: { key: string; label: string; revenue: number; count: number; share_pct: number }[] } | null>(null);
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -56,12 +76,14 @@ export default function ReportScreen() {
       const params = preset === 'custom'
         ? `preset=custom&from_date=${fromDate}&to_date=${toDate}`
         : `preset=${preset}`;
-      const [res, gender] = await Promise.all([
+      const [res, gender, an] = await Promise.all([
         api(`/reports/range?${params}`),
         api(`/reports/revenue-by-gender?${params}`).catch(() => null),
+        isAdmin ? api(`/reports/analytics?${params}`).catch(() => null) : Promise.resolve(null),
       ]);
       setData(res as any);
       setGenderData(gender as any);
+      setAnalytics(an as any);
     } catch {} finally { setLoading(false); }
   };
 
@@ -152,8 +174,8 @@ export default function ReportScreen() {
           <Ionicons name="home-outline" size={20} color="#3A3937" />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Report</Text>
-          <Text style={styles.headerSub}>{isAdmin ? 'Pick a range' : 'Last 2 days'}</Text>
+          <Text style={styles.headerTitle}>Reports & Analytics</Text>
+          <Text style={styles.headerSub}>{isAdmin ? 'Business insights' : 'Last 2 days'}</Text>
         </View>
         <TouchableOpacity
           testID="share-report-btn"
@@ -220,6 +242,54 @@ export default function ReportScreen() {
               <Text style={styles.expLine}>Expenses: {fmtINR(data?.totals?.expenses || 0)} · Tips: {fmtINR(data?.totals?.tips || 0)}</Text>
             )}
           </View>
+
+          {/* Web-parity metric cards — Total Sales / Net Sales / Net Profit etc. */}
+          {isAdmin && analytics && (
+            <View style={styles.metricsGrid} testID="metric-cards">
+              <MetricCard color="#F5B85D" bg="#FDF3E1" label="Total Sales" value={fmtINR(analytics.total_sales)} testID="mc-total-sales" active />
+              <MetricCard label="Net Sales" value={fmtINR(analytics.net_sales)} testID="mc-net-sales" />
+              <MetricCard label="Net Profit" value={fmtINR(analytics.net_profit)} hint="Net − expenses − commission" testID="mc-net-profit" />
+              <MetricCard label="Invoices" value={String(analytics.invoices)} hint={`Avg ${fmtINR(analytics.avg_ticket)}`} testID="mc-invoices" />
+              <MetricCard label="Total Customers" value={String(analytics.total_customers)} hint={`${analytics.new_customers} new · ${analytics.returning_customers} returning`} testID="mc-customers" />
+              <MetricCard label="Total Discount" value={fmtINR(analytics.total_discount)} testID="mc-discount" />
+              <MetricCard label="Total Tax" value={fmtINR(analytics.total_tax)} testID="mc-tax" />
+              <MetricCard label="Total Expenses" value={fmtINR(analytics.total_expenses)} testID="mc-expenses" />
+              <MetricCard label="Staff Commission" value={fmtINR(analytics.staff_commission)} testID="mc-commission" />
+              <MetricCard label="Cash" value={fmtINR(analytics.cash)} testID="mc-cash" />
+              <MetricCard label="UPI" value={fmtINR(analytics.upi)} testID="mc-upi" />
+              <MetricCard label="Card" value={fmtINR(analytics.card)} testID="mc-card" />
+            </View>
+          )}
+
+          {/* Revenue trend chart */}
+          {isAdmin && analytics && analytics.trend.length > 0 && (
+            <View style={styles.chartCard} testID="revenue-trend-card">
+              <Text style={styles.chartTitle}>Revenue trend</Text>
+              <MiniLineChart data={analytics.trend} height={190} color={colors.brandPrimary} testID="revenue-trend-chart" />
+            </View>
+          )}
+
+          {/* Payment methods donut */}
+          {isAdmin && analytics && (analytics.cash + analytics.upi + analytics.card + analytics.tips) > 0 && (
+            <View style={styles.chartCard} testID="payment-methods-card">
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm }}>
+                <Ionicons name="pie-chart-outline" size={16} color={colors.brandPrimary} />
+                <Text style={styles.chartTitle}>Payment methods</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <DonutChart data={analytics.payment_methods} testID="payment-donut" />
+                <DonutLegend data={analytics.payment_methods} testID="payment-legend" />
+              </View>
+            </View>
+          )}
+
+          {/* Comparisons */}
+          {isAdmin && analytics && (
+            <View style={styles.compareRow} testID="comparisons">
+              <CompareCard title="This month vs last month" cur={analytics.this_month} prev={analytics.last_month} change={analytics.month_change_pct} labelCur="This month" labelPrev="Last month" testID="compare-month" />
+              <CompareCard title="This year vs last year" cur={analytics.this_year} prev={analytics.last_year} change={analytics.year_change_pct} labelCur="This year" labelPrev="Last year" testID="compare-year" />
+            </View>
+          )}
 
           {/* Type Revenue Split — Ladies / Men / Unisex */}
           {isAdmin && genderData && (genderData.total_revenue > 0 ? (
@@ -422,6 +492,57 @@ export default function ReportScreen() {
   );
 }
 
+function MetricCard({
+  label, value, hint, testID, active, color, bg,
+}: {
+  label: string; value: string; hint?: string; testID?: string;
+  active?: boolean; color?: string; bg?: string;
+}) {
+  return (
+    <View
+      testID={testID}
+      style={[
+        styles.metricCard,
+        active && { backgroundColor: bg || '#FDF3E1', borderColor: color || '#F5B85D' },
+      ]}
+    >
+      <Text style={[styles.metricLabel, active && { color: color || '#B47712' }]} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.metricValue, active && { color: '#3A2A08' }]} numberOfLines={1}>{value}</Text>
+      {hint ? <Text style={styles.metricHint} numberOfLines={1}>{hint}</Text> : null}
+    </View>
+  );
+}
+
+function CompareCard({
+  title, cur, prev, change, labelCur, labelPrev, testID,
+}: {
+  title: string; cur: { revenue: number; invoices: number }; prev: { revenue: number; invoices: number };
+  change: number | null; labelCur: string; labelPrev: string; testID?: string;
+}) {
+  const up = (change ?? 0) >= 0;
+  return (
+    <View style={styles.compareCard} testID={testID}>
+      <Text style={styles.compareTitle}>{title}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 4 }}>
+        <View>
+          <Text style={styles.compareLabel}>{labelCur}</Text>
+          <Text style={styles.compareValue}>{`₹${Math.round(cur.revenue).toLocaleString('en-IN')}`}</Text>
+          <Text style={styles.compareSub}>{cur.invoices} invoices</Text>
+        </View>
+        {change !== null && (
+          <View style={[styles.trendPill, { backgroundColor: up ? '#DFF5DE' : '#FDE7E7', borderColor: up ? '#8ED18B' : '#F2B5B5' }]}>
+            <Ionicons name={up ? 'trending-up' : 'trending-down'} size={11} color={up ? '#207447' : '#C42032'} />
+            <Text style={[styles.trendPillText, { color: up ? '#207447' : '#C42032' }]}>
+              {`${up ? '+' : ''}${change.toFixed(1)}%`}
+            </Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.compareSub2}>{labelPrev}  ₹{Math.round(prev.revenue).toLocaleString('en-IN')}</Text>
+    </View>
+  );
+}
+
 // Build marked dates for react-native-calendars period selection
 function buildMarkedRange(from: string, to: string): Record<string, any> {
   const marked: Record<string, any> = {};
@@ -522,4 +643,26 @@ const styles = StyleSheet.create({
   actionIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   actionTitle: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
   actionDesc: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
+
+  // Analytics metric cards
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  metricCard: { width: '48%', backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm },
+  metricLabel: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
+  metricValue: { fontSize: 18, fontWeight: '800', color: colors.onSurface, marginTop: 6 },
+  metricHint: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 4, fontWeight: '600' },
+
+  // Chart card
+  chartCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm },
+  chartTitle: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
+
+  // Comparison
+  compareRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  compareCard: { flex: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, ...shadows.sm },
+  compareTitle: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '700' },
+  compareLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
+  compareValue: { fontSize: 18, fontWeight: '800', color: colors.onSurface, marginTop: 2 },
+  compareSub: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 2, fontWeight: '600' },
+  compareSub2: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 6, fontWeight: '600' },
+  trendPill: { flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
+  trendPillText: { fontSize: 11, fontWeight: '800' },
 });
