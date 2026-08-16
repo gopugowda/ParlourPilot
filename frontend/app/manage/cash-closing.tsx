@@ -1,21 +1,31 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Share,
+  KeyboardAvoidingView, Platform, Share, Modal, Pressable,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+
+function formatPrettyDate(iso: string): string {
+  try {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch { return iso; }
+}
 
 export default function CashClosingScreen() {
   const router = useRouter();
   const { user, tenant } = useAuth();
   const insets = useSafeAreaInsets();
-  const today = new Date().toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState<string>(todayIso);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState('');
@@ -27,9 +37,10 @@ export default function CashClosingScreen() {
   const [history, setHistory] = useState<any[]>([]);
 
   const load = async () => {
+    setLoading(true);
     try {
       const [s, h]: any = await Promise.all([
-        api(`/cash-closing/summary?date=${today}`),
+        api(`/cash-closing/summary?date=${selectedDate}`),
         api('/cash-closing?limit=10'),
       ]);
       setSummary(s);
@@ -41,12 +52,15 @@ export default function CashClosingScreen() {
         setActualClosing(String(s.existing_closing.actual_closing));
         setNotes(s.existing_closing.notes || '');
       } else {
+        setSavedDoc(null);
         setOpening(String(s.suggested_opening || 0));
         setCashExpenses(String(s.total_expenses || 0));
+        setActualClosing('');
+        setNotes('');
       }
     } catch {} finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [selectedDate]);
 
   const openingN = Number(opening) || 0;
   const cashExpN = Number(cashExpenses) || 0;
@@ -61,7 +75,7 @@ export default function CashClosingScreen() {
       const doc: any = await api('/cash-closing', {
         method: 'POST',
         body: {
-          date: today,
+          date: selectedDate,
           opening_balance: openingN,
           cash_expenses: cashExpN,
           actual_closing: actualN,
@@ -78,13 +92,13 @@ export default function CashClosingScreen() {
     if (!summary) return;
     const salonName = (tenant?.business_name || 'Salon').toUpperCase();
     const msg = `*${salonName} — Daily Closing*
-Date: ${today}
+Date: ${selectedDate}
 Submitted by: ${user?.name}
 
 *Business*
 Total Revenue: ${fmtINR(summary.total_revenue)}
 Cash Sales: ${fmtINR(summary.cash_sales)}
-UPI Sales: ${fmtINR(summary.upi_sales)}
+QR / Online Sales: ${fmtINR(summary.upi_sales)}
 Tips: ${fmtINR(summary.tips)}
 Bills: ${summary.bills_count}
 
@@ -92,13 +106,9 @@ Bills: ${summary.bills_count}
 Opening Balance: ${fmtINR(openingN)}
 + Cash Sales: ${fmtINR(cashSales)}
 - Cash Expenses: ${fmtINR(cashExpN)}
-Expected Closing: ${fmtINR(expected)}
-Actual Closing: ${fmtINR(actualN)}
-${diff === 0 ? 'MATCH ✓' : diff > 0 ? `Excess: +${fmtINR(diff)}` : `Short: ${fmtINR(diff)}`}
-
-*Expenses Today*
-Total: ${fmtINR(summary.total_expenses)}
-Cash from counter: ${fmtINR(cashExpN)}
+Expected in drawer: ${fmtINR(expected)}
+Actual cash counted: ${fmtINR(actualN)}
+${diff === 0 ? 'BALANCED ✓' : diff > 0 ? `Variance: +${fmtINR(diff)} (excess)` : `Variance: ${fmtINR(diff)} (short)`}
 
 ${notes ? '\nNotes: ' + notes : ''}`;
     try { await Share.share({ message: msg }); } catch {}
@@ -119,167 +129,213 @@ ${notes ? '\nNotes: ' + notes : ''}`;
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Cash Closing</Text>
-          <Text style={styles.headerSub}>{today} · {user?.name}</Text>
+          <Text style={styles.headerSub}>End-of-day cash reconciliation.</Text>
         </View>
+        <TouchableOpacity
+          testID="cc-date-chip"
+          onPress={() => { Haptics.selectionAsync(); setDatePickerOpen(true); }}
+          style={styles.dateChip}
+        >
+          <Ionicons name="calendar-outline" size={14} color={colors.brandPrimary} />
+          <Text style={styles.dateChipText}>{formatPrettyDate(selectedDate)}</Text>
+        </TouchableOpacity>
       </SafeAreaView>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={80}>
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 }} keyboardShouldPersistTaps="handled">
-          {/* Auto totals */}
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Today&apos;s Business</Text>
-            <Text style={styles.summaryVal}>{fmtINR(summary?.total_revenue || 0)}</Text>
-            <View style={styles.rowStats}>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>Cash</Text>
-                <Text style={styles.statVal}>{fmtINR(cashSales)}</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>QR / Online</Text>
-                <Text style={styles.statVal}>{fmtINR(summary?.upi_sales || 0)}</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>Tips</Text>
-                <Text style={styles.statVal}>{fmtINR(summary?.tips || 0)}</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>Bills</Text>
-                <Text style={styles.statVal}>{summary?.bills_count || 0}</Text>
-              </View>
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 180 }} keyboardShouldPersistTaps="handled">
+          {/* 3-tile row: Cash sales / QR sales / Total sales (highlighted) — matches web */}
+          <View style={styles.tilesRow}>
+            <View style={styles.tile} testID="tile-cash">
+              <Text style={styles.tileLabel}>Cash sales</Text>
+              <Text style={styles.tileValue}>{fmtINR(cashSales)}</Text>
+            </View>
+            <View style={styles.tile} testID="tile-qr">
+              <Text style={styles.tileLabel}>QR sales</Text>
+              <Text style={styles.tileValue}>{fmtINR(summary?.upi_sales || 0)}</Text>
+            </View>
+            <View style={[styles.tile, styles.tileHighlight]} testID="tile-total">
+              <Text style={[styles.tileLabel, { color: '#FDF3E1' }]}>Total sales</Text>
+              <Text style={[styles.tileValue, { color: '#fff' }]}>{fmtINR(summary?.total_revenue || 0)}</Text>
             </View>
           </View>
 
-          {/* Inputs */}
+          {/* Secondary line: tips + bills (mobile-only convenience) */}
+          <View style={styles.secondaryLine} testID="secondary-line">
+            <Text style={styles.secondaryText}>
+              Tips {fmtINR(summary?.tips || 0)}  ·  {summary?.bills_count || 0} bills
+            </Text>
+          </View>
+
+          {/* Web-parity input grid: 2-col rows */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Counter Cash</Text>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Opening Balance (₹)</Text>
-              <Text style={styles.helpText}>Cash in counter at start of day (auto-filled from yesterday&apos;s close)</Text>
-              <TextInput
-                testID="opening-input"
-                value={opening}
-                onChangeText={(v) => setOpening(v.replace(/[^0-9.]/g, ''))}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor={colors.onSurfaceTertiary}
-                style={styles.input}
-              />
+            <View style={styles.gridRow}>
+              <View style={styles.gridField}>
+                <Text style={styles.label}>Opening balance</Text>
+                <TextInput
+                  testID="opening-input"
+                  value={opening}
+                  onChangeText={(v) => setOpening(v.replace(/[^0-9.]/g, ''))}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
+              </View>
+              <View style={styles.gridField}>
+                <Text style={styles.label}>Cash expenses</Text>
+                <TextInput
+                  testID="cash-expenses-input"
+                  value={cashExpenses}
+                  onChangeText={(v) => setCashExpenses(v.replace(/[^0-9.]/g, ''))}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
+              </View>
             </View>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Cash Spent Today (₹)</Text>
-              <Text style={styles.helpText}>Cash taken from counter for expenses (auto = today&apos;s total expenses)</Text>
-              <TextInput
-                testID="cash-expenses-input"
-                value={cashExpenses}
-                onChangeText={(v) => setCashExpenses(v.replace(/[^0-9.]/g, ''))}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor={colors.onSurfaceTertiary}
-                style={styles.input}
-              />
+            <View style={styles.gridRow}>
+              <View style={styles.gridField}>
+                <Text style={styles.label}>Actual cash counted</Text>
+                <TextInput
+                  testID="actual-input"
+                  value={actualClosing}
+                  onChangeText={(v) => setActualClosing(v.replace(/[^0-9.]/g, ''))}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
+              </View>
+              <View style={styles.gridField}>
+                <Text style={styles.label}>Notes</Text>
+                <TextInput
+                  testID="notes-input"
+                  value={notes}
+                  onChangeText={setNotes}
+                  placeholder="Optional"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
+              </View>
             </View>
 
-            {/* Formula view */}
+            {/* Formula card (mobile-only convenience) */}
             <View style={styles.formula}>
               <View style={styles.formulaRow}><Text style={styles.formulaLabel}>Opening</Text><Text style={styles.formulaVal}>{fmtINR(openingN)}</Text></View>
               <View style={styles.formulaRow}><Text style={styles.formulaLabel}>+ Cash Sales</Text><Text style={[styles.formulaVal, { color: colors.success }]}>+ {fmtINR(cashSales)}</Text></View>
               <View style={styles.formulaRow}><Text style={styles.formulaLabel}>− Cash Expenses</Text><Text style={[styles.formulaVal, { color: colors.error }]}>− {fmtINR(cashExpN)}</Text></View>
               <View style={[styles.formulaRow, styles.formulaRowGrand]}>
-                <Text style={styles.formulaGrandLabel}>Expected Closing</Text>
+                <Text style={styles.formulaGrandLabel}>Expected in drawer</Text>
                 <Text style={styles.formulaGrandVal} testID="expected-closing">{fmtINR(expected)}</Text>
               </View>
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Actual Counter Cash (₹)</Text>
-              <Text style={styles.helpText}>Count physical cash in the counter now</Text>
-              <TextInput
-                testID="actual-input"
-                value={actualClosing}
-                onChangeText={(v) => setActualClosing(v.replace(/[^0-9.]/g, ''))}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor={colors.onSurfaceTertiary}
-                style={[styles.input, { fontSize: 20, fontWeight: '800' }]}
-              />
-            </View>
-
-            {actualN > 0 && (
-              <View style={[styles.diffBox, diff === 0 ? styles.diffOk : diff > 0 ? styles.diffExcess : styles.diffShort]}>
-                <Ionicons name={diff === 0 ? 'checkmark-circle' : 'alert-circle'} size={22} color={diff === 0 ? colors.success : diff > 0 ? colors.warning : colors.error} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.diffTitle, { color: diff === 0 ? colors.success : diff > 0 ? colors.warning : colors.error }]}>
-                    {diff === 0 ? 'Cash matches' : diff > 0 ? `Excess ${fmtINR(diff)}` : `Short ${fmtINR(Math.abs(diff))}`}
-                  </Text>
-                  <Text style={styles.diffSub}>
-                    Expected {fmtINR(expected)} · Actual {fmtINR(actualN)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Notes (optional)</Text>
-              <TextInput
-                testID="notes-input"
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="e.g. Reason for shortfall"
-                placeholderTextColor={colors.onSurfaceTertiary}
-                style={styles.input}
-                multiline
-              />
             </View>
           </View>
 
           {/* History */}
           {history.length > 0 && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Recent Closings</Text>
+              <Text style={styles.cardTitle}>Recent closings</Text>
               {history.map(h => (
-                <View key={h.id} style={styles.histRow} testID={`hist-${h.date}`}>
+                <TouchableOpacity
+                  key={h.id}
+                  style={styles.histRow}
+                  testID={`hist-${h.date}`}
+                  onPress={() => { Haptics.selectionAsync(); setSelectedDate(h.date); }}
+                >
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.histDate}>{h.date}</Text>
+                    <Text style={styles.histDate}>{formatPrettyDate(h.date)}</Text>
                     <Text style={styles.histMeta}>Rev {fmtINR(h.total_revenue)} · by {h.submitted_by_name}</Text>
                   </View>
                   <View style={[styles.diffPill, h.difference === 0 ? { backgroundColor: '#E9F1E7' } : h.difference > 0 ? { backgroundColor: '#FDF3E4' } : { backgroundColor: '#FDE7E7' }]}>
                     <Text style={[styles.diffPillText, { color: h.difference === 0 ? colors.success : h.difference > 0 ? colors.warning : colors.error }]}>
-                      {h.difference === 0 ? 'OK' : (h.difference > 0 ? '+' : '') + fmtINR(h.difference)}
+                      {h.difference === 0 ? 'Balanced' : (h.difference > 0 ? '+' : '') + fmtINR(h.difference)}
                     </Text>
                   </View>
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
           )}
         </ScrollView>
 
-        {/* Sticky footer */}
+        {/* Sticky footer — Expected + Variance + Close day (web parity) */}
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
-          <TouchableOpacity
-            testID="share-report-btn"
-            onPress={shareReport}
-            style={styles.footerSecondary}
-          >
-            <Ionicons name="logo-whatsapp" size={20} color={colors.brandPrimary} />
-            <Text style={styles.footerSecondaryText}>Share</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="save-closing-btn"
-            onPress={save}
-            disabled={saving}
-            style={[styles.footerPrimary, saving && { opacity: 0.6 }]}
-          >
-            {saving ? <ActivityIndicator color="#fff" /> : (
-              <>
-                <Ionicons name={savedDoc ? 'checkmark-circle-outline' : 'save-outline'} size={20} color="#fff" />
-                <Text style={styles.footerPrimaryText}>{savedDoc ? 'Update Closing' : 'Save Closing'}</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          <View style={styles.footerStats}>
+            <View style={styles.footerStat}>
+              <Text style={styles.footerStatLabel}>Expected in drawer</Text>
+              <Text style={styles.footerStatValue}>{fmtINR(expected)}</Text>
+            </View>
+            <View style={styles.footerStat}>
+              <Text style={styles.footerStatLabel}>
+                Variance <Text style={{ color: diff === 0 ? colors.success : diff > 0 ? colors.warning : colors.error, fontWeight: '800' }}>
+                  {diff === 0 ? '(Balanced)' : diff > 0 ? '(Excess)' : '(Short)'}
+                </Text>
+              </Text>
+              <Text style={[styles.footerStatValue, { color: diff === 0 ? colors.onSurface : diff > 0 ? colors.warning : colors.error }]}>
+                {diff === 0 ? '₹0' : (diff > 0 ? '+' : '') + fmtINR(diff)}
+              </Text>
+            </View>
+          </View>
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <TouchableOpacity
+              testID="share-report-btn"
+              onPress={shareReport}
+              style={styles.footerSecondary}
+            >
+              <Ionicons name="logo-whatsapp" size={18} color={colors.brandPrimary} />
+              <Text style={styles.footerSecondaryText}>Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              testID="save-closing-btn"
+              onPress={save}
+              disabled={saving}
+              style={[styles.footerPrimary, saving && { opacity: 0.6 }]}
+            >
+              {saving ? <ActivityIndicator color="#fff" /> : (
+                <>
+                  <Ionicons name={savedDoc ? 'checkmark-circle-outline' : 'lock-closed-outline'} size={18} color="#fff" />
+                  <Text style={styles.footerPrimaryText}>{savedDoc ? 'Update' : 'Close day'}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Date picker modal */}
+      <Modal visible={datePickerOpen} transparent animationType="fade" onRequestClose={() => setDatePickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDatePickerOpen(false)}>
+          <Pressable style={styles.datePickerSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Pick a date</Text>
+            <Calendar
+              testID="cc-calendar"
+              current={selectedDate}
+              maxDate={todayIso}
+              onDayPress={(d) => {
+                Haptics.selectionAsync();
+                setSelectedDate(d.dateString);
+                setDatePickerOpen(false);
+              }}
+              markedDates={{ [selectedDate]: { selected: true, selectedColor: colors.brandPrimary } }}
+              theme={{
+                backgroundColor: colors.surface,
+                calendarBackground: colors.surface,
+                selectedDayBackgroundColor: colors.brandPrimary,
+                selectedDayTextColor: '#fff',
+                todayTextColor: colors.brandPrimary,
+                dayTextColor: colors.onSurface,
+                monthTextColor: colors.onSurface,
+                arrowColor: colors.brandPrimary,
+              }}
+            />
+            <TouchableOpacity style={styles.datePickerClose} onPress={() => setDatePickerOpen(false)}>
+              <Text style={styles.datePickerCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -290,36 +346,34 @@ const styles = StyleSheet.create({
   iconBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 20, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  dateChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.pill, ...shadows.sm },
+  dateChipText: { fontSize: 12, fontWeight: '700', color: colors.onSurface },
 
-  summaryCard: { backgroundColor: colors.surfaceInverse, padding: spacing.lg, borderRadius: radius.md, marginBottom: spacing.md, ...shadows.strong },
-  summaryLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 12, letterSpacing: 0.5, fontWeight: '700' },
-  summaryVal: { color: colors.brandSecondary, fontSize: 30, fontWeight: '900', marginTop: 4 },
-  rowStats: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
-  statBox: { flex: 1, backgroundColor: 'rgba(228,192,112,0.12)', padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: 'rgba(228,192,112,0.3)' },
-  statLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 10, fontWeight: '700' },
-  statVal: { color: '#fff', fontSize: 13, fontWeight: '800', marginTop: 2 },
+  tilesRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
+  tile: { flex: 1, backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
+  tileHighlight: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary, ...shadows.card },
+  tileLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
+  tileValue: { fontSize: 18, fontWeight: '800', color: colors.onSurface, marginTop: 4 },
+
+  secondaryLine: { alignItems: 'center', paddingVertical: 6, marginBottom: spacing.md },
+  secondaryText: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '600' },
 
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, gap: spacing.md, ...shadows.card },
   cardTitle: { fontSize: 14, fontWeight: '800', color: colors.onSurface, textTransform: 'uppercase', letterSpacing: 0.5 },
+  gridRow: { flexDirection: 'row', gap: spacing.md },
+  gridField: { flex: 1, gap: 6 },
   field: { gap: 4 },
   label: { fontSize: 13, color: colors.onSurface, fontWeight: '700' },
   helpText: { fontSize: 11, color: colors.onSurfaceTertiary },
-  input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface, marginTop: 4 },
+  input: { backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface, borderWidth: 1, borderColor: colors.border },
 
-  formula: { backgroundColor: colors.brandTertiary, padding: spacing.md, borderRadius: radius.sm, gap: 6, borderWidth: 1, borderColor: colors.brandSecondary },
+  formula: { backgroundColor: colors.brandTertiary, padding: spacing.md, borderRadius: radius.sm, gap: 6, borderWidth: 1, borderColor: colors.brandSecondary, marginTop: 4 },
   formulaRow: { flexDirection: 'row', justifyContent: 'space-between' },
   formulaLabel: { fontSize: 13, color: colors.onSurface },
   formulaVal: { fontSize: 13, fontWeight: '600', color: colors.onSurface },
   formulaRowGrand: { marginTop: 4, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.brandSecondary },
   formulaGrandLabel: { fontSize: 14, fontWeight: '800', color: colors.brandPrimary },
   formulaGrandVal: { fontSize: 18, fontWeight: '900', color: colors.brandPrimary },
-
-  diffBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: radius.sm, borderWidth: 1 },
-  diffOk: { backgroundColor: '#E9F1E7', borderColor: '#C8DDC4' },
-  diffExcess: { backgroundColor: '#FDF3E4', borderColor: '#F0DCA6' },
-  diffShort: { backgroundColor: '#FDE7E7', borderColor: '#F2B5B5' },
-  diffTitle: { fontSize: 14, fontWeight: '800' },
-  diffSub: { fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2 },
 
   histRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider, gap: spacing.md },
   histDate: { fontSize: 14, fontWeight: '700', color: colors.onSurface },
@@ -330,11 +384,23 @@ const styles = StyleSheet.create({
   footer: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: colors.surfaceSecondary, borderTopWidth: 1, borderTopColor: colors.border,
-    padding: spacing.lg,
-    flexDirection: 'row', gap: spacing.md, ...shadows.strong,
+    paddingHorizontal: spacing.lg, paddingTop: spacing.md,
+    gap: spacing.md, ...shadows.strong,
   },
-  footerSecondary: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary },
+  footerStats: { flexDirection: 'row', gap: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.brandSecondary },
+  footerStat: { flex: 1 },
+  footerStatLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
+  footerStatValue: { fontSize: 18, fontWeight: '900', color: colors.onSurface, marginTop: 2 },
+
+  footerSecondary: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandPrimary },
   footerSecondaryText: { color: colors.brandPrimary, fontWeight: '700', fontSize: 14 },
-  footerPrimary: { flex: 1.6, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, ...shadows.card },
+  footerPrimary: { flex: 1.6, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.brandPrimary, ...shadows.card },
   footerPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
+  sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  datePickerSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, marginTop: 'auto', maxWidth: 480, width: '100%', alignSelf: 'center' },
+  datePickerClose: { paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
+  datePickerCloseText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 14 },
 });

@@ -897,3 +897,34 @@ Zero-behaviour-change refactor completed. Codebase is now easier to navigate and
 ### Verdict
 Add Expense is now 1:1 with web. Other "Add" forms (Member, Service, Staff, Stock, Appointment) may still have drift — pending user screenshots to audit exhaustively.
 
+
+## Iteration 34.3 — Cash Closing web-parity layout
+
+**User request**: Match the web Cash Closing screen layout & wording verbatim (screenshot shared).
+
+### Web parity items now implemented
+| Web element | Mobile status |
+|---|---|
+| Header subtitle "End-of-day cash reconciliation." | ✅ |
+| Date chip top-right ("16 Aug 2026") that opens a calendar | ✅ NEW |
+| 3-tile row: Cash sales / QR sales / **Total sales** (highlighted) | ✅ |
+| Field labels: Opening balance, Cash expenses, Actual cash counted, Notes | ✅ (renamed from "Cash Spent Today" / "Actual Counter Cash") |
+| 2-column input grid | ✅ NEW |
+| **Expected in drawer** + **Variance (Balanced/Excess/Short)** bar | ✅ NEW (sticky bottom bar) |
+| **Close day** primary button (Update when editing) | ✅ |
+
+### Additional value adds kept from previous mobile design
+- Live formula card (Opening + Cash Sales − Cash Expenses = Expected in drawer).
+- Tap any row in *Recent closings* to jump to that date.
+- WhatsApp Share of the closing report.
+
+### Files touched
+- `/app/frontend/app/manage/cash-closing.tsx` — full re-layout, new state `selectedDate` + date-picker modal.
+
+### Verified
+- Backend curl: `POST /api/cash-closing` with `date=2026-08-10, opening=500, cash_expenses=100, actual=450` → returns `expected_closing=400, difference=+50`. Existing-closing fetch also works.
+- Screenshot: header + tiles + fields + footer bar + calendar modal all render correctly on 390×844.
+
+### Verdict
+Cash Closing is now 1:1 with the web layout, wording, and formula semantics — plus retains the mobile-only formula card & date-jump convenience.
+
