@@ -33,7 +33,8 @@ router = APIRouter()
 
 # ============ Cash Closing ============
 async def _compute_day_totals(tid: str, branch_id: Optional[str], d: str):
-    q_bills: dict = {"tenant_id": tid, "created_at": {"$gte": f"{d}T00:00:00", "$lt": f"{d}T23:59:59.999999+00:00"}}
+    # Cash Closing keys off billing_date so backdated bills roll up on the correct day.
+    q_bills: dict = {"tenant_id": tid, "billing_date": d}
     if branch_id: q_bills["branch_id"] = branch_id
     bills = await db.bills.find(q_bills, {"_id": 0}).to_list(3000)
     services_net = sum(float(b.get("services_net", (b.get("grand_total", 0) or 0) - (b.get("tip_amount", 0) or 0)) or 0) for b in bills)

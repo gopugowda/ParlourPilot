@@ -145,6 +145,10 @@ class BillCreate(BaseModel):
     tip_beautician_id: Optional[str] = None
     tip_beautician_name: Optional[str] = ""
     notes: Optional[str] = ""
+    # Backdated billing: admin/owner may pick any past date up to today. Server rejects
+    # future dates with HTTP 400 and forces today for staff. `created_at` remains the
+    # audit timestamp; reports & bill-number sequencing key off `billing_date`.
+    billing_date: Optional[str] = None
 
 
 class MemberIn(BaseModel):

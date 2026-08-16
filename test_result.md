@@ -928,3 +928,44 @@ Add Expense is now 1:1 with web. Other "Add" forms (Member, Service, Staff, Stoc
 ### Verdict
 Cash Closing is now 1:1 with the web layout, wording, and formula semantics — plus retains the mobile-only formula card & date-jump convenience.
 
+
+## Iteration 34.4 — Backdated Billing (`billing_date`) shared-DB parity
+
+**User request**: Mobile must match web's backdated billing: admin/owner picks a past billing_date, staff forced to today, invoice numbers sequenced within the billing date, reports/cash-closing/history all key off billing_date.
+
+### Contract (verified)
+| Rule | Status |
+|---|---|
+| Admin/owner picks any past date up to today | ✅ (default today, future disabled) |
+| Server rejects future dates with HTTP 400 | ✅ `billing_date cannot be in the future` |
+| Staff cannot backdate — server always forces today | ✅ (POST + PUT) |
+| Invoice numbers sequenced within billing date | ✅ `INV-20260810-0001`, `-0002` |
+| Reports / Cash Closing / Analytics key off billing_date | ✅ (all 5 reports endpoints + cash_closing switched) |
+| Bill History `?date=` filters by billing_date | ✅ (fallback to `created_at[:10]` for legacy bills) |
+| `created_at` remains the audit timestamp | ✅ (untouched) |
+| Backdated hint shown on mobile when date ≠ today | ✅ ("Backdated — recorded on 10 Aug 2026") |
+
+### Files changed
+- **Frontend**:
+  - `/app/frontend/app/(tabs)/new-bill.tsx` — added `billingDate` state + touch-optimized picker (native `@react-native-community/datetimepicker` on iOS/Android, `react-native-calendars` sheet on web). Admin-only card, subtle amber backdated hint, resetForm clears date. Sends `billing_date` in POST/PUT payload.
+  - `/app/frontend/app/(tabs)/history.tsx` — new "Pick date" chip that opens a calendar sheet and filters via `?date=`. Row meta shows the bill's `billing_date` (falls back to `created_at[:10]`) plus a "Backdated" tag when the two differ.
+- **Backend**:
+  - `models.py` — `BillCreate.billing_date: Optional[str]`.
+  - `routes/bills.py` — added `_resolve_billing_date` (staff forcing + future-date guard), `_next_bill_number` now sequences within billing_date, POST/PUT persist billing_date, GET filter reads billing_date with legacy fallback, sort by billing_date.
+  - `startup.py` — new `backfill_billing_date` migration (aggregation pipeline: sets `billing_date = substr(created_at, 0, 10)` for any bill missing it) + composite index `(tenant_id, branch_id, billing_date -1)`.
+  - `routes/cash_closing.py` — `_compute_day_totals` now queries `{"billing_date": d}`.
+  - `routes/reports/{range,analytics,gender,staff,summary}.py` — all switched to `billing_date` filters + `billing_date`-based per-day bucketing (with `created_at[:10]` fallback for legacy).
+
+### Backend E2E (curl)
+1. POST backdated bill `2026-08-10` → `bill_no=INV-20260810-0001` ✓
+2. Second bill same date → `INV-20260810-0002` ✓ (sequencing works)
+3. `GET /api/bills?date=2026-08-10` → finds it ✓
+4. `GET /api/bills?date=today` → does NOT find it ✓ (correctly excluded from today's roll-up)
+5. `POST` with `billing_date=2099-01-01` → **400** `billing_date cannot be in the future` ✓
+6. `GET /api/cash-closing/summary?date=2026-08-10` → rev ₹1000, 2 bills ✓ (rolled up on backdated day)
+7. `GET /api/reports/analytics?preset=custom&from_date=2026-08-01&to_date=2026-08-31` → net_sales ₹1000, invoices 2 ✓
+8. **Staff attempt to backdate** → server silently forced `billing_date=today` ✓
+
+### Verdict
+Full contract met — a backdated bill created on mobile shows on the correct date in Bill History, Cash Closing, and Reports; and any bill written from the web with a `billing_date` shows up correctly in the mobile UI too (same shared MongoDB).
+

@@ -33,10 +33,28 @@ from models import (
 router = APIRouter()
 
 # ============ Bills ============
-async def _next_bill_number(tid: str, branch_id: Optional[str], prefix_override: Optional[str] = None) -> str:
-    now = datetime.now(timezone.utc)
-    date_prefix = now.strftime("%Y%m%d")
-    q: dict = {"tenant_id": tid, "bill_no": {"$regex": f".*{date_prefix}"}}
+def _resolve_billing_date(requested: Optional[str], is_staff: bool) -> str:
+    """Return a YYYY-MM-DD string, enforcing spec:
+    - Default = today (UTC).
+    - Staff cannot backdate (server always forces today).
+    - Future dates raise HTTP 400.
+    """
+    today = datetime.now(timezone.utc).date()
+    if is_staff or not requested:
+        return today.strftime("%Y-%m-%d")
+    try:
+        d = datetime.strptime(requested, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid billing_date (use YYYY-MM-DD)")
+    if d > today:
+        raise HTTPException(status_code=400, detail="billing_date cannot be in the future")
+    return d.strftime("%Y-%m-%d")
+
+
+async def _next_bill_number(tid: str, branch_id: Optional[str], billing_date: str, prefix_override: Optional[str] = None) -> str:
+    """Sequence bill numbers WITHIN the billing_date (YYYYMMDD-0001, -0002, ...)."""
+    date_prefix = billing_date.replace("-", "")  # 20260810
+    q: dict = {"tenant_id": tid, "billing_date": billing_date}
     if branch_id:
         q["branch_id"] = branch_id
     count = await db.bills.count_documents(q)
@@ -131,11 +149,13 @@ async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scop
 
     # Prefer branch-level invoice prefix, then tenant
     inv_prefix = (branch or {}).get("invoice_prefix") or (tenant or {}).get("invoice_prefix") or ""
+    # Backdated billing — staff always forced to today; future dates rejected.
+    billing_date = _resolve_billing_date(body.billing_date, scope.user.get("role") == "staff")
     bill = {
         "id": str(uuid.uuid4()),
         "tenant_id": tid,
         "branch_id": scope.branch_id,
-        "bill_no": await _next_bill_number(tid, scope.branch_id, inv_prefix),
+        "bill_no": await _next_bill_number(tid, scope.branch_id, billing_date, inv_prefix),
         "customer_name": body.customer_name or "Walk-in",
         "customer_phone": body.customer_phone or "",
         "items": items_eff,
@@ -163,6 +183,7 @@ async def create_bill(body: BillCreate, scope: BranchScope = Depends(branch_scop
         "created_by": scope.user["id"],
         "created_by_name": scope.user["name"],
         "created_at": now_iso(),
+        "billing_date": billing_date,
     }
     await db.bills.insert_one(bill)
     return {k: v for k, v in bill.items() if k != "_id"}
@@ -180,10 +201,19 @@ async def list_bills(
     if scope.user.get("role") == "staff":
         query["created_by"] = scope.user["id"]
     if date:
-        query["created_at"] = {"$gte": f"{date}T00:00:00", "$lt": f"{date}T23:59:59.999999+00:00"}
+        # Filter by billing_date (backdated-aware). Fall back to created_at prefix
+        # for legacy bills that predate the billing_date field.
+        query["$or"] = [
+            {"billing_date": date},
+            {"$and": [
+                {"billing_date": {"$exists": False}},
+                {"created_at": {"$gte": f"{date}T00:00:00", "$lt": f"{date}T23:59:59.999999+00:00"}},
+            ]},
+        ]
     if payment_mode and payment_mode != "all":
         query["payment_mode"] = payment_mode
-    docs = await db.bills.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    # Newest-first by billing_date, then by audit timestamp for stability.
+    docs = await db.bills.find(query, {"_id": 0}).sort([("billing_date", -1), ("created_at", -1)]).to_list(limit)
     return docs
 
 
@@ -268,6 +298,10 @@ async def update_bill(bid: str, body: BillCreate, scope: BranchScope = Depends(b
         "edited_by_name": scope.user["name"],
         "edited_at": now_iso(),
     }
+    # Allow admin/owner to update billing_date (spec: staff cannot backdate).
+    if body.billing_date is not None:
+        new_bd = _resolve_billing_date(body.billing_date, scope.user.get("role") == "staff")
+        update["billing_date"] = new_bd
     # Append an edit-history entry (who/when).
     history_entry = {
         "edited_by": scope.user["id"],

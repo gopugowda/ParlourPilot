@@ -6,6 +6,8 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Calendar } from 'react-native-calendars';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
@@ -13,6 +15,13 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
 const DEFAULT_MEMBER_PCT = 10;
 const DEFAULT_MEMBER_MIN_PRICE = 100;
+
+function formatPrettyDate(iso: string): string {
+  try {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch { return iso; }
+}
 
 type Service = { id: string; name: string; price: number; additional_price?: number; variable_price?: boolean; gender?: string; service_type?: string; category: string; tax_percentage?: number };
 type Beautician = { id: string; name: string; role: string };
@@ -31,7 +40,9 @@ type Item = {
 export default function NewBillScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  const todayIso = new Date().toISOString().slice(0, 10);
   const params = useLocalSearchParams<{ edit?: string }>();
   const editBillId = params?.edit as string | undefined;
   const [services, setServices] = useState<Service[]>([]);
@@ -51,6 +62,10 @@ export default function NewBillScreen() {
   const [tipBeauticianName, setTipBeauticianName] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Backdated billing — admin/owner only, defaults to today, future dates disabled.
+  const [billingDate, setBillingDate] = useState<string>(todayIso);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
   // Variable price prompt — auto-opens when a variable-priced service is picked.
   const [variablePrompt, setVariablePrompt] = useState<null | {
@@ -93,6 +108,8 @@ export default function NewBillScreen() {
         setTipAmt(b.tip_amount ? String(b.tip_amount - (b.items || []).reduce((s: number, it: any) => s + (it.tip_amount || 0), 0)) : '');
         setTipVia(b.tip_via || 'cash');
         setTipBeauticianId(b.tip_beautician_id); setTipBeauticianName(b.tip_beautician_name || '');
+        // Hydrate the billing date (fallback to created_at date part).
+        setBillingDate((b.billing_date || (b.created_at || '').slice(0, 10)) || todayIso);
       } catch {}
     })();
   }, [editBillId]);
@@ -189,6 +206,7 @@ export default function NewBillScreen() {
     setTipAmt(''); setTipVia('cash');
     setTipBeauticianId(undefined); setTipBeauticianName('');
     setMemberInfo(null);
+    setBillingDate(todayIso);
   };
 
   const onSubmit = async () => {
@@ -236,6 +254,8 @@ export default function NewBillScreen() {
         tip_via: (Number(tipAmt) || 0) > 0 ? tipVia : null,
         tip_beautician_id: (Number(tipAmt) || 0) > 0 ? tipBeauticianId : null,
         tip_beautician_name: (Number(tipAmt) || 0) > 0 ? tipBeauticianName : '',
+        // Backdated billing (admin/owner only). Server still forces today for staff.
+        ...(isAdmin ? { billing_date: billingDate } : {}),
       };
       const bill: any = editBillId
         ? await api(`/bills/${editBillId}`, { method: 'PUT', body: payload })
@@ -287,6 +307,40 @@ export default function NewBillScreen() {
               style={styles.input}
             />
           </View>
+
+          {/* Billing date — admin/owner only, defaults today, no future dates */}
+          {isAdmin && (
+            <View style={styles.card} testID="billing-date-card">
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>Billing date</Text>
+                  <Text style={styles.helpText}>
+                    Invoices are sequenced within this date.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  testID="billing-date-picker-btn"
+                  onPress={() => { Haptics.selectionAsync(); setDatePickerOpen(true); }}
+                  style={styles.dateBtn}
+                >
+                  <Ionicons name="calendar-outline" size={16} color={colors.brandPrimary} />
+                  <Text style={styles.dateBtnText}>
+                    {billingDate === todayIso
+                      ? `Today · ${formatPrettyDate(billingDate)}`
+                      : formatPrettyDate(billingDate)}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {billingDate !== todayIso && (
+                <View style={styles.backdatedHint} testID="backdated-hint">
+                  <Ionicons name="time-outline" size={13} color={colors.warning} />
+                  <Text style={styles.backdatedHintText}>
+                    Backdated — recorded on {formatPrettyDate(billingDate)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Items */}
           <View style={styles.card}>
@@ -745,6 +799,87 @@ export default function NewBillScreen() {
         </Pressable>
       </Modal>
 
+      {/* Billing Date picker — native on iOS/Android via RNDateTimePicker; Calendar UI on web */}
+      {datePickerOpen && Platform.OS !== 'web' ? (
+        Platform.OS === 'ios' ? (
+          <Modal transparent animationType="fade" visible onRequestClose={() => setDatePickerOpen(false)}>
+            <Pressable style={styles.dateBackdrop} onPress={() => setDatePickerOpen(false)}>
+              <Pressable style={styles.dateSheet} onPress={() => {}}>
+                <View style={styles.handle} />
+                <Text style={styles.dateSheetTitle}>Billing date</Text>
+                <DateTimePicker
+                  testID="billing-date-native"
+                  value={new Date(billingDate + 'T00:00:00')}
+                  mode="date"
+                  display="spinner"
+                  maximumDate={new Date(todayIso + 'T00:00:00')}
+                  onChange={(_, d) => {
+                    if (d) setBillingDate(d.toISOString().slice(0, 10));
+                  }}
+                />
+                <TouchableOpacity
+                  testID="billing-date-done"
+                  style={styles.dateDone}
+                  onPress={() => { Haptics.selectionAsync(); setDatePickerOpen(false); }}
+                >
+                  <Text style={styles.dateDoneText}>Done</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        ) : (
+          <DateTimePicker
+            testID="billing-date-native"
+            value={new Date(billingDate + 'T00:00:00')}
+            mode="date"
+            display="default"
+            maximumDate={new Date(todayIso + 'T00:00:00')}
+            onChange={(evt, d) => {
+              setDatePickerOpen(false);
+              if (evt?.type === 'set' && d) setBillingDate(d.toISOString().slice(0, 10));
+            }}
+          />
+        )
+      ) : (
+        <Modal
+          transparent
+          animationType="fade"
+          visible={datePickerOpen}
+          onRequestClose={() => setDatePickerOpen(false)}
+        >
+          <Pressable style={styles.dateBackdrop} onPress={() => setDatePickerOpen(false)}>
+            <Pressable style={styles.dateSheet} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={styles.dateSheetTitle}>Billing date</Text>
+              <Calendar
+                testID="billing-date-calendar"
+                current={billingDate}
+                maxDate={todayIso}
+                onDayPress={(d) => {
+                  Haptics.selectionAsync();
+                  setBillingDate(d.dateString);
+                  setDatePickerOpen(false);
+                }}
+                markedDates={{ [billingDate]: { selected: true, selectedColor: colors.brandPrimary } }}
+                theme={{
+                  backgroundColor: colors.surface,
+                  calendarBackground: colors.surface,
+                  selectedDayBackgroundColor: colors.brandPrimary,
+                  selectedDayTextColor: '#fff',
+                  todayTextColor: colors.brandPrimary,
+                  dayTextColor: colors.onSurface,
+                  monthTextColor: colors.onSurface,
+                  arrowColor: colors.brandPrimary,
+                }}
+              />
+              <TouchableOpacity style={styles.dateDone} onPress={() => setDatePickerOpen(false)}>
+                <Text style={styles.dateDoneText}>Close</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       {/* Variable Price prompt — auto-opens when a variable-priced service is picked */}
       <Modal
         visible={!!variablePrompt}
@@ -964,4 +1099,16 @@ const styles = StyleSheet.create({
   varCancelText: { color: colors.onSurfaceSecondary, fontWeight: '700', fontSize: 14 },
   varApplyBtn: { flex: 1, paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center' },
   varApplyText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  // Billing Date UI
+  dateBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.brandPrimary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, ...shadows.sm },
+  dateBtnText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
+  helpText: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  backdatedHint: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FDF3E4', borderRadius: radius.sm, padding: spacing.sm, borderWidth: 1, borderColor: '#F0DCA6' },
+  backdatedHintText: { fontSize: 11, color: '#8A5A00', fontWeight: '700' },
+  dateBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  dateSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, maxWidth: 480, width: '100%', alignSelf: 'center' },
+  dateSheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  dateDone: { paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center', marginTop: spacing.sm },
+  dateDoneText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

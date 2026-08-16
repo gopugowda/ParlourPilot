@@ -25,7 +25,7 @@ async def reports_analytics(
 
     async def _bills_between(a: str, b: str):
         return await db.bills.find(
-            scope.filter({"created_at": {"$gte": f"{a}T00:00:00", "$lt": f"{b}T23:59:59.999999+00:00"}}),
+            scope.filter({"billing_date": {"$gte": a, "$lte": b}}),
             {"_id": 0},
         ).to_list(20000)
 
@@ -47,20 +47,20 @@ async def reports_analytics(
 
     # Customer breakdown — new vs returning (based on all-time first bill per phone)
     all_bills_for_phones = await db.bills.find(
-        scope.filter(), {"_id": 0, "customer_phone": 1, "created_at": 1},
+        scope.filter(), {"_id": 0, "customer_phone": 1, "billing_date": 1, "created_at": 1},
     ).to_list(50000)
     first_seen: dict = {}
     for b in all_bills_for_phones:
         p = (b.get("customer_phone") or "").strip()
         if not p: continue
-        ca = b.get("created_at") or ""
+        ca = (b.get("billing_date") or (b.get("created_at") or "")[:10])
         if p not in first_seen or ca < first_seen[p]:
             first_seen[p] = ca
     new_customers = 0
     returning_customers = 0
     for p in agg["customer_phones"]:
         first = first_seen.get(p, "")
-        if first.startswith(from_str) or (from_str <= first[:10] <= to_str):
+        if from_str <= first <= to_str:
             new_customers += 1
         else:
             returning_customers += 1
@@ -74,7 +74,7 @@ async def reports_analytics(
         by_day[cur.strftime("%Y-%m-%d")] = 0.0
         cur = cur + timedelta(days=1)
     for b in bills:
-        day = (b.get("created_at") or "")[:10]
+        day = (b.get("billing_date") or (b.get("created_at") or "")[:10])
         if day in by_day:
             by_day[day] += float(b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0)) or 0)
     trend = [{"date": k, "value": round(v, 2)} for k, v in sorted(by_day.items())]

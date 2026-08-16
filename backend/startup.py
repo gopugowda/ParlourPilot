@@ -19,6 +19,8 @@ async def ensure_indexes():
         await db.users.create_index([("tenant_id", 1), ("email", 1)])
         await db.bills.create_index([("tenant_id", 1), ("branch_id", 1), ("created_at", -1)])
         await db.bills.create_index([("tenant_id", 1), ("branch_id", 1), ("bill_no", 1)])
+        # Backdated-billing: reports key off billing_date, so keep it indexed.
+        await db.bills.create_index([("tenant_id", 1), ("branch_id", 1), ("billing_date", -1)])
         await db.services.create_index([("tenant_id", 1), ("branch_id", 1), ("name", 1)])
         await db.beauticians.create_index([("tenant_id", 1), ("branch_id", 1), ("name", 1)])
         await db.members.create_index([("tenant_id", 1), ("phone", 1)])
@@ -220,9 +222,28 @@ async def seed_platform_admin():
     logger.info(f"Seeded platform_admin: {email}")
 
 
+async def backfill_billing_date():
+    """Ensure every legacy bill carries a `billing_date` derived from `created_at[:10]`.
+
+    Idempotent: only touches bills without a billing_date. Fully-forward-compatible with
+    the web app which already writes billing_date verbatim.
+    """
+    try:
+        # Uses aggregation pipeline update (Mongo 4.2+): sets billing_date = substr(created_at,0,10).
+        res = await db.bills.update_many(
+            {"billing_date": {"$exists": False}},
+            [{"$set": {"billing_date": {"$substrBytes": [{"$ifNull": ["$created_at", ""]}, 0, 10]}}}],
+        )
+        if res.modified_count:
+            logger.info(f"Backfilled billing_date on {res.modified_count} legacy bills")
+    except Exception as e:
+        logger.warning(f"billing_date backfill skipped: {e}")
+
+
 async def run_startup():
     try:
         await ensure_indexes()
+        await backfill_billing_date()
         # Demo seed is opt-in — set `ENABLE_DEMO_SEED=true` in .env to seed the
         # Glow Up demo tenant + services + beauticians. Default off so
         # production Atlas DBs stay clean.

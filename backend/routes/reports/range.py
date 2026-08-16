@@ -22,7 +22,7 @@ async def reports_range(
     to_str = d_to.strftime("%Y-%m-%d")
 
     bills = await db.bills.find(
-        scope.filter({"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}}),
+        scope.filter({"billing_date": {"$gte": from_str, "$lte": to_str}}),
         {"_id": 0},
     ).to_list(20000)
     exps = await db.expenses.find(
@@ -37,7 +37,7 @@ async def reports_range(
         cur = cur + timedelta(days=1)
 
     for b in bills:
-        day = b["created_at"][:10]
+        day = (b.get("billing_date") or b["created_at"][:10])
         if day not in by_day: continue
         rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
         by_day[day]["total"] += rev

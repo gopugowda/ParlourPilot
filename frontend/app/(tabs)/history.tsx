@@ -1,11 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput,
+  Modal, Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Calendar } from 'react-native-calendars';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
@@ -13,14 +15,26 @@ import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/wh
 
 type Bill = {
   id: string; bill_no: string; customer_name: string; customer_phone?: string; grand_total: number;
-  payment_mode: string; items: any[]; created_at: string;
+  payment_mode: string; items: any[]; created_at: string; billing_date?: string;
   services_net?: number; discount_amount?: number; tax_amount?: number; tip_amount?: number;
   cash_amount?: number; qr_amount?: number;
 };
 
+function bill_date_key(b: Bill): string {
+  return (b.billing_date || (b.created_at || '').slice(0, 10) || '');
+}
+
+function fmtPretty(iso: string): string {
+  try {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch { return iso; }
+}
+
 const chips = [
   { key: 'all', label: 'All', icon: 'apps-outline' },
   { key: 'today', label: 'Today', icon: 'today-outline' },
+  { key: 'pick', label: 'Pick date', icon: 'calendar-outline' },
   { key: 'cash', label: 'Cash', icon: 'cash-outline' },
   { key: 'qr', label: 'QR / Online', icon: 'qr-code-outline' },
   { key: 'split', label: 'Split', icon: 'git-branch-outline' },
@@ -35,6 +49,8 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState(isAdmin ? 'all' : 'today');
   const [search, setSearch] = useState('');
+  const [pickedDate, setPickedDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
 
   const shareOnWhatsApp = (b: Bill) => {
     const items = (b.items || []).map((it: any) => ({
@@ -73,6 +89,8 @@ export default function HistoryScreen() {
       if (filter === 'today') {
         const today = new Date().toISOString().slice(0, 10);
         params.push(`date=${today}`);
+      } else if (filter === 'pick') {
+        params.push(`date=${pickedDate}`);
       } else if (['cash', 'qr', 'split'].includes(filter)) {
         params.push(`payment_mode=${filter}`);
       }
@@ -82,8 +100,8 @@ export default function HistoryScreen() {
     } catch {}
   };
 
-  useEffect(() => { setLoading(true); load().finally(() => setLoading(false)); }, [filter]);
-  useFocusEffect(useCallback(() => { load(); }, [filter]));
+  useEffect(() => { setLoading(true); load().finally(() => setLoading(false)); }, [filter, pickedDate]);
+  useFocusEffect(useCallback(() => { load(); }, [filter, pickedDate]));
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
@@ -126,15 +144,20 @@ export default function HistoryScreen() {
         >
           {chips.map(c => {
             const active = filter === c.key;
+            const label = c.key === 'pick' && active ? `Date · ${fmtPretty(pickedDate)}` : c.label;
             return (
               <TouchableOpacity
                 key={c.key}
                 testID={`chip-${c.key}`}
-                onPress={() => { Haptics.selectionAsync(); setFilter(c.key); }}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setFilter(c.key);
+                  if (c.key === 'pick') setDatePickerOpen(true);
+                }}
                 style={[styles.chip, active && styles.chipActive]}
               >
                 <Ionicons name={c.icon as any} size={13} color={active ? '#fff' : colors.onSurfaceSecondary} />
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.label}</Text>
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
               </TouchableOpacity>
             );
           })}
@@ -171,7 +194,10 @@ export default function HistoryScreen() {
                   </View>
                 </View>
                 <Text style={styles.billCustomer}>{b.customer_name || 'Walk-in'}</Text>
-                <Text style={styles.billMeta}>{b.items.length} services · {new Date(b.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</Text>
+                <Text style={styles.billMeta}>
+                  {b.items.length} services · {fmtPretty(bill_date_key(b))}
+                  {b.billing_date && b.created_at && b.billing_date !== b.created_at.slice(0, 10) ? ' · Backdated' : ''}
+                </Text>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.billTotal}>{fmtINR(b.grand_total)}</Text>
@@ -192,6 +218,45 @@ export default function HistoryScreen() {
           ))
         )}
       </ScrollView>
+
+      {/* Pick-date modal — filters bills by billing_date */}
+      <Modal
+        visible={datePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDatePickerOpen(false)}
+      >
+        <Pressable style={styles.dateBackdrop} onPress={() => setDatePickerOpen(false)}>
+          <Pressable style={styles.dateSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.dateSheetTitle}>Pick a billing date</Text>
+            <Calendar
+              testID="hist-date-calendar"
+              current={pickedDate}
+              maxDate={new Date().toISOString().slice(0, 10)}
+              onDayPress={(d) => {
+                Haptics.selectionAsync();
+                setPickedDate(d.dateString);
+                setDatePickerOpen(false);
+              }}
+              markedDates={{ [pickedDate]: { selected: true, selectedColor: colors.brandPrimary } }}
+              theme={{
+                backgroundColor: colors.surface,
+                calendarBackground: colors.surface,
+                selectedDayBackgroundColor: colors.brandPrimary,
+                selectedDayTextColor: '#fff',
+                todayTextColor: colors.brandPrimary,
+                dayTextColor: colors.onSurface,
+                monthTextColor: colors.onSurface,
+                arrowColor: colors.brandPrimary,
+              }}
+            />
+            <TouchableOpacity style={styles.dateDone} onPress={() => setDatePickerOpen(false)}>
+              <Text style={styles.dateDoneText}>Close</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -244,4 +309,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8F9EF', borderWidth: 1, borderColor: '#B7EAC4',
     alignItems: 'center', justifyContent: 'center',
   },
+  dateBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  dateSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, maxWidth: 480, width: '100%', alignSelf: 'center' },
+  dateSheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
+  dateDone: { paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center', marginTop: spacing.sm },
+  dateDoneText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

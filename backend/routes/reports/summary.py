@@ -22,8 +22,8 @@ async def reports_summary(scope: BranchScope = Depends(branch_scope)):
     def revenue(b):
         return b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
 
-    today_bills = [b for b in all_bills if b["created_at"].startswith(today)]
-    month_bills = [b for b in all_bills if b["created_at"].startswith(month)]
+    today_bills = [b for b in all_bills if (b.get("billing_date") or b["created_at"][:10]) == today]
+    month_bills = [b for b in all_bills if (b.get("billing_date") or b["created_at"][:10]).startswith(month)]
 
     today_total = sum(revenue(b) for b in today_bills)
     today_count = len(today_bills)
@@ -119,7 +119,7 @@ async def reports_daily(days: int = 30, scope: BranchScope = Depends(branch_scop
     all_exp = await db.expenses.find(scope.filter(), {"_id": 0}).to_list(20000)
     by_day: dict = {}
     for b in all_bills:
-        day = b["created_at"][:10]
+        day = (b.get("billing_date") or b["created_at"][:10])
         by_day.setdefault(day, {"date": day, "total": 0.0, "count": 0, "cash": 0.0, "qr": 0.0, "tips": 0.0, "expenses": 0.0})
         rev = b.get("services_net", b.get("grand_total", 0) - b.get("tip_amount", 0))
         by_day[day]["total"] += rev

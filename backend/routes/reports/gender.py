@@ -26,7 +26,7 @@ async def reports_revenue_by_gender(
     to_str = d_to.strftime("%Y-%m-%d")
 
     bills = await db.bills.find(
-        scope.filter({"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}}),
+        scope.filter({"billing_date": {"$gte": from_str, "$lte": to_str}}),
         {"_id": 0, "items": 1},
     ).to_list(20000)
 

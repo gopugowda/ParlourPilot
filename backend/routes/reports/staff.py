@@ -37,7 +37,7 @@ async def reports_staff_performance(
     b_by_id: Dict[str, dict] = {b["id"]: b for b in beauticians}
 
     bills = await db.bills.find(
-        scope.filter({"created_at": {"$gte": f"{from_str}T00:00:00", "$lt": f"{to_str}T23:59:59.999999+00:00"}}),
+        scope.filter({"billing_date": {"$gte": from_str, "$lte": to_str}}),
         {"_id": 0},
     ).to_list(20000)
 
@@ -65,7 +65,7 @@ async def reports_staff_performance(
         return stats[key]
 
     for bill in bills:
-        day = bill["created_at"][:10]
+        day = (bill.get("billing_date") or bill["created_at"][:10])
         bill_id = bill.get("id")
         for it in bill.get("items", []) or []:
             bname = it.get("beautician_name") or "Unassigned"
