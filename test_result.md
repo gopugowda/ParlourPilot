@@ -840,3 +840,32 @@ All three iter25 minor findings are fixed. WhatsApp invoice feature is fully wor
 
 ### Verdict
 All 4 user-requested items implemented. Backend regression fixed. Awaiting user visual verification of the new Reports screen + Variable Pricing modal on their production data.
+
+## Iteration 34.1 — `reports.py` refactor into focused sub-modules
+
+**User request**: Optional refactor — split the 750-line `reports.py` for maintainability.
+
+### What changed
+Converted `/app/backend/routes/reports.py` (750 lines) → package `/app/backend/routes/reports/`:
+
+| File | Lines | Purpose |
+|---|---|---|
+| `__init__.py` | 28 | Combines all sub-routers into a single `router` exported to `server.py` |
+| `_shared.py` | 128 | `preset_range()`, `clamp_for_staff()`, `aggregate_bills_metrics()` — used by every sub-router |
+| `summary.py` | 143 | `/reports/summary`, `/reports/daily` (legacy dashboard) |
+| `range.py` | 70 | `/reports/range` (preset + custom daily rollup) |
+| `analytics.py` | 145 | `/reports/analytics` (web-parity KPI payload) |
+| `gender.py` | 66 | `/reports/revenue-by-gender` (Ladies/Men/Unisex split) |
+| `staff.py` | 129 | `/reports/staff-performance` (owner-only staff dashboard) |
+
+### Compatibility
+`server.py` still imports as `from routes.reports import router as reports_router` (unchanged — Python's package resolution picks up `reports/__init__.py`). No routes moved, no responses changed.
+
+### Verification
+- Backend restarts cleanly (no import errors in `/var/log/supervisor/backend.err.log`).
+- All 9 report endpoints return 200 for owner: summary, daily, range (month/last_week/quarter/year), analytics, revenue-by-gender, staff-performance.
+- Existing pytest suite (`tests/test_reports_analytics.py`) still passes **11/11** unchanged.
+
+### Verdict
+Zero-behaviour-change refactor completed. Codebase is now easier to navigate and extend (each concern lives in its own <150-line file).
+
