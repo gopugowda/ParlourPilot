@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator, TouchableOpacity, Modal, useWindowDimensions,
@@ -12,6 +12,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { emailError, normalizeEmail, parse422 } from '@/src/utils/validators';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -37,25 +38,32 @@ export default function LoginScreen() {
   const [fpEmailSent, setFpEmailSent] = useState(false);
   const [fpDevOtp, setFpDevOtp] = useState<string | null>(null);
 
+  // Refs for auto-focus on invalid.
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const fpEmailRef = useRef<TextInput>(null);
+
   const onSubmit = async () => {
     setErr(null);
-    if (!email.trim() || !password) { setErr('Enter email and password'); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErr('Enter a valid email address'); return; }
+    const emsg = emailError(email, { required: true });
+    if (emsg) { setErr(emsg); emailRef.current?.focus(); return; }
+    if (!password) { setErr('Please enter your password'); passwordRef.current?.focus(); return; }
     setLoading(true);
     try {
-      await login(email.trim(), password);
+      await login(normalizeEmail(email), password);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setErr(e.message || 'Login failed');
+      const friendly = parse422(e);
+      setErr(friendly || e.message || 'Login failed');
     } finally { setLoading(false); }
   };
 
   const requestReset = async () => {
     setFpErr(null); setFpMsg(null);
-    const email = fpEmail.trim().toLowerCase();
-    if (!email) { setFpErr('Enter your email'); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setFpErr('Enter a valid email address'); return; }
+    const emsg = emailError(fpEmail, { required: true });
+    if (emsg) { setFpErr(emsg); fpEmailRef.current?.focus(); return; }
+    const email = normalizeEmail(fpEmail);
     setFpBusy(true);
     try {
       const res: any = await api('/auth/forgot-password', { method: 'POST', body: { email }, auth: false });
@@ -66,7 +74,10 @@ export default function LoginScreen() {
       setFpMsg(res.email_sent
         ? `We sent a 6-digit code to ${email}. Check your inbox (and spam).`
         : res.message || 'Enter the code below to reset your password.');
-    } catch (e: any) { setFpErr(e.message || 'Failed'); }
+    } catch (e: any) {
+      const friendly = parse422(e);
+      setFpErr(friendly || e.message || 'Failed');
+    }
     finally { setFpBusy(false); }
   };
 
@@ -80,7 +91,7 @@ export default function LoginScreen() {
     try {
       await api('/auth/reset-password', {
         method: 'POST',
-        body: { email: fpEmail.trim().toLowerCase(), otp, new_password: fpNewPwd },
+        body: { email: normalizeEmail(fpEmail), otp, new_password: fpNewPwd },
         auth: false,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -91,7 +102,10 @@ export default function LoginScreen() {
         setFpEmail(''); setFpOtp(''); setFpNewPwd(''); setFpConfirmPwd('');
         setFpMsg(null); setFpDevOtp(null); setFpEmailSent(false);
       }, 1500);
-    } catch (e: any) { setFpErr(e.message || 'Failed'); }
+    } catch (e: any) {
+      const friendly = parse422(e);
+      setFpErr(friendly || e.message || 'Failed');
+    }
     finally { setFpBusy(false); }
   };
 
@@ -130,6 +144,7 @@ export default function LoginScreen() {
               <Ionicons name="mail-outline" size={18} color={colors.onSurfaceTertiary} />
               <TextInput
                 testID="login-email-input"
+                ref={emailRef}
                 value={email}
                 onChangeText={setEmail}
                 placeholder="you@salon.com"
@@ -149,6 +164,7 @@ export default function LoginScreen() {
               <Ionicons name="lock-closed-outline" size={18} color={colors.onSurfaceTertiary} />
               <TextInput
                 testID="login-password-input"
+                ref={passwordRef}
                 value={password}
                 onChangeText={setPassword}
                 placeholder="••••••••"
@@ -216,6 +232,7 @@ export default function LoginScreen() {
                     <Text style={styles.label}>Email</Text>
                     <TextInput
                       testID="fp-email"
+                      ref={fpEmailRef}
                       value={fpEmail}
                       onChangeText={setFpEmail}
                       placeholder="you@salon.com"

@@ -1114,3 +1114,49 @@ All UI forms mirror the strict backend rules. No submissions can slip through wi
 Fix is in the FastAPI backend. Preview reflects it immediately. To ship to production, user must **redeploy** via the Publish panel — the mobile app itself needs no rebuild for this change.
 
 Strict validation confirmed live and behaving exactly per spec. Item **closed**.
+
+
+## Iteration 34.11 — Full email/mobile validation parity with backend + friendly copy
+
+**User request**: Backend already rejects bad emails/mobiles with 422. Mirror the *exact* rules client-side + use user-friendly messages (not raw Pydantic).
+
+### New rules (matches backend Pydantic)
+- **Email**: `^[^\s@]+@[^\s@]+\.[^\s@]+$` (same shape as EmailStr); values are trimmed + lower-cased before send.
+- **Mobile**: strip ALL non-digits before validating & sending (no leading `+` preserved); required = ≥1 digit; max 20 digits.
+
+### Friendly copy (used verbatim by every form)
+- Email empty → "Please enter your email"
+- Email invalid → "Please enter a valid email address"
+- Mobile empty → "Please enter a mobile number"
+- Mobile no digits → "Please enter a valid mobile number"
+- Mobile too long → "Mobile number can't be more than 20 digits"
+
+### Files touched
+| File | Change |
+|---|---|
+| `src/utils/validators.ts` | Rewritten. New `emailError`, `phoneError`, `normalizeEmail`, `sanitizePhone`, `parse422`, and `MSG` exports. Regex + rules match backend exactly. |
+| `app/signup.tsx` | Uses `emailError` (required) + `phoneError` (optional); refs auto-focus first invalid; number-pad keyboard; `parse422` fallback. |
+| `app/login.tsx` | Replaced inline regex on **Sign In** and **Forgot Password** flows; friendly messages; refs; `parse422` fallback. |
+| `app/manage/users.tsx` | Email required with new friendly copy; ref for auto-focus; onBlur validation; 422 fallback routes to `emailErr` state. |
+| `app/manage/members.tsx` | Phone required rule loosened to ≥1 digit; new friendly copy; ref auto-focus; 422 fallback routes to `phoneErr`. |
+| `app/manage/salon-settings.tsx` | Alerts now display the same friendly copy; `sanitizePhone` used on send; company email required, branch email optional. |
+| `app/(tabs)/new-bill.tsx` | Customer phone remains optional but shows friendly copy on invalid; `sanitizePhone` on send; number-pad keyboard. |
+| `app/manage/appointments.tsx` | Customer phone sanitised on input + on send; number-pad + `maxLength=20`. |
+| `app/manage/beauticians.tsx` | Staff phone sanitised + number-pad + `maxLength=20`. |
+
+### Behaviour
+- Numeric keyboard on all phone inputs (`keyboardType="number-pad"`).
+- onChange auto-strips non-digits (so users see `919876543210`, not `+91 98765 43210`).
+- onBlur shows inline friendly error next to the field with red border.
+- Submit is blocked and the first invalid field is auto-focused.
+- If backend still returns 422, `parse422()` picks the correct friendly copy.
+
+### Verified on preview (screenshots captured)
+- `/signup` empty submit → "Please enter your email" (red border on email). ✓
+- `/signup` `bad@x` + `abc+91 98765 43210XYZ` → email shows "Please enter a valid email address"; phone auto-sanitized to `919876543210` (leading `+` stripped per spec). ✓
+- `/login` empty submit → "Please enter your email". ✓
+- `/login` `not-email` → "Please enter a valid email address". ✓
+- Lint clean across all 9 modified files.
+
+### Deployment note
+Client-only change. To ship to production: **Publish** button. If a new AAB was already generated, it needs to be rebuilt after this change to include the new validation UX.

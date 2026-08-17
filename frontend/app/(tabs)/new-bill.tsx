@@ -12,7 +12,7 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
-import { sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
+import { sanitizePhone, phoneError, PHONE_MAX } from '@/src/utils/validators';
 
 const DEFAULT_MEMBER_PCT = 10;
 const DEFAULT_MEMBER_MIN_PRICE = 100;
@@ -236,15 +236,15 @@ export default function NewBillScreen() {
       }
     }
     // Phone: optional, but if present must be valid (digits only, max 20).
-    if (customerPhone && !isValidPhone(customerPhone)) {
-      setPhoneErr('Enter a valid phone (digits only, max 20)');
-      return;
+    {
+      const pmsg = phoneError(customerPhone, { required: false });
+      if (pmsg) { setPhoneErr(pmsg); return; }
     }
     setSaving(true);
     try {
       const payload = {
         customer_name: customerName || 'Walk-in',
-        customer_phone: customerPhone,
+        customer_phone: sanitizePhone(customerPhone),
         items: items.map(it => ({
           service_id: it.service_id, service_name: it.service_name,
           service_gender: it.service_gender || 'unisex',
@@ -310,7 +310,11 @@ export default function NewBillScreen() {
               placeholderTextColor={colors.onSurfaceTertiary}
               value={customerPhone}
               onChangeText={(v) => { setCustomerPhone(sanitizePhone(v)); if (phoneErr) setPhoneErr(null); }}
-              keyboardType="phone-pad"
+              onBlur={() => {
+                const msg = phoneError(customerPhone, { required: false });
+                if (msg) setPhoneErr(msg);
+              }}
+              keyboardType="number-pad"
               maxLength={PHONE_MAX}
               style={[styles.input, phoneErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
             />

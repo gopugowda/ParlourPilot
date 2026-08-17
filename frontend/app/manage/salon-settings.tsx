@@ -12,7 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { tenantApi, branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, CURRENCY_CHOICES, BRAND_COLOR_PRESETS, contrastText } from '@/src/theme';
-import { isValidEmail, sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
+import { emailError, phoneError, sanitizePhone, normalizeEmail, PHONE_MAX } from '@/src/utils/validators';
 
 // EMAIL_RE removed — validation is now handled by isValidEmail() from /src/utils/validators.ts
 
@@ -159,15 +159,10 @@ export default function SalonSettingsScreen() {
   };
 
   const saveCompany = async () => {
-    if (!companyEmail.trim()) {
-      Alert.alert('Email required', 'Please enter your salon email address'); return;
-    }
-    if (!isValidEmail(companyEmail)) {
-      Alert.alert('Invalid email format', 'Please enter a valid email address'); return;
-    }
-    if (companyPhone.trim() && !isValidPhone(companyPhone)) {
-      Alert.alert('Invalid phone', 'Phone must be digits only, max 20 characters'); return;
-    }
+    const eErr = emailError(companyEmail, { required: true });
+    if (eErr) { Alert.alert('Email', eErr); return; }
+    const pErr = phoneError(companyPhone, { required: false });
+    if (pErr) { Alert.alert('Mobile number', pErr); return; }
     const md = parseFloat(memberDiscount);
     if (!Number.isFinite(md) || md < 0 || md > 100) {
       Alert.alert('Invalid discount %', 'Member discount % must be between 0 and 100'); return;
@@ -180,8 +175,8 @@ export default function SalonSettingsScreen() {
       const payload: any = {
         business_name: businessName.trim(),
         owner_name: ownerName.trim(),
-        email: companyEmail.trim().toLowerCase() || undefined,
-        phone: companyPhone.replace(/\D/g, ''),
+        email: normalizeEmail(companyEmail) || undefined,
+        phone: sanitizePhone(companyPhone),
         website: website.trim(),
         country: country.trim(),
         currency: currencyCode,
@@ -225,12 +220,10 @@ export default function SalonSettingsScreen() {
 
   const saveBranch = async () => {
     if (!selectedBranch) { Alert.alert('No branch', 'Select a branch first'); return; }
-    if (branchEmail.trim() && !isValidEmail(branchEmail)) {
-      Alert.alert('Invalid email format', 'Enter a valid branch email'); return;
-    }
-    if (branchPhone.trim() && !isValidPhone(branchPhone)) {
-      Alert.alert('Invalid phone', 'Branch phone must be digits only, max 20 characters'); return;
-    }
+    const eErr = emailError(branchEmail, { required: false });
+    if (eErr) { Alert.alert('Branch email', eErr); return; }
+    const pErr = phoneError(branchPhone, { required: false });
+    if (pErr) { Alert.alert('Branch mobile', pErr); return; }
     if (taxEnabled && taxPercentage) {
       const t = parseFloat(taxPercentage);
       if (!Number.isFinite(t) || t < 0 || t > 100) {
@@ -246,8 +239,8 @@ export default function SalonSettingsScreen() {
         city: city.trim(),
         state: stateName.trim(),
         postal_code: postalCode.trim(),
-        phone: branchPhone.replace(/\D/g, ''),
-        email: branchEmail.trim().toLowerCase(),
+        phone: sanitizePhone(branchPhone),
+        email: normalizeEmail(branchEmail),
         tax_enabled: taxEnabled,
         tax_number: taxNumber.trim(),
         tax_percentage: parseFloat(taxPercentage) || 0,

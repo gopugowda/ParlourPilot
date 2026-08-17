@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator, TouchableOpacity, Linking,
@@ -10,7 +10,10 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
-import { isValidEmail, sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
+import {
+  emailError, phoneError, sanitizePhone, normalizeEmail,
+  parse422, PHONE_MAX,
+} from '@/src/utils/validators';
 
 export default function SignupScreen() {
   const { signup } = useAuth();
@@ -29,15 +32,26 @@ export default function SignupScreen() {
   // Per-field errors so we can highlight only what's wrong (red border + msg).
   const [fieldErr, setFieldErr] = useState<{ email?: string; phone?: string }>({});
 
+  // Refs so we can auto-focus the first invalid input on submit.
+  const emailRef = useRef<TextInput>(null);
+  const phoneRef = useRef<TextInput>(null);
+
   const onSubmit = async () => {
     setErr(null); setFieldErr({});
     const fe: typeof fieldErr = {};
     if (!businessName.trim()) return setErr('Enter your salon/business name');
     if (!ownerName.trim()) return setErr('Enter owner name');
-    if (!email.trim()) fe.email = 'Email is required';
-    else if (!isValidEmail(email)) fe.email = 'Invalid email format';
-    if (phone.trim() && !isValidPhone(phone)) fe.phone = 'Enter a valid phone (digits only, max 20)';
-    if (fe.email || fe.phone) { setFieldErr(fe); return; }
+    const eErr = emailError(email, { required: true });
+    if (eErr) fe.email = eErr;
+    const pErr = phoneError(phone, { required: false });
+    if (pErr) fe.phone = pErr;
+    if (fe.email || fe.phone) {
+      setFieldErr(fe);
+      // Focus first invalid field (email > phone).
+      if (fe.email) emailRef.current?.focus();
+      else phoneRef.current?.focus();
+      return;
+    }
     if (password.length < 6) return setErr('Password must be at least 6 characters');
     const nb = Math.max(1, Math.min(20, parseInt(numBranches || '1', 10) || 1));
 
@@ -46,9 +60,9 @@ export default function SignupScreen() {
       await signup({
         business_name: businessName.trim(),
         owner_name: ownerName.trim(),
-        email: email.trim().toLowerCase(),
+        email: normalizeEmail(email),
         password,
-        phone: phone.trim(),
+        phone: sanitizePhone(phone),
         city: city.trim(),
         num_branches: nb,
       });
@@ -56,7 +70,8 @@ export default function SignupScreen() {
       router.replace('/(tabs)');
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setErr(e.message || 'Signup failed');
+      const friendly = parse422(e);
+      setErr(friendly || e.message || 'Signup failed');
     } finally {
       setLoading(false);
     }
@@ -134,8 +149,13 @@ export default function SignupScreen() {
             <Ionicons name="mail-outline" size={18} color={fieldErr.email ? colors.error : colors.onSurfaceTertiary} />
             <TextInput
               testID="signup-email-input"
+              ref={emailRef}
               value={email}
               onChangeText={(v) => { setEmail(v); if (fieldErr.email) setFieldErr({ ...fieldErr, email: undefined }); }}
+              onBlur={() => {
+                const msg = emailError(email, { required: true });
+                if (msg) setFieldErr(fe => ({ ...fe, email: msg }));
+              }}
               placeholder="you@salon.com"
               placeholderTextColor={colors.onSurfaceTertiary}
               autoCapitalize="none"
@@ -154,11 +174,16 @@ export default function SignupScreen() {
             <Ionicons name="call-outline" size={18} color={fieldErr.phone ? colors.error : colors.onSurfaceTertiary} />
             <TextInput
               testID="signup-phone-input"
+              ref={phoneRef}
               value={phone}
               onChangeText={(v) => { setPhone(sanitizePhone(v)); if (fieldErr.phone) setFieldErr({ ...fieldErr, phone: undefined }); }}
+              onBlur={() => {
+                const msg = phoneError(phone, { required: false });
+                if (msg) setFieldErr(fe => ({ ...fe, phone: msg }));
+              }}
               placeholder="9876543210"
               placeholderTextColor={colors.onSurfaceTertiary}
-              keyboardType="phone-pad"
+              keyboardType="number-pad"
               maxLength={PHONE_MAX}
               style={styles.input}
               returnKeyType="next"

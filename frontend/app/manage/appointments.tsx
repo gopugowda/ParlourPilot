@@ -12,6 +12,7 @@ import { Calendar } from 'react-native-calendars';
 import { api, appointmentApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtMoney } from '@/src/theme';
+import { sanitizePhone, PHONE_MAX } from '@/src/utils/validators';
 
 type Appointment = {
   id: string;
@@ -344,7 +345,7 @@ function AppointmentEditor({
     try {
       const payload: any = {
         customer_name: customerName.trim(),
-        customer_phone: customerPhone.replace(/\D/g, ''),
+        customer_phone: sanitizePhone(customerPhone),
         beautician_id: beauticianId,
         beautician_name: bName,
         service_ids: selectedServiceIds,
@@ -402,7 +403,7 @@ function AppointmentEditor({
             automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
               <LabeledInput label="Customer Name *" value={customerName} onChangeText={setCustomerName} testID="apt-cust-name" />
-              <LabeledInput label="Customer Phone" value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" testID="apt-cust-phone" />
+              <LabeledInput label="Customer Phone" value={customerPhone} onChangeText={(v) => setCustomerPhone(sanitizePhone(v))} keyboardType="number-pad" maxLength={PHONE_MAX} testID="apt-cust-phone" />
 
               <View>
                 <Text style={styles.label}>Date & Time</Text>

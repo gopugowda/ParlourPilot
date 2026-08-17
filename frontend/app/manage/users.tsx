@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
   Modal, Pressable, KeyboardAvoidingView, Platform,
@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
-import { isValidEmail } from '@/src/utils/validators';
+import { emailError, normalizeEmail, parse422 } from '@/src/utils/validators';
 
 type UserRow = { id: string; name: string; email: string; role: 'admin' | 'staff'; branch_id?: string | null };
 
@@ -31,6 +31,7 @@ export default function UsersScreen() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [emailErr, setEmailErr] = useState<string | null>(null);
+  const emailRef = useRef<TextInput>(null);
 
   const branchNameById = (bid?: string | null) => {
     if (!bid) return null;
@@ -67,8 +68,8 @@ export default function UsersScreen() {
   const save = async () => {
     setErr(null); setEmailErr(null);
     if (!name.trim()) { setErr('Name is required'); return; }
-    if (!email.trim()) { setEmailErr('Email is required'); return; }
-    if (!isValidEmail(email)) { setEmailErr('Invalid email format'); return; }
+    const emsg = emailError(email, { required: true });
+    if (emsg) { setEmailErr(emsg); emailRef.current?.focus(); return; }
     if (!editing && pwd.length < 6) { setErr('Password ≥ 6 chars'); return; }
     if (role === 'staff' && !branchId) { setErr('Staff must be assigned to a branch'); return; }
     setSaving(true);
@@ -76,18 +77,22 @@ export default function UsersScreen() {
       if (editing) {
         await api(`/auth/users/${editing.id}`, {
           method: 'PUT',
-          body: { name: name.trim(), email: email.trim().toLowerCase(), role, branch_id: branchId },
+          body: { name: name.trim(), email: normalizeEmail(email), role, branch_id: branchId },
         });
       } else {
         await api('/auth/register', {
           method: 'POST',
-          body: { name: name.trim(), email: email.trim().toLowerCase(), password: pwd, role, branch_id: branchId },
+          body: { name: name.trim(), email: normalizeEmail(email), password: pwd, role, branch_id: branchId },
         });
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setEditOpen(false);
       await load();
-    } catch (e: any) { setErr(e.message || 'Failed'); }
+    } catch (e: any) {
+      const friendly = parse422(e);
+      if (friendly && /email/i.test(friendly)) setEmailErr(friendly);
+      else setErr(friendly || e.message || 'Failed');
+    }
     finally { setSaving(false); }
   };
 
@@ -183,8 +188,13 @@ export default function UsersScreen() {
                 <Text style={styles.label}>Email <Text style={{ color: colors.error }}>*</Text></Text>
                 <TextInput
                   testID="user-email-input"
+                  ref={emailRef}
                   value={email}
                   onChangeText={(v) => { setEmail(v); if (emailErr) setEmailErr(null); }}
+                  onBlur={() => {
+                    const msg = emailError(email, { required: true });
+                    if (msg) setEmailErr(msg);
+                  }}
                   autoCapitalize="none"
                   keyboardType="email-address"
                   placeholder="user@salon.com"

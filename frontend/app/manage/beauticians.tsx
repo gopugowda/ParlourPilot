@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { sanitizePhone, PHONE_MAX } from '@/src/utils/validators';
 
 type Beautician = { id: string; name: string; role: string; phone: string; active: boolean };
 
@@ -40,7 +41,7 @@ export default function BeauticiansScreen() {
     if (!name.trim()) { setErr('Name required'); return; }
     setSaving(true);
     try {
-      const body = { name: name.trim(), role: role.trim() || 'Stylist', phone: phone.trim(), active };
+      const body = { name: name.trim(), role: role.trim() || 'Stylist', phone: sanitizePhone(phone), active };
       if (editing) await api(`/beauticians/${editing.id}`, { method: 'PUT', body });
       else await api('/beauticians', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -147,7 +148,7 @@ export default function BeauticiansScreen() {
               </View>
               <View style={styles.field}>
                 <Text style={styles.label}>Phone (optional)</Text>
-                <TextInput testID="bt-phone-input" value={phone} onChangeText={setPhone} placeholder="+91..." placeholderTextColor={colors.onSurfaceTertiary} keyboardType="phone-pad" style={styles.input} />
+                <TextInput testID="bt-phone-input" value={phone} onChangeText={(v) => setPhone(sanitizePhone(v))} placeholder="10-digit number" placeholderTextColor={colors.onSurfaceTertiary} keyboardType="number-pad" maxLength={PHONE_MAX} style={styles.input} />
               </View>
               <View style={styles.switchRow}>
                 <Text style={styles.label}>Active</Text>

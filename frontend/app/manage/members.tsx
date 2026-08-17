@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
   Modal, Pressable, Switch, KeyboardAvoidingView, Platform, Linking,
@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
-import { sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
+import { sanitizePhone, phoneError, parse422, PHONE_MAX } from '@/src/utils/validators';
 
 type Member = {
   id: string; name: string; phone: string; joined_at: string; expires_at: string;
@@ -48,6 +48,7 @@ export default function MembersScreen() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [phoneErr, setPhoneErr] = useState<string | null>(null);
+  const phoneRef = useRef<TextInput>(null);
 
   // Tenant-configured membership tiers (fallback to defaults).
   const tiers: { id: string; name: string; discount_pct: number; min_price: number }[] =
@@ -82,11 +83,8 @@ export default function MembersScreen() {
   const save = async () => {
     setErr(null); setPhoneErr(null);
     if (!name.trim()) { setErr('Name is required'); return; }
-    if (!phone.trim()) { setPhoneErr('Phone is required'); return; }
-    if (!isValidPhone(phone, { required: true })) {
-      setPhoneErr('Enter a valid phone number (digits only, max 20)');
-      return;
-    }
+    const pmsg = phoneError(phone, { required: true });
+    if (pmsg) { setPhoneErr(pmsg); phoneRef.current?.focus(); return; }
     let discOverride: number | null = null;
     if (discountPct.trim()) {
       const d = Number(discountPct);
@@ -109,7 +107,11 @@ export default function MembersScreen() {
       else await api('/members', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setEditOpen(false); await load();
-    } catch (e: any) { setErr(e.message || 'Failed'); }
+    } catch (e: any) {
+      const friendly = parse422(e);
+      if (friendly && /(mobile|phone)/i.test(friendly)) setPhoneErr(friendly);
+      else setErr(friendly || e.message || 'Failed');
+    }
     finally { setSaving(false); }
   };
 
@@ -279,9 +281,14 @@ export default function MembersScreen() {
                 <Text style={styles.label}>Phone <Text style={{ color: colors.error }}>*</Text></Text>
                 <TextInput
                   testID="m-phone"
+                  ref={phoneRef}
                   value={phone}
                   onChangeText={(v) => { setPhone(sanitizePhone(v)); if (phoneErr) setPhoneErr(null); }}
-                  keyboardType="phone-pad"
+                  onBlur={() => {
+                    const msg = phoneError(phone, { required: true });
+                    if (msg) setPhoneErr(msg);
+                  }}
+                  keyboardType="number-pad"
                   maxLength={PHONE_MAX}
                   placeholder="10-digit number"
                   placeholderTextColor={colors.onSurfaceTertiary}
