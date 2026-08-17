@@ -31,6 +31,23 @@ const padItemCode = (v: string): string => {
   return d.length < 3 ? d.padStart(3, '0') : d;
 };
 
+/**
+ * Compute the next item_code from the currently-loaded services list.
+ * Used as a client-side fallback when `/api/services/next-code` is not
+ * yet available on the backend (older deployments). Mirrors the backend
+ * rule: max(existing_codes as int) + 1, zero-padded to 3.
+ */
+const nextItemCodeFromList = (services: Service[]): string => {
+  let max = 0;
+  for (const s of services) {
+    const d = (s.item_code || '').replace(/\D+/g, '');
+    if (!d) continue;
+    const n = parseInt(d, 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return padItemCode(String(max + 1));
+};
+
 // Normalise web's TitleCase service_type to mobile's lowercase gender.
 const readGender = (s: Service): Gender => {
   const st = (s.service_type || '').toString().toLowerCase();
@@ -78,12 +95,17 @@ export default function ServicesScreen() {
     setGender('unisex'); setCategory('General'); setTaxPct(''); setActive(true);
     setItemCode(''); setItemCodeErr(null);
     setErr(null); setEditOpen(true);
-    // Prefill next item code from backend. If endpoint isn't live yet, silently skip
-    // and let backend auto-assign on save.
+    // Prefill next item code: try backend first, fall back to computing it
+    // locally from the current services list (max + 1, padded to 3).
+    let filled = '';
     try {
       const nc: any = await api('/services/next-code');
-      if (nc && typeof nc.item_code === 'string') setItemCode(nc.item_code);
-    } catch { /* ignore — auto-assign at save */ }
+      if (nc && typeof nc.item_code === 'string' && /^\d+$/.test(nc.item_code)) {
+        filled = nc.item_code;
+      }
+    } catch { /* endpoint not live yet — fall through to local calc */ }
+    if (!filled) filled = nextItemCodeFromList(list);
+    setItemCode(filled);
   };
   const openEdit = (s: Service) => {
     setEditing(s); setName(s.name); setPrice(String(s.price));
@@ -257,7 +279,7 @@ export default function ServicesScreen() {
 
                 {/* Item Code — optional, numeric zero-padded string. Blank = auto-assign. */}
                 <View style={styles.field}>
-                  <Text style={styles.label}>Item Code <Text style={{ color: colors.onSurfaceTertiary, fontWeight: '400' }}>(leave blank to auto-assign)</Text></Text>
+                  <Text style={styles.label}>Item code</Text>
                   <TextInput
                     testID="svc-item-code-input"
                     value={itemCode}
@@ -269,6 +291,7 @@ export default function ServicesScreen() {
                     placeholderTextColor={colors.onSurfaceTertiary}
                     style={[styles.input, itemCodeErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
                   />
+                  <Text style={styles.helpText}>Numbers only. Auto-filled with the next available code — change it if you like.</Text>
                   {itemCodeErr && (
                     <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="svc-item-code-err">
                       {itemCodeErr}

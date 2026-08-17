@@ -1194,3 +1194,23 @@ Client-only change. Feature stays fully backwards-compatible with the current ba
 - If a service has no `item_code` — nothing is rendered / sent, and the list looks unchanged.
 - Once the backend ships item_code + `/next-code`, the UI lights up automatically without another mobile deploy.
 
+
+## Iteration 34.13 — Item Code auto-fill (client-side fallback)
+
+**User report**: On mobile, when adding a service the item code stayed blank because our preview backend doesn't have `/api/services/next-code` yet — but the web app auto-fills it live. The mobile app must match the web behaviour.
+
+### Fix (`app/manage/services.tsx`)
+- New helper `nextItemCodeFromList(services)` — computes `max(existing_codes as int) + 1`, zero-padded to 3 (mirrors the backend rule).
+- `openAdd()` now:
+  1. Tries `GET /api/services/next-code` first (works in production where it's live).
+  2. On any error / non-numeric response, **falls back to the local calc** from the currently-loaded list.
+- Result: mobile now auto-fills identically to web, even against a backend that doesn't have the endpoint.
+- Refreshed the helper copy to match web: *"Numbers only. Auto-filled with the next available code — change it if you like."*
+
+### Verified on preview
+Seeded 3 services on the test tenant (codes `001`, `002`, `005`).
+- Services list shows correct badges (`001 · Hair Cut`, `002 · Shaving`, `005 · Hair Spa`). ✓
+- Tapping **+** on the Services header → Add modal opens with **Item code = `006`** pre-filled (005 + 1, padded). ✓
+- Helper copy matches web verbatim. ✓
+- Backend still returns 404 on `/services/next-code` — auto-fill still works because of the local fallback.
+
