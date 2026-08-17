@@ -12,6 +12,7 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
 
 const DEFAULT_MEMBER_PCT = 10;
 const DEFAULT_MEMBER_MIN_PRICE = 100;
@@ -62,6 +63,7 @@ export default function NewBillScreen() {
   const [tipBeauticianName, setTipBeauticianName] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [phoneErr, setPhoneErr] = useState<string | null>(null);
 
   // Backdated billing — admin/owner only, defaults to today, future dates disabled.
   const [billingDate, setBillingDate] = useState<string>(todayIso);
@@ -233,6 +235,11 @@ export default function NewBillScreen() {
         setErr(`Split amounts must total ${fmtINR(grandTotal)}`); return;
       }
     }
+    // Phone: optional, but if present must be valid (digits only, max 20).
+    if (customerPhone && !isValidPhone(customerPhone)) {
+      setPhoneErr('Enter a valid phone (digits only, max 20)');
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -302,10 +309,12 @@ export default function NewBillScreen() {
               placeholder="Phone (optional)"
               placeholderTextColor={colors.onSurfaceTertiary}
               value={customerPhone}
-              onChangeText={setCustomerPhone}
+              onChangeText={(v) => { setCustomerPhone(sanitizePhone(v)); if (phoneErr) setPhoneErr(null); }}
               keyboardType="phone-pad"
-              style={styles.input}
+              maxLength={PHONE_MAX}
+              style={[styles.input, phoneErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
             />
+            {phoneErr && <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="customer-phone-err">{phoneErr}</Text>}
           </View>
 
           {/* Billing date — admin/owner only, defaults today, no future dates */}

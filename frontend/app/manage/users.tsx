@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { isValidEmail } from '@/src/utils/validators';
 
 type UserRow = { id: string; name: string; email: string; role: 'admin' | 'staff'; branch_id?: string | null };
 
@@ -29,6 +30,7 @@ export default function UsersScreen() {
   const [branchId, setBranchId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [emailErr, setEmailErr] = useState<string | null>(null);
 
   const branchNameById = (bid?: string | null) => {
     if (!bid) return null;
@@ -63,8 +65,10 @@ export default function UsersScreen() {
   };
 
   const save = async () => {
-    setErr(null);
-    if (!name.trim() || !email.trim()) { setErr('Name and email required'); return; }
+    setErr(null); setEmailErr(null);
+    if (!name.trim()) { setErr('Name is required'); return; }
+    if (!email.trim()) { setEmailErr('Email is required'); return; }
+    if (!isValidEmail(email)) { setEmailErr('Invalid email format'); return; }
     if (!editing && pwd.length < 6) { setErr('Password ≥ 6 chars'); return; }
     if (role === 'staff' && !branchId) { setErr('Staff must be assigned to a branch'); return; }
     setSaving(true);
@@ -175,7 +179,20 @@ export default function UsersScreen() {
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>{editing ? 'Edit User' : 'Add User'}</Text>
               <View style={styles.field}><Text style={styles.label}>Name</Text><TextInput testID="user-name-input" value={name} onChangeText={setName} placeholder="Full name" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
-              <View style={styles.field}><Text style={styles.label}>Email</Text><TextInput testID="user-email-input" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="user@salon.com" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
+              <View style={styles.field}>
+                <Text style={styles.label}>Email <Text style={{ color: colors.error }}>*</Text></Text>
+                <TextInput
+                  testID="user-email-input"
+                  value={email}
+                  onChangeText={(v) => { setEmail(v); if (emailErr) setEmailErr(null); }}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  placeholder="user@salon.com"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={[styles.input, emailErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
+                />
+                {emailErr && <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="user-email-err">{emailErr}</Text>}
+              </View>
               {!editing && (
                 <View style={styles.field}><Text style={styles.label}>Password (≥ 6 chars)</Text><TextInput testID="user-pwd-input" value={pwd} onChangeText={setPwd} secureTextEntry placeholder="••••••" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
               )}

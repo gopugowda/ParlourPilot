@@ -10,8 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { isValidEmail, sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
 
 export default function SignupScreen() {
   const { signup } = useAuth();
@@ -27,17 +26,18 @@ export default function SignupScreen() {
   const [numBranches, setNumBranches] = useState('1');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Per-field errors so we can highlight only what's wrong (red border + msg).
+  const [fieldErr, setFieldErr] = useState<{ email?: string; phone?: string }>({});
 
   const onSubmit = async () => {
-    setErr(null);
+    setErr(null); setFieldErr({});
+    const fe: typeof fieldErr = {};
     if (!businessName.trim()) return setErr('Enter your salon/business name');
     if (!ownerName.trim()) return setErr('Enter owner name');
-    if (!email.trim()) return setErr('Enter your email');
-    if (!EMAIL_RE.test(email.trim())) return setErr('Enter a valid email address');
-    if (phone.trim()) {
-      const digits = phone.replace(/\D/g, '');
-      if (digits.length < 6 || digits.length > 15) return setErr('Phone must be 6-15 digits');
-    }
+    if (!email.trim()) fe.email = 'Email is required';
+    else if (!isValidEmail(email)) fe.email = 'Invalid email format';
+    if (phone.trim() && !isValidPhone(phone)) fe.phone = 'Enter a valid phone (digits only, max 20)';
+    if (fe.email || fe.phone) { setFieldErr(fe); return; }
     if (password.length < 6) return setErr('Password must be at least 6 characters');
     const nb = Math.max(1, Math.min(20, parseInt(numBranches || '1', 10) || 1));
 
@@ -130,12 +130,12 @@ export default function SignupScreen() {
 
         <View style={styles.field}>
           <Text style={styles.label}>Email *</Text>
-          <View style={styles.inputWrap}>
-            <Ionicons name="mail-outline" size={18} color={colors.onSurfaceTertiary} />
+          <View style={[styles.inputWrap, fieldErr.email && styles.inputWrapError]}>
+            <Ionicons name="mail-outline" size={18} color={fieldErr.email ? colors.error : colors.onSurfaceTertiary} />
             <TextInput
               testID="signup-email-input"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(v) => { setEmail(v); if (fieldErr.email) setFieldErr({ ...fieldErr, email: undefined }); }}
               placeholder="you@salon.com"
               placeholderTextColor={colors.onSurfaceTertiary}
               autoCapitalize="none"
@@ -145,23 +145,26 @@ export default function SignupScreen() {
               returnKeyType="next"
             />
           </View>
+          {fieldErr.email && <Text style={styles.fieldErr} testID="signup-email-err">{fieldErr.email}</Text>}
         </View>
 
         <View style={styles.field}>
           <Text style={styles.label}>Phone</Text>
-          <View style={styles.inputWrap}>
-            <Ionicons name="call-outline" size={18} color={colors.onSurfaceTertiary} />
+          <View style={[styles.inputWrap, fieldErr.phone && styles.inputWrapError]}>
+            <Ionicons name="call-outline" size={18} color={fieldErr.phone ? colors.error : colors.onSurfaceTertiary} />
             <TextInput
               testID="signup-phone-input"
               value={phone}
-              onChangeText={setPhone}
+              onChangeText={(v) => { setPhone(sanitizePhone(v)); if (fieldErr.phone) setFieldErr({ ...fieldErr, phone: undefined }); }}
               placeholder="9876543210"
               placeholderTextColor={colors.onSurfaceTertiary}
               keyboardType="phone-pad"
+              maxLength={PHONE_MAX}
               style={styles.input}
               returnKeyType="next"
             />
           </View>
+          {fieldErr.phone && <Text style={styles.fieldErr} testID="signup-phone-err">{fieldErr.phone}</Text>}
         </View>
 
         <View style={styles.field}>
@@ -286,6 +289,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.lg,
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, minHeight: 52,
   },
+  inputWrapError: { borderColor: colors.error, backgroundColor: '#FDECEC' },
+  fieldErr: { color: colors.error, fontSize: 12, marginTop: 4, marginLeft: 4, fontWeight: '600' },
   input: { flex: 1, fontSize: 15, color: colors.onSurface, paddingVertical: 12 },
   err: { color: colors.error, fontSize: 14, marginBottom: spacing.md },
   btn: {

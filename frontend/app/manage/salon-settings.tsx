@@ -12,8 +12,9 @@ import * as Haptics from 'expo-haptics';
 import { tenantApi, branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, CURRENCY_CHOICES, BRAND_COLOR_PRESETS, contrastText } from '@/src/theme';
+import { isValidEmail, sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// EMAIL_RE removed — validation is now handled by isValidEmail() from /src/utils/validators.ts
 
 export default function SalonSettingsScreen() {
   const router = useRouter();
@@ -158,14 +159,14 @@ export default function SalonSettingsScreen() {
   };
 
   const saveCompany = async () => {
-    if (companyEmail.trim() && !EMAIL_RE.test(companyEmail.trim())) {
-      Alert.alert('Invalid email', 'Please enter a valid email address'); return;
+    if (!companyEmail.trim()) {
+      Alert.alert('Email required', 'Please enter your salon email address'); return;
     }
-    if (companyPhone.trim()) {
-      const digits = companyPhone.replace(/\D/g, '');
-      if (digits.length < 6 || digits.length > 15) {
-        Alert.alert('Invalid phone', 'Phone number must be 6-15 digits'); return;
-      }
+    if (!isValidEmail(companyEmail)) {
+      Alert.alert('Invalid email format', 'Please enter a valid email address'); return;
+    }
+    if (companyPhone.trim() && !isValidPhone(companyPhone)) {
+      Alert.alert('Invalid phone', 'Phone must be digits only, max 20 characters'); return;
     }
     const md = parseFloat(memberDiscount);
     if (!Number.isFinite(md) || md < 0 || md > 100) {
@@ -224,14 +225,11 @@ export default function SalonSettingsScreen() {
 
   const saveBranch = async () => {
     if (!selectedBranch) { Alert.alert('No branch', 'Select a branch first'); return; }
-    if (branchEmail.trim() && !EMAIL_RE.test(branchEmail.trim())) {
-      Alert.alert('Invalid email', 'Enter a valid branch email'); return;
+    if (branchEmail.trim() && !isValidEmail(branchEmail)) {
+      Alert.alert('Invalid email format', 'Enter a valid branch email'); return;
     }
-    if (branchPhone.trim()) {
-      const digits = branchPhone.replace(/\D/g, '');
-      if (digits.length < 6 || digits.length > 15) {
-        Alert.alert('Invalid phone', 'Branch phone must be 6-15 digits'); return;
-      }
+    if (branchPhone.trim() && !isValidPhone(branchPhone)) {
+      Alert.alert('Invalid phone', 'Branch phone must be digits only, max 20 characters'); return;
     }
     if (taxEnabled && taxPercentage) {
       const t = parseFloat(taxPercentage);
@@ -333,8 +331,8 @@ export default function SalonSettingsScreen() {
             <Text style={styles.cardTitle}>Business Details</Text>
             <LabeledInput label="Business Name" value={businessName} onChangeText={setBusinessName} />
             <LabeledInput label="Owner Name" value={ownerName} onChangeText={setOwnerName} />
-            <LabeledInput label="Company Email" value={companyEmail} onChangeText={setCompanyEmail} keyboardType="email-address" autoCapitalize="none" />
-            <LabeledInput label="Company Phone" value={companyPhone} onChangeText={setCompanyPhone} keyboardType="phone-pad" />
+            <LabeledInput label="Company Email *" value={companyEmail} onChangeText={setCompanyEmail} keyboardType="email-address" autoCapitalize="none" />
+            <LabeledInput label="Company Phone" value={companyPhone} onChangeText={(v) => setCompanyPhone(sanitizePhone(v))} keyboardType="phone-pad" maxLength={PHONE_MAX} />
             <LabeledInput label="Website (optional)" value={website} onChangeText={setWebsite} autoCapitalize="none" />
             <LabeledInput label="Country" value={country} onChangeText={setCountry} />
 
@@ -560,7 +558,7 @@ export default function SalonSettingsScreen() {
                 </View>
                 <View style={{ flexDirection: 'row', gap: spacing.md }}>
                   <View style={{ flex: 1 }}><LabeledInput label="Postal Code" value={postalCode} onChangeText={setPostalCode} keyboardType="numeric" /></View>
-                  <View style={{ flex: 1 }}><LabeledInput label="Branch Phone" value={branchPhone} onChangeText={setBranchPhone} keyboardType="phone-pad" /></View>
+                  <View style={{ flex: 1 }}><LabeledInput label="Branch Phone" value={branchPhone} onChangeText={(v) => setBranchPhone(sanitizePhone(v))} keyboardType="phone-pad" maxLength={PHONE_MAX} /></View>
                 </View>
                 <LabeledInput label="Branch Email" value={branchEmail} onChangeText={setBranchEmail} keyboardType="email-address" autoCapitalize="none" />
               </View>

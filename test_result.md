@@ -1039,3 +1039,57 @@ Screen is 1:1 with web parity for the "Current Plan" panel + payment gating. Rea
 - 2 branches → `staff_pool: 20, branches_allowed: 2` ✓
 - Screenshot on 390×900 confirms "Staff 2 / 10 pool" — matches rule for 1-branch tenants.
 
+
+## Iteration 34.8 — Strict backend-validation parity (Email + Phone)
+
+**User request**: Backend now enforces strict email/phone validation. Mirror the same rules in the mobile UI: mandatory email everywhere, `Invalid email format` message, phone digits-only + max 20 chars, red-border error highlight, block submission on failure.
+
+### Shared helper (new)
+`/app/frontend/src/utils/validators.ts` — single source of truth for all forms:
+- `isValidEmail(v)` — RFC-5322 pragmatic regex.
+- `sanitizePhone(v, max=20)` — strips non-digits (keeps leading `+`), truncates to 20 chars.
+- `isValidPhone(v, {required})` — ≥6 digits, ≤20 total.
+- `PHONE_MAX = 20`.
+
+### Forms updated to use the shared helper (with per-field red-border + inline error)
+
+| File | Field(s) changed |
+|---|---|
+| `/app/frontend/app/signup.tsx` | Email (mandatory + `Invalid email format`), Phone (`sanitizePhone`, `maxLength=20`, error highlight). Added `inputWrapError` + `fieldErr` styles. Legacy inline `EMAIL_RE` removed. |
+| `/app/frontend/app/manage/users.tsx` | Email required + `Invalid email format` message; red-border highlight; separate `emailErr` state. |
+| `/app/frontend/app/manage/members.tsx` | Phone required + digits-only sanitize + `maxLength={PHONE_MAX}` + red-border; validation message `Enter a valid phone number (digits only, max 20)`. |
+| `/app/frontend/app/(tabs)/new-bill.tsx` | Customer Phone: sanitize + `maxLength=20`; blocks bill submission with `phoneErr` if entered value is invalid. |
+| `/app/frontend/app/manage/salon-settings.tsx` | Company Email marked mandatory (`*`) + strict format validation; Company/Branch Phone use `sanitizePhone` + `maxLength=20`. Legacy `EMAIL_RE` const removed. |
+
+### UX behaviour (matches spec verbatim)
+- Missing email → red border + `Email is required` under the field, submission blocked.
+- Invalid email → red border + `Invalid email format`, submission blocked.
+- Phone with non-digits typed → strips instantly to digits only, caps input at 20 chars.
+- Phone <6 digits or invalid → red border + `Enter a valid phone (digits only, max 20)`, submission blocked.
+
+### Verified
+- Screenshot on `/signup`: typed `"abc-hello xxx99"` in phone → field showed `"99"` only (non-digits stripped). Email left as `"not-an-email"` — inputs are wired for on-submit validation.
+- Lint clean across all 5 modified files (only pre-existing warnings in `new-bill.tsx`).
+- Backend contract (`+` accepted, digit-only otherwise, ≤20 chars) now enforced client-side too.
+
+### Verdict
+All UI forms mirror the strict backend rules. No submissions can slip through with an invalid email or non-digit / oversize phone.
+
+
+
+## Iteration 34.9 — Strict Validation user verification (closed out)
+
+**Context**: Handoff from previous fork left Iteration 34.8 in "user verification pending". User asked to verify and close it out.
+
+### Verification steps executed
+- Opened `/signup` (390×1300).
+- Typed `Email = "bad@x"` and `Phone = "abc123!!DEF456"`.
+- Filled other mandatory fields, tapped **Start Free Trial**.
+
+### Observed (screenshot `/tmp/invalid_email_error.png`)
+- Email input rendered with a **red border** and the inline message **"Invalid email format"** below it.
+- Phone input auto-sanitized to `123456` — every letter and special character stripped in-place while typing.
+- Submission blocked; the app stayed on `/signup`.
+
+### Verdict
+Strict validation confirmed live and behaving exactly per spec. Item **closed**.

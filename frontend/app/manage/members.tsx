@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { sanitizePhone, isValidPhone, PHONE_MAX } from '@/src/utils/validators';
 
 type Member = {
   id: string; name: string; phone: string; joined_at: string; expires_at: string;
@@ -46,6 +47,7 @@ export default function MembersScreen() {
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [phoneErr, setPhoneErr] = useState<string | null>(null);
 
   // Tenant-configured membership tiers (fallback to defaults).
   const tiers: { id: string; name: string; discount_pct: number; min_price: number }[] =
@@ -78,12 +80,11 @@ export default function MembersScreen() {
   };
 
   const save = async () => {
-    setErr(null);
-    if (!name.trim() || !phone.trim()) { setErr('Name and phone required'); return; }
-    // Phone: digits only, 6-15 chars
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (phoneDigits.length < 6 || phoneDigits.length > 15) {
-      setErr('Phone must be 6-15 digits');
+    setErr(null); setPhoneErr(null);
+    if (!name.trim()) { setErr('Name is required'); return; }
+    if (!phone.trim()) { setPhoneErr('Phone is required'); return; }
+    if (!isValidPhone(phone, { required: true })) {
+      setPhoneErr('Enter a valid phone number (digits only, max 20)');
       return;
     }
     let discOverride: number | null = null;
@@ -96,7 +97,7 @@ export default function MembersScreen() {
     try {
       const body: any = {
         name: name.trim(),
-        phone: phoneDigits,
+        phone: sanitizePhone(phone),
         joined_at: joinedAt,
         expires_at: expiresAt,
         discount_pct: discOverride,
@@ -274,7 +275,20 @@ export default function MembersScreen() {
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>{editing ? 'Edit Member' : 'Add Member'}</Text>
               <View style={styles.field}><Text style={styles.label}>Name</Text><TextInput testID="m-name" value={name} onChangeText={setName} placeholder="Full name" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
-              <View style={styles.field}><Text style={styles.label}>Phone</Text><TextInput testID="m-phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="10-digit number" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
+              <View style={styles.field}>
+                <Text style={styles.label}>Phone <Text style={{ color: colors.error }}>*</Text></Text>
+                <TextInput
+                  testID="m-phone"
+                  value={phone}
+                  onChangeText={(v) => { setPhone(sanitizePhone(v)); if (phoneErr) setPhoneErr(null); }}
+                  keyboardType="phone-pad"
+                  maxLength={PHONE_MAX}
+                  placeholder="10-digit number"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={[styles.input, phoneErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
+                />
+                {phoneErr && <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="m-phone-err">{phoneErr}</Text>}
+              </View>
               <View style={{ flexDirection: 'row', gap: spacing.md }}>
                 <View style={[styles.field, { flex: 1 }]}>
                   <Text style={styles.label}>Joined (YYYY-MM-DD)</Text>
