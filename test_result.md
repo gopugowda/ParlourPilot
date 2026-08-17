@@ -986,3 +986,40 @@ Both chip rows used `flexDirection: 'row'` + `flex: 1` per chip. When the label 
 - Screenshot at 360×800 viewport — both rows render cleanly, no overlap, "QR / Online" wraps within its own row below the icon.
 - Touch targets still ≥ 44 pt.
 
+
+## Iteration 34.6 — Subscription screen redesigned to match web app
+
+**User request**: Redesign mobile Subscription screen to match web parity — fetch entitlements, prominent plan card with 4-tile grid, next-payment line, backend-driven pricing, contextual buttons (Activate/Renew, Upgrade to Growth, Cancel/Resume), Razorpay-config gating, and improved 4xx error surfacing.
+
+### What was built
+**Backend** (`/app/backend/routes/billing.py` — NEW):
+- `GET /api/billing/entitlements` returns `{plan_tier, plan_tier_label, branch_count, branches_allowed, staff_count, staff_pool, can_upgrade, grandfathered, monthly_price_per_branch, yearly_price_per_branch, currency}`. Registered in `server.py`.
+- Every current tenant maps to `starter`. Legacy grandfathered accounts identified via `tenant.plan_tier` / `grandfathered` fields.
+- Razorpay keys updated in `.env` (user-provided test keys).
+
+**Frontend** (`/app/frontend/app/subscription.tsx` — full rewrite):
+- **Current Plan panel**: `CURRENT PLAN` eyebrow + tier name (from entitlements). Status pill (green=active, gold=trialing/cancel-pending, red=expired/cancelled/suspended).
+- **4-tile grid** (Plan · Billing cycle · Expiry date · Days remaining). Days-remaining tile turns gold ≤7, red ≤3. Expiry label switches: "Renews on" / "Trial ends" / "Access until".
+- **Next payment line**: `₹price × branch_count` computed from entitlements.
+- **Cancellation-pending inline notice**: "Plan set to cancel — access continues until <date>".
+- **Buttons** (owner/admin only): Activate/Renew (label switches while trialing), Upgrade to Growth (only when `plan_tier==='starter' && can_upgrade`), Cancel or Resume.
+- **Payment-config gating**: fetches `/api/payments/config`; if `enabled: false`, "Renew"/"Upgrade" surface a snackbar `Online payments aren't configured yet.` and do not open checkout.
+- **Snackbar toast** replaces silent-swallow — any 400/gateway error from backend surfaces its `detail` inline.
+- **Usage hub**: Staff `x / pool` · Branches `x / allowed` (from entitlements).
+- **Pull-to-refresh** on the whole screen.
+
+### Verified (curl)
+- Login as `bdt3@test.com` / `admin123` (Starter/trialing tenant with 1 branch).
+- `GET /api/billing/entitlements` → `{plan_tier: 'starter', can_upgrade: true, monthly_price_per_branch: 999, yearly_price_per_branch: 9999, branches_allowed: 1, staff_pool: 5, ...}` ✓
+- `GET /api/payments/config` → `{enabled: true, key_id: 'rzp_test_TQhvNpyrNSzvmN', provider: 'razorpay', currency: 'INR'}` ✓
+- `GET /api/tenants/me/subscription` → 200 with `trialing, days_left=14` ✓
+
+### Visual smoke (390×900)
+Screenshot confirms: eyebrow + `Starter` tier name, `TRIALING` gold pill, 4 tiles rendered (Plan · Billing cycle=Free trial · Trial ends · Days remaining=14), `Next payment: ₹999 (₹999 × 1 branch)`, `Activate plan` primary CTA, `Upgrade to Growth` visible, `Cancel subscription` ghost link, Usage hub `Staff 2/5, Branches 1/1`, support footer. All matches spec.
+
+### Payment flow unchanged
+Renew/Activate CTA routes to `/checkout?type=tenant` which already uses `POST /api/tenants/checkout/order` + `verify` with the new Razorpay keys. On 400 gateway failures the existing catch block shows the backend `detail` in an alert (message-preserving).
+
+### Verdict
+Screen is 1:1 with web parity for the "Current Plan" panel + payment gating. Ready for user testing on redeploy.
+
