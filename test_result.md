@@ -1214,3 +1214,21 @@ Seeded 3 services on the test tenant (codes `001`, `002`, `005`).
 - Helper copy matches web verbatim. ✓
 - Backend still returns 404 on `/services/next-code` — auto-fill still works because of the local fallback.
 
+
+## Iteration 34.14 — Item Code: fix Edit visibility + auto-suggest on Edit
+
+**User report** (from Expo Go on real phone): after adding "Hair Wash", no item code got assigned, and when tapping Edit the modal had no Item code field visible.
+
+### Root causes
+1. The Item code field was rendered inside the modal's inner ScrollView. On iOS Expo Go, the KeyboardAvoidingView could scroll the inner ScrollView down at open, hiding the drag handle + title + Item code until the user manually scrolled up.
+2. `openEdit()` prefilled only from `s.item_code`. Services created *before* this feature landed (Hair Wash / Hair Cut + Shaving on the shared DB) had no code — so the field stayed empty and the user had to know to type something.
+3. Expo Go on device serves whatever bundle was last **Published**. Latest changes need a Publish to reach the phone.
+
+### Fixes (`app/manage/services.tsx`)
+- Moved the drag handle, sheet title, and **Item code** input **out of the inner ScrollView** — now they live in a fixed header at the top of the sheet and are always visible on open.
+- `openEdit()` now behaves like `openAdd()` for legacy services: if `s.item_code` is missing, it fetches `/api/services/next-code` (or falls back to a client-side max+1 calc from the loaded list) and pre-fills the field. Saving persists the code — no data reshaping needed.
+- Verified on preview using the real tenant (`book@glowupunisexsalon.com`): editing *"Hair Cut + Shaving"* now opens with **Item code = `004`** pre-filled (next available), title visible at top, save button reachable.
+
+### For the user
+Push the fix to Expo Go by clicking **Publish**. Then in the app: open a service → the code is pre-filled → tap **Save**. Repeat for any legacy service without a code.
+

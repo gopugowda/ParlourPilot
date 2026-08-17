@@ -107,7 +107,7 @@ export default function ServicesScreen() {
     if (!filled) filled = nextItemCodeFromList(list);
     setItemCode(filled);
   };
-  const openEdit = (s: Service) => {
+  const openEdit = async (s: Service) => {
     setEditing(s); setName(s.name); setPrice(String(s.price));
     // Web writes `variable_price: bool` — reflect it as ON toggle even if additional_price is missing.
     const hasVariable = !!s.variable_price || (s.additional_price ?? 0) > 0;
@@ -118,6 +118,19 @@ export default function ServicesScreen() {
     setActive(s.active);
     setItemCode(s.item_code || ''); setItemCodeErr(null);
     setErr(null); setEditOpen(true);
+    // If this service has no item_code yet (e.g. created before the item_code
+    // feature shipped), suggest the next available one — user can accept or edit.
+    if (!s.item_code) {
+      let filled = '';
+      try {
+        const nc: any = await api('/services/next-code');
+        if (nc && typeof nc.item_code === 'string' && /^\d+$/.test(nc.item_code)) {
+          filled = nc.item_code;
+        }
+      } catch { /* endpoint not live — fall back */ }
+      if (!filled) filled = nextItemCodeFromList(list);
+      setItemCode(filled);
+    }
   };
 
   const save = async () => {
@@ -273,32 +286,34 @@ export default function ServicesScreen() {
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
+              {/* Fixed header (title + Item code) — kept OUTSIDE the ScrollView
+                  so it stays visible even if the sheet's inner content scrolls. */}
+              <View style={styles.handle} />
+              <Text style={styles.sheetTitle}>{editing ? 'Edit service' : 'Add service'}</Text>
+
+              {/* Item Code — optional, numeric zero-padded string. Blank = auto-assign. */}
+              <View style={styles.field}>
+                <Text style={styles.label}>Item code</Text>
+                <TextInput
+                  testID="svc-item-code-input"
+                  value={itemCode}
+                  onChangeText={(v) => { setItemCode(sanitizeItemCode(v)); if (itemCodeErr) setItemCodeErr(null); }}
+                  onBlur={() => setItemCode(prev => padItemCode(prev))}
+                  keyboardType="number-pad"
+                  maxLength={9}
+                  placeholder="e.g. 001"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={[styles.input, itemCodeErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
+                />
+                <Text style={styles.helpText}>Numbers only. Auto-filled with the next available code — change it if you like.</Text>
+                {itemCodeErr && (
+                  <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="svc-item-code-err">
+                    {itemCodeErr}
+                  </Text>
+                )}
+              </View>
+
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
-                <View style={styles.handle} />
-                <Text style={styles.sheetTitle}>{editing ? 'Edit service' : 'Add service'}</Text>
-
-                {/* Item Code — optional, numeric zero-padded string. Blank = auto-assign. */}
-                <View style={styles.field}>
-                  <Text style={styles.label}>Item code</Text>
-                  <TextInput
-                    testID="svc-item-code-input"
-                    value={itemCode}
-                    onChangeText={(v) => { setItemCode(sanitizeItemCode(v)); if (itemCodeErr) setItemCodeErr(null); }}
-                    onBlur={() => setItemCode(prev => padItemCode(prev))}
-                    keyboardType="number-pad"
-                    maxLength={9}
-                    placeholder="e.g. 001"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    style={[styles.input, itemCodeErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
-                  />
-                  <Text style={styles.helpText}>Numbers only. Auto-filled with the next available code — change it if you like.</Text>
-                  {itemCodeErr && (
-                    <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="svc-item-code-err">
-                      {itemCodeErr}
-                    </Text>
-                  )}
-                </View>
-
                 <View style={styles.field}>
                   <Text style={styles.label}>Service name</Text>
                   <TextInput testID="svc-name-input" value={name} onChangeText={setName} placeholder="e.g. Hair Spa" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
