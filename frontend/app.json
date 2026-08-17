@@ -2,7 +2,7 @@
   "expo": {
     "name": "ParlourPilot",
     "slug": "parlourpilot",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/parlourpilot-logo.png",
     "scheme": "parlourpilot",
@@ -21,9 +21,17 @@
         "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.saloninvoiceapp.djfiom",
-      "permissions": [
-        "READ_EXTERNAL_STORAGE"
+      "package": "com.parlourpilot.app",
+      "versionCode": 104,
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA",
+        "android.permission.DUMP",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.USE_BIOMETRIC"
       ]
     },
     "web": {
@@ -42,7 +50,25 @@
           "backgroundColor": "#FFFFFF"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow ParlourPilot to access your photos so you can pick a salon logo.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "buildToolsVersion": "36.0.0"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
