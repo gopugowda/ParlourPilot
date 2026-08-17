@@ -4,6 +4,9 @@
   },
   "build": {
     "production": {
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://parlourpilot.com"
+      },
       "android": {
         "buildType": "app-bundle"
       }
