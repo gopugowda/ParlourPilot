@@ -24,7 +24,7 @@ function formatPrettyDate(iso: string): string {
   } catch { return iso; }
 }
 
-type Service = { id: string; name: string; price: number; additional_price?: number; variable_price?: boolean; gender?: string; service_type?: string; category: string; tax_percentage?: number };
+type Service = { id: string; name: string; price: number; item_code?: string; additional_price?: number; variable_price?: boolean; gender?: string; service_type?: string; category: string; tax_percentage?: number };
 type Beautician = { id: string; name: string; role: string };
 type Item = {
   service_id?: string; service_name: string;
@@ -278,10 +278,20 @@ export default function NewBillScreen() {
     }
   };
 
+  // Service picker matches on item_code (startsWith, digits-only) OR name (substring, case-insensitive).
+  // Typing "001" jumps straight to that service — the whole point of item codes for fast counter billing.
+  const _rawQ = (pickerSearch || '').trim();
+  const _nameQ = _rawQ.toLowerCase();
+  const _codeQ = _rawQ.replace(/\D+/g, '');
   const pickerData = pickerFor?.type === 'service'
-    ? services.filter(s => s.name.toLowerCase().includes(pickerSearch.toLowerCase()))
+    ? services.filter(s => {
+        if (!_rawQ) return true;
+        const codeMatch = !!_codeQ && !!s.item_code && s.item_code.startsWith(_codeQ);
+        const nameMatch = s.name.toLowerCase().includes(_nameQ);
+        return codeMatch || nameMatch;
+      })
     : (pickerFor?.type === 'beautician' || pickerFor?.type === 'tip-beautician')
-      ? beauticians.filter(b => b.name.toLowerCase().includes(pickerSearch.toLowerCase()))
+      ? beauticians.filter(b => b.name.toLowerCase().includes(_nameQ))
       : [];
 
   return (
@@ -756,9 +766,11 @@ export default function NewBillScreen() {
               testID="picker-search"
               value={pickerSearch}
               onChangeText={setPickerSearch}
-              placeholder="Search..."
+              placeholder={pickerFor?.type === 'service' ? 'Type code or name (e.g. 001 or Hair Spa)' : 'Search...'}
               placeholderTextColor={colors.onSurfaceTertiary}
               style={styles.modalSearch}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
             <ScrollView style={{ maxHeight: 400 }}>
               {pickerData.length === 0 && <Text style={styles.emptyText}>Nothing found</Text>}
@@ -808,6 +820,9 @@ export default function NewBillScreen() {
                 >
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {pickerFor?.type === 'service' && opt.item_code ? (
+                        <Text style={styles.pickerCode} testID={`picker-code-${opt.id}`}>{opt.item_code}</Text>
+                      ) : null}
                       <Text style={styles.pickerName}>{opt.name}</Text>
                       {pickerFor?.type === 'service' && (() => {
                         const g = (opt.service_type || opt.gender || 'unisex').toString().toLowerCase();
@@ -1112,6 +1127,12 @@ const styles = StyleSheet.create({
   modalSearch: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface },
   pickerRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.divider },
   pickerName: { fontSize: 15, fontWeight: '600', color: colors.onSurface },
+  pickerCode: {
+    fontSize: 12, fontWeight: '800', color: colors.brandPrimary,
+    backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary,
+    borderRadius: radius.sm, paddingHorizontal: 6, paddingVertical: 2,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', letterSpacing: 0.5,
+  } as any,
   pickerSub: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
   pickerPrice: { fontSize: 15, fontWeight: '700', color: colors.brandPrimary },
   emptyText: { color: colors.onSurfaceTertiary, fontSize: 13, textAlign: 'center', padding: spacing.xl },

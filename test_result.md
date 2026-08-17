@@ -1160,3 +1160,37 @@ Strict validation confirmed live and behaving exactly per spec. Item **closed**.
 
 ### Deployment note
 Client-only change. To ship to production: **Publish** button. If a new AAB was already generated, it needs to be rebuilt after this change to include the new validation UX.
+
+## Iteration 34.12 — Item Code on Services (mobile UI only)
+
+**User request**: Add numeric zero-padded `item_code` display, entry and search to the mobile app. Web + backend team will build the backend + migration.
+
+### Files touched
+- `app/manage/services.tsx`
+  - `Service` type extended with `item_code?: string`.
+  - Local helpers `sanitizeItemCode` (digits-only) and `padItemCode` (min 3-digit pad on blur).
+  - `openAdd()` calls `GET /api/services/next-code` and prefills `itemCode` from `{ item_code }`. Failure is silent — backend will auto-assign at save.
+  - `openEdit()` prefills `itemCode` from the existing service.
+  - New **Item Code** input at top of the Add/Edit sheet with helper "(leave blank to auto-assign)", `keyboardType="number-pad"`, `maxLength=9`, inline red-border + friendly error state.
+  - Save mapping: sends `item_code` only when non-empty; blank = backend auto-assigns.
+  - Friendly error mapping on 400/409:
+    - 400 (contains "item code" + "digit") → `"Item code can only contain numbers"`
+    - 409 / "already"/"duplicate"/"unique" → `"That item code is already used — pick another"`
+  - Services list rows render a `codeBadge` (monospace, brand tertiary) prefix like `001` in front of the name.
+- `app/(tabs)/new-bill.tsx`
+  - `Service` type extended with `item_code?: string`.
+  - Service picker filter matches on `item_code.startsWith(query)` (digits-only slice of query) OR `name.toLowerCase().includes(query)` — so typing `001` jumps straight to that service.
+  - Picker row shows a monospace code chip in front of the name and the placeholder is now `"Type code or name (e.g. 001 or Hair Spa)"`.
+
+### Verified on preview
+- Services empty state renders (no regression on tenants that have no services).
+- Add modal opens with the new field visible and helper copy correct.
+- Typing `abc12def!!500XY` into the field auto-sanitized to `12` (non-digits stripped in place).
+- `/services/next-code` 404 is swallowed silently — field remains blank, ready for the backend to auto-assign.
+- Lint clean on both files.
+
+### Deployment note
+Client-only change. Feature stays fully backwards-compatible with the current backend:
+- If a service has no `item_code` — nothing is rendered / sent, and the list looks unchanged.
+- Once the backend ships item_code + `/next-code`, the UI lights up automatically without another mobile deploy.
+

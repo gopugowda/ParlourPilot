@@ -14,12 +14,21 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 type Gender = 'ladies' | 'men' | 'unisex';
 type Service = {
   id: string; name: string; price: number;
+  item_code?: string;                       // NEW: numeric zero-padded string (e.g. "001")
   // Web writes these two (primary):
   service_type?: 'Ladies' | 'Men' | 'Unisex' | string;
   variable_price?: boolean;
   // Mobile-only additional keys (backward compat):
   additional_price?: number; gender?: Gender;
   category: string; tax_percentage?: number; active: boolean;
+};
+
+// Digits-only; zero-pad to 3 min (matches backend rule). Empty stays empty.
+const sanitizeItemCode = (v: string): string => (v || '').replace(/\D+/g, '');
+const padItemCode = (v: string): string => {
+  const d = sanitizeItemCode(v);
+  if (!d) return '';
+  return d.length < 3 ? d.padStart(3, '0') : d;
 };
 
 // Normalise web's TitleCase service_type to mobile's lowercase gender.
@@ -47,6 +56,8 @@ export default function ServicesScreen() {
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [itemCode, setItemCode] = useState('');
+  const [itemCodeErr, setItemCodeErr] = useState<string | null>(null);
   const [genderFilter, setGenderFilter] = useState<'all' | Gender>('all');
 
   const load = async () => {
@@ -62,10 +73,17 @@ export default function ServicesScreen() {
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
   useFocusEffect(useCallback(() => { load(); }, []));
 
-  const openAdd = () => {
+  const openAdd = async () => {
     setEditing(null); setName(''); setPrice(''); setAdditionalPrice('');
     setGender('unisex'); setCategory('General'); setTaxPct(''); setActive(true);
+    setItemCode(''); setItemCodeErr(null);
     setErr(null); setEditOpen(true);
+    // Prefill next item code from backend. If endpoint isn't live yet, silently skip
+    // and let backend auto-assign on save.
+    try {
+      const nc: any = await api('/services/next-code');
+      if (nc && typeof nc.item_code === 'string') setItemCode(nc.item_code);
+    } catch { /* ignore — auto-assign at save */ }
   };
   const openEdit = (s: Service) => {
     setEditing(s); setName(s.name); setPrice(String(s.price));
@@ -75,11 +93,13 @@ export default function ServicesScreen() {
     setGender(readGender(s));
     setCategory(s.category);
     setTaxPct(s.tax_percentage ? String(s.tax_percentage) : '');
-    setActive(s.active); setErr(null); setEditOpen(true);
+    setActive(s.active);
+    setItemCode(s.item_code || ''); setItemCodeErr(null);
+    setErr(null); setEditOpen(true);
   };
 
   const save = async () => {
-    setErr(null);
+    setErr(null); setItemCodeErr(null);
     if (!name.trim()) { setErr('Name required'); return; }
     const p = Number(price);
     if (!(p > 0)) { setErr('Price must be > 0'); return; }
@@ -89,9 +109,14 @@ export default function ServicesScreen() {
     }
     const tx = Number(taxPct);
     if (taxPct && (!Number.isFinite(tx) || tx < 0 || tx > 100)) { setErr('Tax % must be between 0 and 100'); return; }
+    // Item code: optional. If provided, must be digits only.
+    const trimmedCode = (itemCode || '').trim();
+    if (trimmedCode && !/^\d+$/.test(trimmedCode)) {
+      setItemCodeErr('Item code can only contain numbers'); return;
+    }
     setSaving(true);
     try {
-      const body = {
+      const body: any = {
         name: name.trim(), price: p,
         additional_price: Number.isFinite(ap) ? ap : 0,
         gender,
@@ -99,12 +124,28 @@ export default function ServicesScreen() {
         tax_percentage: Number.isFinite(tx) ? tx : 0,
         active,
       };
+      // Only send item_code when the field is non-empty (blank = backend auto-assigns).
+      if (trimmedCode) body.item_code = padItemCode(trimmedCode);
       if (editing) await api(`/services/${editing.id}`, { method: 'PUT', body });
       else await api('/services', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setEditOpen(false);
       await load();
-    } catch (e: any) { setErr(e.message || 'Failed'); }
+    } catch (e: any) {
+      // Friendly error mapping for backend 400/409 on item_code.
+      const raw = (e?.message || '').toString();
+      const lower = raw.toLowerCase();
+      if (lower.includes('item code') && lower.includes('digit')) {
+        setItemCodeErr('Item code can only contain numbers');
+      } else if (
+        lower.includes('already') || lower.includes('duplicate') || lower.includes('unique') ||
+        lower.includes('409') || lower.includes('item code') && lower.includes('exist')
+      ) {
+        setItemCodeErr('That item code is already used — pick another');
+      } else {
+        setErr(raw || 'Failed');
+      }
+    }
     finally { setSaving(false); }
   };
 
@@ -170,6 +211,11 @@ export default function ServicesScreen() {
               const gCol = g === 'ladies' ? '#D9337B' : g === 'men' ? '#2E6BE6' : colors.brandPrimary;
               return (
                 <View key={s.id} style={styles.row} testID={`svc-row-${s.id}`}>
+                  {s.item_code ? (
+                    <View style={styles.codeBadge}>
+                      <Text style={styles.codeBadgeText}>{s.item_code}</Text>
+                    </View>
+                  ) : null}
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <Text style={styles.rowName}>{s.name}</Text>
@@ -208,6 +254,28 @@ export default function ServicesScreen() {
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
                 <View style={styles.handle} />
                 <Text style={styles.sheetTitle}>{editing ? 'Edit service' : 'Add service'}</Text>
+
+                {/* Item Code — optional, numeric zero-padded string. Blank = auto-assign. */}
+                <View style={styles.field}>
+                  <Text style={styles.label}>Item Code <Text style={{ color: colors.onSurfaceTertiary, fontWeight: '400' }}>(leave blank to auto-assign)</Text></Text>
+                  <TextInput
+                    testID="svc-item-code-input"
+                    value={itemCode}
+                    onChangeText={(v) => { setItemCode(sanitizeItemCode(v)); if (itemCodeErr) setItemCodeErr(null); }}
+                    onBlur={() => setItemCode(prev => padItemCode(prev))}
+                    keyboardType="number-pad"
+                    maxLength={9}
+                    placeholder="e.g. 001"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    style={[styles.input, itemCodeErr && { borderColor: colors.error, backgroundColor: '#FDECEC', borderWidth: 1 }]}
+                  />
+                  {itemCodeErr && (
+                    <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, fontWeight: '600' }} testID="svc-item-code-err">
+                      {itemCodeErr}
+                    </Text>
+                  )}
+                </View>
+
                 <View style={styles.field}>
                   <Text style={styles.label}>Service name</Text>
                   <TextInput testID="svc-name-input" value={name} onChangeText={setName} placeholder="e.g. Hair Spa" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
@@ -380,4 +448,15 @@ const styles = StyleSheet.create({
   catChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   catChipText: { fontSize: 11, fontWeight: '600', color: colors.onSurfaceSecondary },
   catChipTextActive: { color: '#fff' },
+
+  codeBadge: {
+    minWidth: 44, paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: radius.sm, backgroundColor: colors.brandTertiary,
+    borderWidth: 1, borderColor: colors.brandSecondary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  codeBadgeText: {
+    fontSize: 12, fontWeight: '800', color: colors.brandPrimary,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', letterSpacing: 0.5,
+  } as any,
 });
