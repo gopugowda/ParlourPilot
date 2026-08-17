@@ -49,7 +49,11 @@ async def get_billing_entitlements(user=Depends(get_current_user)):
     grandfathered = bool(tenant.get("grandfathered"))
 
     n_branches = await db.branches.count_documents({"tenant_id": tid, "active": True})
-    n_staff = await db.users.count_documents({"tenant_id": tid, "is_active": True, "role": {"$in": ["staff", "admin", "owner"]}})
+    # "Staff" in the product = rows in the `beauticians` collection (Manage → Staff screen).
+    # These are the people who perform services on bills — NOT login users. Previously we
+    # counted `db.users` here, which mis-reported salons with many beauticians but few
+    # login accounts (e.g. "3/10 pool" for a salon with 8 beauticians).
+    n_staff = await db.beauticians.count_documents({"tenant_id": tid, "active": True})
 
     # Per-branch pricing model: every branch adds 10 staff slots to the pool.
     # Branches_allowed always matches the number of branches the tenant is paying for

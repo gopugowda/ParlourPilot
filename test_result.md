@@ -1092,4 +1092,25 @@ All UI forms mirror the strict backend rules. No submissions can slip through wi
 - Submission blocked; the app stayed on `/signup`.
 
 ### Verdict
+
+## Iteration 34.10 — Subscription staff count bug (production)
+
+**User report**: Subscription screen shows `Staff 3 / 10 pool` when the tenant has actually added 8 staff.
+
+### Root cause
+`GET /api/billing/entitlements` counted `db.users` with role in `[staff, admin, owner]`. But in the product, **Staff** (managed under Manage → Staff / `beauticians.tsx`) are rows in the `beauticians` collection — NOT login users. Salons with many beauticians but few login accounts saw the wrong denominator numerator (e.g. `1/10` instead of `10/10`).
+
+### Fix (`/app/backend/routes/billing.py`)
+- Swapped the count source to `db.beauticians.count_documents({"tenant_id": tid, "active": True})`.
+- Added an inline comment documenting the semantic ("Staff" = beauticians, not login users) so future refactors don't regress.
+
+### Verified (curl on preview against live Atlas)
+- Tenant `b4375f81-…` (1 active beautician, 2 login users):
+  - Before fix: `staff_count = 2` (from users).
+  - After fix: `staff_count = 1` (from beauticians).  ✓ matches Manage → Staff.
+- Data snapshot across all tenants confirms cases like 10 beauticians + 1 login user (previously `1/10`, now `10/10`).
+
+### Deployment note
+Fix is in the FastAPI backend. Preview reflects it immediately. To ship to production, user must **redeploy** via the Publish panel — the mobile app itself needs no rebuild for this change.
+
 Strict validation confirmed live and behaving exactly per spec. Item **closed**.
