@@ -1023,3 +1023,19 @@ Renew/Activate CTA routes to `/checkout?type=tenant` which already uses `POST /a
 ### Verdict
 Screen is 1:1 with web parity for the "Current Plan" panel + payment gating. Ready for user testing on redeploy.
 
+
+## Iteration 34.7 — Staff pool scales per branch (10 per branch)
+
+**User rule**: Every branch adds 10 staff seats to the pool. 1 branch → 10 seats, 2 branches → 20 seats, 3 → 30, etc. `branches_allowed` equals `branch_count` since each new branch is a paid slot.
+
+### Fix (`/app/backend/routes/billing.py`)
+- Replaced flat per-tier caps with per-branch scaling:
+  - `branches_allowed = max(1, active_branch_count)`
+  - `staff_pool = branches_allowed × 10` (starter/growth) or `× 15` (legacy grandfathered)
+- Everything else on the endpoint remains identical (plan_tier, pricing, upgrade eligibility).
+
+### Verified (curl)
+- 1 branch → `staff_pool: 10, branches_allowed: 1` ✓
+- 2 branches → `staff_pool: 20, branches_allowed: 2` ✓
+- Screenshot on 390×900 confirms "Staff 2 / 10 pool" — matches rule for 1-branch tenants.
+

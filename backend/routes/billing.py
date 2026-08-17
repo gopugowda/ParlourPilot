@@ -51,12 +51,21 @@ async def get_billing_entitlements(user=Depends(get_current_user)):
     n_branches = await db.branches.count_documents({"tenant_id": tid, "active": True})
     n_staff = await db.users.count_documents({"tenant_id": tid, "is_active": True, "role": {"$in": ["staff", "admin", "owner"]}})
 
-    # Sensible defaults for the starter tier; adjust when Growth is added server-side.
+    # Per-branch pricing model: every branch adds 10 staff slots to the pool.
+    # Branches_allowed always matches the number of branches the tenant is paying for
+    # (a new branch is billed as an additional ₹999/mo slot on renewal). We surface
+    # `staff_pool = max(1, n_branches) * 10` so the UI reads "20 pool" for 2 branches,
+    # "30 pool" for 3, etc., in line with the web app.
+    branches_effective = max(1, n_branches)
+    per_branch_staff_pool = {
+        "starter": 10,
+        "growth":  10,   # Growth still scales linearly; upgrade unlocks extra features, not more staff per branch.
+        "legacy":  15,
+    }.get(plan_tier, 10)
     caps = {
-        "starter": {"branches_allowed": 1, "staff_pool": 5},
-        "growth":  {"branches_allowed": 5, "staff_pool": 25},
-        "legacy":  {"branches_allowed": 99, "staff_pool": 99},
-    }.get(plan_tier, {"branches_allowed": 1, "staff_pool": 5})
+        "branches_allowed": branches_effective,
+        "staff_pool": branches_effective * per_branch_staff_pool,
+    }
 
     # Pricing per branch (monthly / yearly). Falls back to first plan in SUBSCRIPTION_PLANS.
     monthly_p = next((p for p in SUBSCRIPTION_PLANS if p.get("id") == "monthly"), SUBSCRIPTION_PLANS[0])
