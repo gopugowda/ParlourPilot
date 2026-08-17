@@ -87,3 +87,6 @@ credentials.json
 # NOTE: .env files are intentionally NOT ignored — Emergent deployment needs them
 # in the build context. Never commit real production secrets to a public repo,
 # but for the internal Emergent deploy pipeline they must be included.
+.env
+.env.*
+*.env
