@@ -13,6 +13,8 @@ import { api, appointmentApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtMoney } from '@/src/theme';
 import { sanitizePhone, PHONE_MAX } from '@/src/utils/validators';
+import { useFilterState } from '@/src/hooks/useFilterState';
+import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 
 type Appointment = {
   id: string;
@@ -68,6 +70,15 @@ export default function AppointmentsScreen() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Appointment | null>(null);
 
+  // Persistent filters (stylist, status, custom date range).
+  const [fsOpen, setFsOpen] = useState(false);
+  const { filters, setFilters, resetFilters, activeCount } = useFilterState('appointments', {
+    stylistId: null as string | null,
+    status:    null as Appointment['status'] | null,
+    dateFrom:  null as string | null,
+    dateTo:    null as string | null,
+  });
+
   const load = useCallback(async () => {
     try {
       let params: any = {};
@@ -98,15 +109,26 @@ export default function AppointmentsScreen() {
   useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const filteredList = useMemo(() => {
+    return list.filter(a => {
+      if (filters.stylistId && a.beautician_id !== filters.stylistId) return false;
+      if (filters.status    && a.status !== filters.status)          return false;
+      const dk = (a.scheduled_start || '').slice(0, 10);
+      if (filters.dateFrom && dk < filters.dateFrom) return false;
+      if (filters.dateTo   && dk > filters.dateTo)   return false;
+      return true;
+    });
+  }, [list, filters.stylistId, filters.status, filters.dateFrom, filters.dateTo]);
+
   const grouped = useMemo(() => {
     const map = new Map<string, Appointment[]>();
-    list.forEach(a => {
+    filteredList.forEach(a => {
       const dkey = a.scheduled_start.slice(0, 10);
       if (!map.has(dkey)) map.set(dkey, []);
       map.get(dkey)!.push(a);
     });
     return Array.from(map.entries()).map(([k, v]) => ({ dateKey: k, items: v }));
-  }, [list]);
+  }, [filteredList]);
 
   const openNew = () => {
     setEditing(null);
@@ -146,9 +168,10 @@ export default function AppointmentsScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Appointments</Text>
-          <Text style={styles.headerSub}>{list.length} bookings</Text>
+          <Text style={styles.headerSub}>{filteredList.length} of {list.length}</Text>
         </View>
-        <TouchableOpacity onPress={openNew} style={styles.addBtn} testID="add-apt-btn">
+        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="apt-filter-btn" />
+        <TouchableOpacity onPress={openNew} style={[styles.addBtn, { marginLeft: spacing.sm }]} testID="add-apt-btn">
           <Ionicons name="add" size={20} color="#fff" />
         </TouchableOpacity>
       </SafeAreaView>
@@ -226,6 +249,57 @@ export default function AppointmentsScreen() {
         beauticians={beauticians}
         services={services}
       />
+
+      <FilterSheet
+        visible={fsOpen}
+        onClose={() => setFsOpen(false)}
+        onClear={resetFilters}
+        title="Filter appointments"
+        testID="apt-filter-sheet"
+      >
+        <FilterSection label="Stylist">
+          <FilterChip label="Any" selected={!filters.stylistId} onPress={() => setFilters({ stylistId: null })} testID="apt-fs-stylist-any" />
+          {beauticians.map(b => (
+            <FilterChip
+              key={b.id}
+              label={b.name}
+              selected={filters.stylistId === b.id}
+              onPress={() => setFilters({ stylistId: b.id })}
+              testID={`apt-fs-stylist-${b.id}`}
+            />
+          ))}
+        </FilterSection>
+        <FilterSection label="Status">
+          <FilterChip label="Any" selected={!filters.status} onPress={() => setFilters({ status: null })} testID="apt-fs-status-any" />
+          {(['booked','in_progress','completed','canceled','no_show'] as const).map(s => (
+            <FilterChip
+              key={s}
+              label={(STATUS_META as any)[s]?.label || s}
+              selected={filters.status === s}
+              onPress={() => setFilters({ status: s })}
+              testID={`apt-fs-status-${s}`}
+            />
+          ))}
+        </FilterSection>
+        <FilterSection label="Date range (YYYY-MM-DD)">
+          <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+            <TextInput
+              placeholder="From"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              value={filters.dateFrom || ''}
+              onChangeText={(v) => setFilters({ dateFrom: v || null })}
+              style={{ flex: 1, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface }}
+            />
+            <TextInput
+              placeholder="To"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              value={filters.dateTo || ''}
+              onChangeText={(v) => setFilters({ dateTo: v || null })}
+              style={{ flex: 1, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface }}
+            />
+          </View>
+        </FilterSection>
+      </FilterSheet>
     </View>
   );
 }

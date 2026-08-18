@@ -12,6 +12,8 @@ import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/whatsappInvoice';
+import { useFilterState } from '@/src/hooks/useFilterState';
+import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 
 type Bill = {
   id: string; bill_no: string; customer_name: string; customer_phone?: string; grand_total: number;
@@ -51,6 +53,21 @@ export default function HistoryScreen() {
   const [search, setSearch] = useState('');
   const [pickedDate, setPickedDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+  // Advanced persistent filters (bottom sheet). These are client-side filters
+  // that layer on top of the server-driven chips.
+  const [beauticians, setBeauticians] = useState<{id: string; name: string}[]>([]);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const { filters, setFilters, resetFilters, activeCount } = useFilterState('history', {
+    staffId: null as string | null,
+    paymentMode: null as string | null,   // secondary payment filter (client-side)
+    dateFrom: null as string | null,
+    dateTo: null as string | null,
+  });
+
+  useEffect(() => {
+    api<any[]>('/beauticians').then(list => setBeauticians((list || []).map((b: any) => ({ id: b.id, name: b.name })))).catch(() => {});
+  }, []);
 
   const shareOnWhatsApp = (b: Bill) => {
     const items = (b.items || []).map((it: any) => ({
@@ -107,9 +124,22 @@ export default function HistoryScreen() {
 
   const filtered = bills.filter(b => {
     const s = search.toLowerCase();
-    if (!s) return true;
-    return (b.bill_no.toLowerCase().includes(s)
-      || (b.customer_name || '').toLowerCase().includes(s));
+    if (s && !(b.bill_no.toLowerCase().includes(s) || (b.customer_name || '').toLowerCase().includes(s))) return false;
+    // Advanced filters (from persistent sheet).
+    if (filters.staffId) {
+      const has = (b.items || []).some((it: any) => it.beautician_id === filters.staffId);
+      if (!has) return false;
+    }
+    if (filters.paymentMode) {
+      const bm = (b.payment_mode || '').toLowerCase();
+      if (bm !== filters.paymentMode) return false;
+    }
+    if (filters.dateFrom || filters.dateTo) {
+      const dk = bill_date_key(b);
+      if (filters.dateFrom && dk < filters.dateFrom) return false;
+      if (filters.dateTo && dk > filters.dateTo) return false;
+    }
+    return true;
   });
 
   const totalShown = filtered.reduce((s, b) => s + b.grand_total, 0);
@@ -118,10 +148,17 @@ export default function HistoryScreen() {
     <View style={styles.root} testID="history-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
         <View style={styles.headerTop}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>{isAdmin ? 'Bill History' : "Today's Bills"}</Text>
             <Text style={styles.headerSub}>{filtered.length} bills · {fmtINR(totalShown)}</Text>
           </View>
+          {isAdmin && (
+            <FilterHeaderButton
+              count={activeCount}
+              onPress={() => setFilterSheetOpen(true)}
+              testID="history-filter-btn"
+            />
+          )}
         </View>
 
         <View style={styles.searchWrap}>
@@ -257,6 +294,65 @@ export default function HistoryScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Advanced persistent filters */}
+      <FilterSheet
+        visible={filterSheetOpen}
+        onClose={() => setFilterSheetOpen(false)}
+        onClear={() => { resetFilters(); Haptics.selectionAsync(); }}
+        title="Filter bills"
+        testID="history-filter-sheet"
+      >
+        <FilterSection label="Payment Method">
+          {[
+            { k: null,      label: 'Any'   },
+            { k: 'cash',    label: 'Cash'  },
+            { k: 'qr',      label: 'QR / UPI' },
+            { k: 'card',    label: 'Card'  },
+            { k: 'split',   label: 'Split' },
+          ].map(o => (
+            <FilterChip
+              key={String(o.k)}
+              label={o.label}
+              selected={filters.paymentMode === o.k}
+              onPress={() => setFilters({ paymentMode: o.k })}
+              testID={`hist-fs-pm-${o.k ?? 'any'}`}
+            />
+          ))}
+        </FilterSection>
+
+        <FilterSection label="Staff">
+          <FilterChip label="Any" selected={!filters.staffId} onPress={() => setFilters({ staffId: null })} testID="hist-fs-staff-any" />
+          {beauticians.map(b => (
+            <FilterChip
+              key={b.id}
+              label={b.name}
+              selected={filters.staffId === b.id}
+              onPress={() => setFilters({ staffId: b.id })}
+              testID={`hist-fs-staff-${b.id}`}
+            />
+          ))}
+        </FilterSection>
+
+        <FilterSection label="Date range (YYYY-MM-DD)">
+          <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+            <TextInput
+              placeholder="From"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              value={filters.dateFrom || ''}
+              onChangeText={(v) => setFilters({ dateFrom: v || null })}
+              style={{ flex: 1, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface }}
+            />
+            <TextInput
+              placeholder="To"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              value={filters.dateTo || ''}
+              onChangeText={(v) => setFilters({ dateTo: v || null })}
+              style={{ flex: 1, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface }}
+            />
+          </View>
+        </FilterSection>
+      </FilterSheet>
     </View>
   );
 }

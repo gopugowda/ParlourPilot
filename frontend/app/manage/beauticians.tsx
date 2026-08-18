@@ -11,6 +11,8 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 import { sanitizePhone, PHONE_MAX } from '@/src/utils/validators';
+import { useFilterState } from '@/src/hooks/useFilterState';
+import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 
 type Beautician = { id: string; name: string; role: string; phone: string; active: boolean };
 
@@ -28,6 +30,22 @@ export default function BeauticiansScreen() {
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Persistent filters (role + status).
+  const [fsOpen, setFsOpen] = useState(false);
+  const { filters, setFilters, resetFilters, activeCount } = useFilterState('staff', {
+    role: null as string | null,
+    status: null as 'active' | 'inactive' | null,
+  });
+
+  const availableRoles = Array.from(new Set(list.map(b => b.role || 'Stylist')));
+
+  const displayList = list.filter(b => {
+    if (filters.role && (b.role || 'Stylist') !== filters.role) return false;
+    if (filters.status === 'active' && !b.active) return false;
+    if (filters.status === 'inactive' && b.active) return false;
+    return true;
+  });
 
   const load = async () => { try { setList(await api('/beauticians')); } catch {} };
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -69,10 +87,11 @@ export default function BeauticiansScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Staff</Text>
-          <Text style={styles.headerSub}>{list.length} staff members</Text>
+          <Text style={styles.headerSub}>{displayList.length} of {list.length} shown</Text>
         </View>
+        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="staff-filter-btn" />
         {isAdmin && (
-          <TouchableOpacity testID="add-header" onPress={openAdd} style={styles.headerBtn}>
+          <TouchableOpacity testID="add-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
         )}
@@ -91,7 +110,7 @@ export default function BeauticiansScreen() {
               )}
             </View>
           )}
-          {list.map(b => (
+          {displayList.map(b => (
             <View key={b.id} style={styles.row} testID={`bt-row-${b.id}`}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{b.name.split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
@@ -162,6 +181,32 @@ export default function BeauticiansScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      <FilterSheet
+        visible={fsOpen}
+        onClose={() => setFsOpen(false)}
+        onClear={resetFilters}
+        title="Filter staff"
+        testID="staff-filter-sheet"
+      >
+        <FilterSection label="Role">
+          <FilterChip label="Any" selected={!filters.role} onPress={() => setFilters({ role: null })} testID="staff-fs-role-any" />
+          {availableRoles.map(r => (
+            <FilterChip
+              key={r}
+              label={r}
+              selected={filters.role === r}
+              onPress={() => setFilters({ role: r })}
+              testID={`staff-fs-role-${r}`}
+            />
+          ))}
+        </FilterSection>
+        <FilterSection label="Status">
+          <FilterChip label="Any" selected={!filters.status} onPress={() => setFilters({ status: null })} testID="staff-fs-status-any" />
+          <FilterChip label="Active" selected={filters.status === 'active'} onPress={() => setFilters({ status: 'active' })} testID="staff-fs-status-active" />
+          <FilterChip label="Inactive" selected={filters.status === 'inactive'} onPress={() => setFilters({ status: 'inactive' })} testID="staff-fs-status-inactive" />
+        </FilterSection>
+      </FilterSheet>
     </View>
   );
 }

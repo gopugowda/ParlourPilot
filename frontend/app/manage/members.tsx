@@ -11,6 +11,8 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 import { sanitizePhone, phoneError, parse422, PHONE_MAX } from '@/src/utils/validators';
+import { useFilterState } from '@/src/hooks/useFilterState';
+import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 
 type Member = {
   id: string; name: string; phone: string; joined_at: string; expires_at: string;
@@ -49,6 +51,15 @@ export default function MembersScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [phoneErr, setPhoneErr] = useState<string | null>(null);
   const phoneRef = useRef<TextInput>(null);
+
+  // Persistent filters (tier, signup range, sort)
+  const [fsOpen, setFsOpen] = useState(false);
+  const { filters, setFilters, resetFilters, activeCount: filtersActive } = useFilterState('members', {
+    tierId: null as string | null,
+    joinedFrom: null as string | null,
+    joinedTo:   null as string | null,
+    sortBy: 'name' as 'name' | 'joined_desc' | 'joined_asc',
+  });
 
   // Tenant-configured membership tiers (fallback to defaults).
   const tiers: { id: string; name: string; discount_pct: number; min_price: number }[] =
@@ -123,9 +134,17 @@ export default function MembersScreen() {
     if (filter === 'expiring' && !(m.status === 'expiring_soon' || m.status === 'expired')) return false;
     if (filter === 'active' && !(m.status === 'active' || m.status === 'expiring_soon')) return false;
     if (filter === 'expired' && m.status !== 'expired') return false;
+    // Persistent filter layer
+    if (filters.tierId && (m as any).tier_id !== filters.tierId) return false;
+    if (filters.joinedFrom && (m.joined_at || '') < filters.joinedFrom) return false;
+    if (filters.joinedTo   && (m.joined_at || '') > filters.joinedTo)   return false;
     const s = search.toLowerCase();
     if (!s) return true;
     return m.name.toLowerCase().includes(s) || m.phone.includes(s);
+  }).sort((a, b) => {
+    if (filters.sortBy === 'joined_desc') return (b.joined_at || '').localeCompare(a.joined_at || '');
+    if (filters.sortBy === 'joined_asc')  return (a.joined_at || '').localeCompare(b.joined_at || '');
+    return a.name.localeCompare(b.name);
   });
 
   const expiringCount = list.filter(m => m.status === 'expiring_soon' || m.status === 'expired').length;
@@ -170,7 +189,8 @@ export default function MembersScreen() {
           <Text style={styles.headerTitle}>Members</Text>
           <Text style={styles.headerSub}>{list.length} · {list.filter(m => m.status === 'active' || m.status === 'expiring_soon').length} active</Text>
         </View>
-        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={styles.headerBtn}>
+        <FilterHeaderButton count={filtersActive} onPress={() => setFsOpen(true)} testID="members-filter-btn" />
+        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
           <Ionicons name="add" size={20} color="#fff" />
         </TouchableOpacity>
       </SafeAreaView>
@@ -366,6 +386,53 @@ export default function MembersScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      <FilterSheet
+        visible={fsOpen}
+        onClose={() => setFsOpen(false)}
+        onClear={resetFilters}
+        title="Filter members"
+        testID="members-filter-sheet"
+      >
+        <FilterSection label="Tier">
+          <FilterChip label="Any" selected={!filters.tierId} onPress={() => setFilters({ tierId: null })} testID="mem-fs-tier-any" />
+          {tiers.map(t => (
+            <FilterChip
+              key={t.id}
+              label={`${t.name} · ${t.discount_pct}%`}
+              selected={filters.tierId === t.id}
+              onPress={() => setFilters({ tierId: t.id })}
+              testID={`mem-fs-tier-${t.id}`}
+            />
+          ))}
+        </FilterSection>
+        <FilterSection label="Signup date range (YYYY-MM-DD)">
+          <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+            <TextInput
+              placeholder="From"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              value={filters.joinedFrom || ''}
+              onChangeText={(v) => setFilters({ joinedFrom: v || null })}
+              style={{ flex: 1, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface }}
+            />
+            <TextInput
+              placeholder="To"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              value={filters.joinedTo || ''}
+              onChangeText={(v) => setFilters({ joinedTo: v || null })}
+              style={{ flex: 1, backgroundColor: colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 10, borderRadius: radius.sm, fontSize: 13, color: colors.onSurface }}
+            />
+          </View>
+        </FilterSection>
+        <FilterSection label="Sort by">
+          <FilterChip label="Name (A→Z)" selected={filters.sortBy === 'name'}       onPress={() => setFilters({ sortBy: 'name' })}       testID="mem-fs-sort-name" />
+          <FilterChip label="Newest first" selected={filters.sortBy === 'joined_desc'} onPress={() => setFilters({ sortBy: 'joined_desc' })} testID="mem-fs-sort-newest" />
+          <FilterChip label="Oldest first" selected={filters.sortBy === 'joined_asc'}  onPress={() => setFilters({ sortBy: 'joined_asc' })}  testID="mem-fs-sort-oldest" />
+        </FilterSection>
+        <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: -4, marginBottom: 8 }}>
+          Sort by Total Spend will land once the backend exposes each member&rsquo;s running total.
+        </Text>
+      </FilterSheet>
     </View>
   );
 }

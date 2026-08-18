@@ -1232,3 +1232,34 @@ Seeded 3 services on the test tenant (codes `001`, `002`, `005`).
 ### For the user
 Push the fix to Expo Go by clicking **Publish**. Then in the app: open a service → the code is pre-filled → tap **Save**. Repeat for any legacy service without a code.
 
+
+## Iteration 34.15 — Advanced persistent filters (5 screens)
+
+**User request**: Match web app's new persistent filter bar. Bill History, Staff, Stock, Members, Appointments. Persist via AsyncStorage. Bottom-sheet UI with filter icon in header.
+
+### Shared infra (new)
+- `src/hooks/useFilterState.ts` — generic hook. Rehydrates from `pp:filters:<screen>` on mount, persists on every change, exposes `filters`, `setFilters(patch)`, `resetFilters()`, `activeCount`, `isHydrated`.
+- `src/components/FilterSheet.tsx` — `FilterHeaderButton` (icon + count badge), `FilterSheet` (bottom modal with Apply / Clear all), `FilterSection`, `FilterChip`.
+
+### Per-screen wiring
+| Screen | Filters |
+|---|---|
+| **Bill History** (`app/(tabs)/history.tsx`) | Payment Method (Any / Cash / QR/UPI / Card / Split), Staff (from `/beauticians`), Date range (From/To YYYY-MM-DD). Client-side filter over the currently-loaded bills. |
+| **Staff** (`app/manage/beauticians.tsx`) | Role (dynamic from data), Status (Any / Active / Inactive). Branch filter skipped per spec (redundant with global branch selector). |
+| **Stock** (`app/manage/stock.tsx`) | Category (with Add/Edit form now including a Category field + suggestion chips), Stock Status (Any / Low / Out), Branch (shown only if tenant has >1 branch). Old "All / Low" chip row replaced with a compact quick-toggle row for Low + Out. |
+| **Members** (`app/manage/members.tsx`) | Tier (from `member_tiers`), Signup date range, Sort by (Name / Newest / Oldest). Sort-by-total-spend deferred — needs backend `total_spent` field. Hint text surfaces the deferral. |
+| **Appointments** (`app/manage/appointments.tsx`) | Stylist (from beauticians), Status (all 5 states), Date range. |
+
+### UX
+- Header shows a circular icon button with an active-filter count badge.
+- Tap → bottom sheet slides up with sectioned chips + date inputs.
+- Filters persist across app reloads via AsyncStorage.
+- One-tap "Clear all" resets to defaults; "Apply" closes the sheet.
+
+### Verified on preview (real tenant)
+Screenshots captured for Staff, Stock, Members. Filter icon renders in header with active-count badge; sheet opens with correct sections; Clear/Apply work; persisted values survive page refresh. Lint clean across all 7 modified files.
+
+### Known follow-ups
+- Members "Sort by Total Spend" — needs backend `total_spent` on Member model. Hint added inline.
+- Bill History date range uses a plain text input (YYYY-MM-DD) to keep the sheet compact; can be upgraded to a Calendar picker in a follow-up if desired.
+

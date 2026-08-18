@@ -10,34 +10,47 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { useFilterState } from '@/src/hooks/useFilterState';
+import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 
 type StockItem = {
   id: string; name: string; unit: string;
+  category?: string;
+  branch_id?: string; branch_name?: string;
   current_qty: number; min_qty: number; unit_cost: number;
   low_stock: boolean; notes?: string;
 };
 
 const UNITS = ['piece', 'ml', 'g', 'kg', 'L', 'pack', 'bottle'];
+const DEFAULT_CATEGORIES = ['General', 'Hair', 'Skin', 'Nails', 'Waxing', 'Retail', 'Consumables'];
 
 export default function StockScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, branches } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'low'>('all');
 
   // Item editor
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<StockItem | null>(null);
   const [name, setName] = useState('');
   const [unit, setUnit] = useState('piece');
+  const [category, setCategory] = useState('General');
   const [curQty, setCurQty] = useState('0');
   const [minQty, setMinQty] = useState('0');
   const [unitCost, setUnitCost] = useState('0');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Persistent filters
+  const [fsOpen, setFsOpen] = useState(false);
+  const { filters, setFilters, resetFilters, activeCount } = useFilterState('stock', {
+    category: null as string | null,
+    stockStatus: null as 'low' | 'out' | null,
+    branchId: null as string | null,
+  });
 
   // Movement sheet
   const [mvOpen, setMvOpen] = useState<{ item: StockItem; type: 'purchase' | 'use' } | null>(null);
@@ -53,11 +66,13 @@ export default function StockScreen() {
   useFocusEffect(useCallback(() => { load(); }, []));
 
   const openAdd = () => {
-    setEditing(null); setName(''); setUnit('piece'); setCurQty('0'); setMinQty('0'); setUnitCost('0'); setErr(null); setEditOpen(true);
+    setEditing(null); setName(''); setUnit('piece'); setCategory('General');
+    setCurQty('0'); setMinQty('0'); setUnitCost('0'); setErr(null); setEditOpen(true);
   };
   const openEdit = (it: StockItem) => {
     if (!isAdmin) return;
     setEditing(it); setName(it.name); setUnit(it.unit);
+    setCategory(it.category || 'General');
     setCurQty(String(it.current_qty)); setMinQty(String(it.min_qty));
     setUnitCost(String(it.unit_cost)); setErr(null); setEditOpen(true);
   };
@@ -67,7 +82,7 @@ export default function StockScreen() {
     if (!name.trim()) { setErr('Name required'); return; }
     setSaving(true);
     try {
-      const body = { name: name.trim(), unit, current_qty: Number(curQty) || 0, min_qty: Number(minQty) || 0, unit_cost: Number(unitCost) || 0 };
+      const body: any = { name: name.trim(), unit, category: category.trim() || 'General', current_qty: Number(curQty) || 0, min_qty: Number(minQty) || 0, unit_cost: Number(unitCost) || 0 };
       if (editing) await api(`/stock/${editing.id}`, { method: 'PUT', body });
       else await api('/stock', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -111,11 +126,22 @@ export default function StockScreen() {
   };
 
   const filtered = list
-    .filter(it => filter === 'all' || it.low_stock)
-    .filter(it => !search || it.name.toLowerCase().includes(search.toLowerCase()));
+    .filter(it => !search || it.name.toLowerCase().includes(search.toLowerCase()))
+    .filter(it => !filters.category || (it.category || 'General') === filters.category)
+    .filter(it => {
+      if (filters.stockStatus === 'low')  return !!it.low_stock;
+      if (filters.stockStatus === 'out')  return (it.current_qty || 0) <= 0;
+      return true;
+    })
+    .filter(it => !filters.branchId || it.branch_id === filters.branchId);
 
   const lowCount = list.filter(i => i.low_stock).length;
   const inventoryValue = list.reduce((s, i) => s + i.current_qty * i.unit_cost, 0);
+
+  const availableCategories = Array.from(new Set([
+    ...DEFAULT_CATEGORIES,
+    ...list.map(i => i.category || 'General'),
+  ]));
 
   return (
     <View style={styles.root} testID="stock-screen">
@@ -128,10 +154,11 @@ export default function StockScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Stock</Text>
-          <Text style={styles.headerSub}>{list.length} items · {lowCount} low</Text>
+          <Text style={styles.headerSub}>{filtered.length} of {list.length} · {lowCount} low</Text>
         </View>
+        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="stock-filter-btn" />
         {isAdmin && (
-          <TouchableOpacity testID="add-item-btn" onPress={openAdd} style={styles.headerBtn}>
+          <TouchableOpacity testID="add-item-btn" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
             <Ionicons name="add" size={22} color="#fff" />
           </TouchableOpacity>
         )}
@@ -150,13 +177,16 @@ export default function StockScreen() {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.sm }} style={{ flexGrow: 0, marginBottom: spacing.md }}>
-        {[{ k: 'all', label: `All (${list.length})` }, { k: 'low', label: `Low Stock (${lowCount})` }].map(c => {
-          const active = filter === c.k;
+        {[
+          { k: 'low' as const,  label: `Low Stock (${lowCount})` },
+          { k: 'out' as const,  label: 'Out of stock' },
+        ].map(c => {
+          const active = filters.stockStatus === c.k;
           return (
             <TouchableOpacity
               key={c.k}
-              testID={`filter-${c.k}`}
-              onPress={() => setFilter(c.k as any)}
+              testID={`stock-quick-${c.k}`}
+              onPress={() => setFilters({ stockStatus: active ? null : c.k })}
               style={[styles.chip, active && styles.chipActive]}
             >
               <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.label}</Text>
@@ -234,6 +264,29 @@ export default function StockScreen() {
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>{editing ? 'Edit item' : 'Add item'}</Text>
               <View style={styles.field}><Text style={styles.label}>Name</Text><TextInput testID="s-name" value={name} onChangeText={setName} placeholder="e.g. Shampoo" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
+              <View style={styles.field}>
+                <Text style={styles.label}>Category</Text>
+                <TextInput
+                  testID="s-category"
+                  value={category}
+                  onChangeText={setCategory}
+                  placeholder="Type or pick below"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.input}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 6 }}>
+                  {availableCategories.map(c => (
+                    <TouchableOpacity
+                      key={c}
+                      testID={`s-cat-${c}`}
+                      onPress={() => setCategory(c)}
+                      style={[styles.unitChip, category === c && styles.unitChipActive]}
+                    >
+                      <Text style={[styles.unitChipText, category === c && styles.unitChipTextActive]}>{c}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
               <View style={styles.field}>
                 <Text style={styles.label}>Unit</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
@@ -315,6 +368,34 @@ export default function StockScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      <FilterSheet
+        visible={fsOpen}
+        onClose={() => setFsOpen(false)}
+        onClear={resetFilters}
+        title="Filter stock"
+        testID="stock-filter-sheet"
+      >
+        <FilterSection label="Category">
+          <FilterChip label="Any" selected={!filters.category} onPress={() => setFilters({ category: null })} testID="stock-fs-cat-any" />
+          {availableCategories.map(c => (
+            <FilterChip key={c} label={c} selected={filters.category === c} onPress={() => setFilters({ category: c })} testID={`stock-fs-cat-${c}`} />
+          ))}
+        </FilterSection>
+        <FilterSection label="Stock Status">
+          <FilterChip label="Any" selected={!filters.stockStatus} onPress={() => setFilters({ stockStatus: null })} testID="stock-fs-status-any" />
+          <FilterChip label="Low stock" selected={filters.stockStatus === 'low'} onPress={() => setFilters({ stockStatus: 'low' })} testID="stock-fs-status-low" />
+          <FilterChip label="Out of stock" selected={filters.stockStatus === 'out'} onPress={() => setFilters({ stockStatus: 'out' })} testID="stock-fs-status-out" />
+        </FilterSection>
+        {(branches || []).length > 1 && (
+          <FilterSection label="Branch">
+            <FilterChip label="Any" selected={!filters.branchId} onPress={() => setFilters({ branchId: null })} testID="stock-fs-branch-any" />
+            {(branches as any[]).map(b => (
+              <FilterChip key={b.id} label={b.name} selected={filters.branchId === b.id} onPress={() => setFilters({ branchId: b.id })} testID={`stock-fs-branch-${b.id}`} />
+            ))}
+          </FilterSection>
+        )}
+      </FilterSheet>
     </View>
   );
 }
