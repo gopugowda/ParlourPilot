@@ -14,6 +14,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/whatsappInvoice';
 import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
+import { paymentLabel } from '@/src/utils/paymentModes';
 
 type Bill = {
   id: string; bill_no: string; customer_name: string; customer_phone?: string; grand_total: number;
@@ -34,12 +35,12 @@ function fmtPretty(iso: string): string {
 }
 
 const chips = [
-  { key: 'all', label: 'All', icon: 'apps-outline' },
-  { key: 'today', label: 'Today', icon: 'today-outline' },
-  { key: 'pick', label: 'Pick date', icon: 'calendar-outline' },
-  { key: 'cash', label: 'Cash', icon: 'cash-outline' },
-  { key: 'qr', label: 'QR / Online', icon: 'qr-code-outline' },
-  { key: 'split', label: 'Split', icon: 'git-branch-outline' },
+  { key: 'all',   label: 'All',        icon: 'apps-outline' },
+  { key: 'today', label: 'Today',      icon: 'today-outline' },
+  { key: 'pick',  label: 'Pick date',  icon: 'calendar-outline' },
+  { key: 'cash',  label: 'Cash',       icon: 'cash-outline' },
+  { key: 'qr',    label: 'UPI / QR',   icon: 'qr-code-outline' },
+  { key: 'split', label: 'Split',      icon: 'git-branch-outline' },
 ];
 
 export default function HistoryScreen() {
@@ -79,10 +80,10 @@ export default function HistoryScreen() {
       day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
     });
     const paymentMode = b.payment_mode
-      ? (b.payment_mode === 'qr' ? 'UPI' : b.payment_mode.charAt(0).toUpperCase() + b.payment_mode.slice(1))
-      : (((b.cash_amount || 0) > 0 && (b.qr_amount || 0) > 0) ? 'Cash + UPI'
+      ? paymentLabel(b.payment_mode)
+      : (((b.cash_amount || 0) > 0 && (b.qr_amount || 0) > 0) ? 'Cash + UPI / QR'
         : (b.cash_amount || 0) > 0 ? 'Cash'
-        : (b.qr_amount || 0) > 0 ? 'UPI' : null);
+        : (b.qr_amount || 0) > 0 ? 'UPI / QR' : null);
     const msg = buildWhatsAppInvoiceMessage({
       businessName: tenant?.business_name,
       billNo: b.bill_no,
@@ -227,7 +228,7 @@ export default function HistoryScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={styles.billNo}>#{b.bill_no}</Text>
                   <View style={[styles.pmBadge, b.payment_mode === 'cash' ? styles.pmCash : b.payment_mode === 'qr' ? styles.pmQr : styles.pmSplit]}>
-                    <Text style={styles.pmBadgeText}>{b.payment_mode.toUpperCase()}</Text>
+                    <Text style={styles.pmBadgeText}>{paymentLabel(b.payment_mode)}</Text>
                   </View>
                 </View>
                 <Text style={styles.billCustomer}>{b.customer_name || 'Walk-in'}</Text>
@@ -305,11 +306,13 @@ export default function HistoryScreen() {
       >
         <FilterSection label="Payment Method">
           {[
-            { k: null,      label: 'Any'   },
-            { k: 'cash',    label: 'Cash'  },
-            { k: 'qr',      label: 'QR / UPI' },
-            { k: 'card',    label: 'Card'  },
-            { k: 'split',   label: 'Split' },
+            { k: null,               label: 'Any'           },
+            { k: 'cash',             label: 'Cash'          },
+            { k: 'card',             label: 'Card'          },
+            { k: 'qr',               label: 'UPI / QR'      },
+            { k: 'bank_transfer',    label: 'Bank Transfer' },
+            { k: 'split',            label: 'Split'         },
+            { k: 'other',            label: 'Other'         },
           ].map(o => (
             <FilterChip
               key={String(o.k)}

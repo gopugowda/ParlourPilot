@@ -12,6 +12,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/whatsappInvoice';
+import { paymentLabel } from '@/src/utils/paymentModes';
 
 export default function BillDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -186,8 +187,8 @@ ${tipBlock}
     <div class="row"><span><b>Grand Total</b></span><span class="grand">₹${displayGrandTotal.toFixed(2)}</span></div>
   </div>
   <div style="margin-top:12px">
-    <span class="pm">${bill.payment_mode.toUpperCase()}</span>
-    ${bill.payment_mode === 'split' ? `<div style="margin-top:6px;font-size:12px">Cash: ₹${bill.cash_amount.toFixed(2)} · QR: ₹${bill.qr_amount.toFixed(2)}</div>` : ''}
+    <span class="pm">${paymentLabel(bill.payment_mode)}</span>
+    ${bill.payment_mode === 'split' ? `<div style="margin-top:6px;font-size:12px">Cash: ₹${bill.cash_amount.toFixed(2)} · Card: ₹${(bill.card_amount||0).toFixed(2)} · UPI/QR: ₹${bill.qr_amount.toFixed(2)}</div>` : ''}
   </div>
 </div>
 
@@ -255,10 +256,8 @@ ${tipBlock}
             <Text style={styles.bannerTitle}>Payment Received</Text>
             <Text style={styles.bannerSub}>{
               bill.payment_mode === 'split'
-                ? `Split · Cash ${fmtINR(bill.cash_amount || 0)} + Card ${fmtINR(bill.card_amount || 0)} + QR ${fmtINR(bill.qr_amount || 0)}`
-                : bill.payment_mode === 'card' ? 'CARD'
-                : bill.payment_mode === 'qr' ? 'QR / Online'
-                : bill.payment_mode.toUpperCase()
+                ? `Split · Cash ${fmtINR(bill.cash_amount || 0)} + Card ${fmtINR(bill.card_amount || 0)} + UPI/QR ${fmtINR(bill.qr_amount || 0)}`
+                : paymentLabel(bill.payment_mode)
             }</Text>
           </View>
           <Text style={styles.bannerAmt}>{fmtINR(bill.grand_total)}</Text>
@@ -382,10 +381,10 @@ ${tipBlock}
               day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
             });
             const paymentMode = bill?.payment_mode
-              ? (bill.payment_mode === 'qr' ? 'UPI' : bill.payment_mode.charAt(0).toUpperCase() + bill.payment_mode.slice(1))
-              : ((bill?.cash_amount > 0 && bill?.qr_amount > 0) ? 'Cash + UPI'
+              ? paymentLabel(bill.payment_mode)
+              : ((bill?.cash_amount > 0 && bill?.qr_amount > 0) ? 'Cash + UPI / QR'
                 : bill?.cash_amount > 0 ? 'Cash'
-                : bill?.qr_amount > 0 ? 'UPI' : null);
+                : bill?.qr_amount > 0 ? 'UPI / QR' : null);
             const msg = buildWhatsAppInvoiceMessage({
               businessName: tenant?.business_name,
               billNo: bill?.bill_no,

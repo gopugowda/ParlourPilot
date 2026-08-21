@@ -12,11 +12,16 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
+import {
+  type PaymentToken,
+  EXPENSE_PAYMENT_OPTIONS,
+  paymentLabel,
+  canonicalPayment,
+} from '@/src/utils/paymentModes';
 
-type PaymentMode = 'cash' | 'upi' | 'card' | 'bank' | 'other';
 type Expense = {
   id: string; category: string; description: string; amount: number;
-  date: string; payment_mode?: PaymentMode; notes?: string;
+  date: string; payment_mode?: string; notes?: string;
   created_by_name?: string; created_at: string;
 };
 
@@ -29,13 +34,14 @@ const CATEGORY_ICON: Record<string, any> = {
   Other: 'ellipsis-horizontal-outline',
 };
 
-const PAY_MODES: { key: PaymentMode; label: string; icon: any }[] = [
-  { key: 'cash', label: 'Cash', icon: 'cash-outline' },
-  { key: 'upi',  label: 'UPI',  icon: 'qr-code-outline' },
-  { key: 'card', label: 'Card', icon: 'card-outline' },
-  { key: 'bank', label: 'Bank Transfer', icon: 'business-outline' },
-  { key: 'other', label: 'Other', icon: 'ellipsis-horizontal-outline' },
-];
+const PAY_ICON: Record<PaymentToken, any> = {
+  cash: 'cash-outline',
+  card: 'card-outline',
+  qr: 'qr-code-outline',
+  bank_transfer: 'business-outline',
+  split: 'options-outline',
+  other: 'ellipsis-horizontal-outline',
+};
 
 export default function ExpensesScreen() {
   const { user, tenant } = useAuth();
@@ -54,7 +60,7 @@ export default function ExpensesScreen() {
   const [desc, setDesc] = useState('');
   const [amt, setAmt] = useState('');
   const [expDate, setExpDate] = useState<string>('');
-  const [payMode, setPayMode] = useState<PaymentMode>('cash');
+  const [payMode, setPayMode] = useState<PaymentToken>('cash');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -92,7 +98,7 @@ export default function ExpensesScreen() {
     setEditing(e); setCat(e.category); setDesc(e.description);
     setAmt(String(e.amount));
     setExpDate(e.date || today);
-    setPayMode((e.payment_mode as PaymentMode) || 'cash');
+    setPayMode(canonicalPayment(e.payment_mode));
     setNotes(e.notes || ''); setErr(null); setEditOpen(true);
   };
 
@@ -278,7 +284,7 @@ export default function ExpensesScreen() {
                   <Text style={styles.expDesc}>{e.description}</Text>
                   <Text style={styles.expMeta}>
                     {e.category} · {e.date}
-                    {e.payment_mode ? ` · ${(PAY_MODES.find(m => m.key === e.payment_mode)?.label || e.payment_mode)}` : ''}
+                    {e.payment_mode ? ` · ${paymentLabel(e.payment_mode)}` : ''}
                     {e.created_by_name ? ` · ${e.created_by_name}` : ''}
                   </Text>
                 </View>
@@ -357,15 +363,15 @@ export default function ExpensesScreen() {
               <View style={styles.field}>
                 <Text style={styles.label}>Payment mode <Text style={styles.req}>*</Text></Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-                  {PAY_MODES.map(m => (
+                  {EXPENSE_PAYMENT_OPTIONS.map(m => (
                     <TouchableOpacity
-                      key={m.key}
-                      testID={`paymode-${m.key}`}
-                      onPress={() => { Haptics.selectionAsync(); setPayMode(m.key); }}
-                      style={[styles.catChip, payMode === m.key && styles.catChipActive]}
+                      key={m}
+                      testID={`paymode-${m}`}
+                      onPress={() => { Haptics.selectionAsync(); setPayMode(m); }}
+                      style={[styles.catChip, payMode === m && styles.catChipActive]}
                     >
-                      <Ionicons name={m.icon} size={14} color={payMode === m.key ? '#fff' : colors.brandPrimary} />
-                      <Text style={[styles.catChipText, payMode === m.key && styles.catChipTextActive]}>{m.label}</Text>
+                      <Ionicons name={PAY_ICON[m]} size={14} color={payMode === m ? '#fff' : colors.brandPrimary} />
+                      <Text style={[styles.catChipText, payMode === m && styles.catChipTextActive]}>{paymentLabel(m)}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>

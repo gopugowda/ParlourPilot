@@ -13,6 +13,7 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { sanitizePhone, phoneError, PHONE_MAX } from '@/src/utils/validators';
+import { type PaymentToken, paymentLabel } from '@/src/utils/paymentModes';
 
 const DEFAULT_MEMBER_PCT = 10;
 const DEFAULT_MEMBER_MIN_PRICE = 100;
@@ -51,7 +52,7 @@ export default function NewBillScreen() {
   const [items, setItems] = useState<Item[]>([]);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [paymentMode, setPaymentMode] = useState<'cash' | 'qr' | 'card' | 'split'>('cash');
+  const [paymentMode, setPaymentMode] = useState<PaymentToken>('cash');
   const [cashAmt, setCashAmt] = useState('');
   const [cardAmt, setCardAmt] = useState('');
   const [isMember, setIsMember] = useState(false);
@@ -223,11 +224,19 @@ export default function NewBillScreen() {
     // Grand total = services_net + tax + ALL tips (spec §4). Split must total grand_total.
     const grandTotal = servicesNet + taxTotal + tip;
     let cash = 0, qr = 0, card = 0;
+    // Single-tender payments capture the entire grand total on that mode.
+    // Bank Transfer and Other route through the `qr` bucket only to compute the
+    // stored amounts; the server persists `payment_mode` faithfully.
     if (paymentMode === 'cash') cash = grandTotal;
     else if (paymentMode === 'qr') qr = grandTotal;
     else if (paymentMode === 'card') card = grandTotal;
-    else {
-      // Split: user enters cash + card; QR auto-fills as the balance.
+    else if (paymentMode === 'bank_transfer' || paymentMode === 'other') {
+      // Recorded as non-cash + non-card + non-qr; leave the split buckets at 0.
+      // Backend keeps the true tender via `payment_mode`.
+    }
+    else if (paymentMode === 'split') {
+      // Split: only the 3 primary tenders participate (Cash + Card + UPI/QR).
+      // User enters cash + card; QR/UPI auto-fills as the balance.
       cash = Math.max(0, Number(cashAmt) || 0);
       card = Math.max(0, Number(cardAmt) || 0);
       qr = Math.max(0, grandTotal - cash - card);
@@ -521,7 +530,7 @@ export default function NewBillScreen() {
                                 numberOfLines={2}
                                 adjustsFontSizeToFit
                                 minimumFontScale={0.8}
-                              >{v === 'qr' ? 'QR / Online' : v.toUpperCase()}</Text>
+                              >{v === 'qr' ? 'UPI / QR' : v.toUpperCase()}</Text>
                             </TouchableOpacity>
                           ))}
                         </View>
@@ -614,7 +623,7 @@ export default function NewBillScreen() {
                         adjustsFontSizeToFit
                         minimumFontScale={0.8}
                       >
-                        {v === 'cash' ? 'Cash' : v === 'qr' ? 'QR / Online' : 'Card'}
+                        {v === 'cash' ? 'Cash' : v === 'qr' ? 'UPI / QR' : 'Card'}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -649,16 +658,18 @@ export default function NewBillScreen() {
             <Text style={styles.cardTitle}>Payment Mode</Text>
             <Text style={styles.hintText}>How the customer paid for the grand total: {fmtINR(total)}</Text>
             <View style={styles.segmentRow}>
-              {[
-                { k: 'cash', label: 'Cash', icon: 'cash-outline' },
-                { k: 'qr', label: 'QR / Online', icon: 'qr-code-outline' },
-                { k: 'card', label: 'Card', icon: 'card-outline' },
-                { k: 'split', label: 'Split', icon: 'git-branch-outline' },
-              ].map(o => (
+              {([
+                { k: 'cash' as const,          icon: 'cash-outline' },
+                { k: 'card' as const,          icon: 'card-outline' },
+                { k: 'qr' as const,            icon: 'qr-code-outline' },
+                { k: 'bank_transfer' as const, icon: 'business-outline' },
+                { k: 'split' as const,         icon: 'git-branch-outline' },
+                { k: 'other' as const,         icon: 'ellipsis-horizontal-outline' },
+              ]).map(o => (
                 <TouchableOpacity
                   key={o.k}
                   testID={`pay-mode-${o.k}`}
-                  onPress={() => { Haptics.selectionAsync(); setPaymentMode(o.k as any); }}
+                  onPress={() => { Haptics.selectionAsync(); setPaymentMode(o.k); }}
                   style={[styles.segment, paymentMode === o.k && styles.segmentActive]}
                 >
                   <Ionicons name={o.icon as any} size={18} color={paymentMode === o.k ? '#fff' : colors.onSurfaceTertiary} />
@@ -668,7 +679,7 @@ export default function NewBillScreen() {
                     adjustsFontSizeToFit
                     minimumFontScale={0.8}
                   >
-                    {o.label}
+                    {paymentLabel(o.k)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -711,7 +722,7 @@ export default function NewBillScreen() {
                   <View style={styles.splitBalance}>
                     <Ionicons name="qr-code-outline" size={14} color={colors.info} />
                     <Text style={styles.splitBalanceText}>
-                      QR / Online (balance): <Text style={{ fontWeight: '700' }}>{fmtINR(qr)}</Text>
+                      UPI / QR (balance): <Text style={{ fontWeight: '700' }}>{fmtINR(qr)}</Text>
                     </Text>
                   </View>
                   {over && (

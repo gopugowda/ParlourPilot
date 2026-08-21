@@ -1263,3 +1263,33 @@ Screenshots captured for Staff, Stock, Members. Filter icon renders in header wi
 - Members "Sort by Total Spend" — needs backend `total_spent` on Member model. Hint added inline.
 - Bill History date range uses a plain text input (YYYY-MM-DD) to keep the sheet compact; can be upgraded to a Calendar picker in a follow-up if desired.
 
+
+
+## Iteration 34.16 — Standardised 6-option payment system (mobile UI)
+
+**User request**: Match backend's canonical 6-option set across every mobile surface. Ensure today's ₹8,900 UPI expense displays as "UPI / QR", and Cash Closing's Expected Cash formula ignores digital/bank tokens.
+
+### New shared util (`src/utils/paymentModes.ts`)
+- Canonical `PaymentToken` type: `cash | card | qr | bank_transfer | split | other`.
+- `paymentLabel(token)` → 'Cash' / 'Card' / 'UPI / QR' / 'Bank Transfer' / 'Split' / 'Other'.
+- `LEGACY_ALIASES` transparently maps historical DB values (`'upi' → 'qr'`, `'bank' → 'bank_transfer'`, `'qr_online' → 'qr'`, `'online' → 'qr'`) so old rows render with the new labels without a data migration.
+- `BILL_PAYMENT_OPTIONS` (6 with Split), `EXPENSE_PAYMENT_OPTIONS` (5 without Split), `SPLIT_TENDERS` (cash + card + qr — per spec).
+- `canonicalPayment(token)` — normalises to canonical form for save paths.
+
+### Files updated
+- `app/(tabs)/new-bill.tsx` — Payment Mode picker now renders all 6 options. Save handler routes `bank_transfer` and `other` as single-tender (cash/card/qr all 0), while `split` continues the 3-way Cash + Card + UPI/QR logic. Tip "Paid via" and split-balance label refreshed to "UPI / QR".
+- `app/(tabs)/expenses.tsx` — dropped local `PaymentMode` type + `PAY_MODES` array; now imports `EXPENSE_PAYMENT_OPTIONS` + `paymentLabel`. Chips show canonical labels. Editor uses `canonicalPayment(e.payment_mode)` on open so legacy rows (`'upi'`/`'bank'`) select the correct new chip.
+- `app/(tabs)/history.tsx` — bill row payment badge and WhatsApp share use `paymentLabel`. Filter sheet lists all 6 options including Bank Transfer and Other.
+- `app/bill/[id].tsx` — bill detail payment display + printable HTML use `paymentLabel`. Split summary reads "Cash + Card + UPI/QR" (fixed from just "Cash + QR").
+
+### Cash Closing — re-verified
+- Backend `bill_payment_split()` reads only `bill.cash_amount` (populated for Cash single-tender + cash bucket in Split). `bank_transfer` and `other` bills now have `cash_amount == 0` from our new-bill save handler, so they're correctly excluded from Expected Cash.
+- Mobile formula on `manage/cash-closing.tsx`: `expected = opening + summary.cash_sales − cash_expenses` — untouched, correct.
+
+### Verified on preview against real tenant
+- **Expenses screen**: 5 historical entries render as Card / Bank Transfer / UPI / QR / Cash / Bank Transfer — legacy `'upi'` and `'bank'` DB values display as **"UPI / QR"** and **"Bank Transfer"** without a data migration. ✅
+- **New Bill payment picker**: six chips render in order Cash · Card · UPI / QR · Bank Transfer · Split · Other. ✅
+- Lint clean across all 5 modified files.
+
+### For the user
+Client-only change. Click **Publish** to push to Expo Go. After deploy, today's ₹8,900 UPI expense will show as **"UPI / QR"**, and Bank Transfer / Other bills won't distort Cash Closing.
