@@ -22,6 +22,7 @@ type Beautician = {
   commission_pct?: number; monthly_target?: number;
   address?: string; id_type?: string; id_number?: string;
 };
+type AppUser = { id: string; name: string; email: string; role: string; is_active: boolean; branch_id?: string | null };
 
 const ROLE_SUGGESTIONS = ['Stylist', 'Senior Stylist', 'Manager', 'Therapist', 'Beautician', 'Assistant', 'Receptionist'];
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -48,6 +49,7 @@ export default function BeauticiansScreen() {
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Beautician[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Beautician | null>(null);
@@ -75,6 +77,20 @@ export default function BeauticiansScreen() {
   const [emailErr, setEmailErr] = useState<string | null>(null);
   const emailRef = useRef<TextInput>(null);
 
+  // ---- App-login (user account) fields ----
+  // Beauticians are matched to a user by tenant + email (case-insensitive).
+  const [loginEnabled, setLoginEnabled] = useState(false);      // toggle in form
+  const [loginPassword, setLoginPassword] = useState('');       // new password (create OR reset)
+  const [loginPassword2, setLoginPassword2] = useState('');
+  const [loginPwdVisible, setLoginPwdVisible] = useState(false);
+  const [loginErr, setLoginErr] = useState<string | null>(null);
+  // Look up existing user by email (edit mode).
+  const linkedUser = React.useMemo(() => {
+    const e = normalizeEmail(email);
+    if (!e) return null;
+    return users.find(u => (u.email || '').toLowerCase() === e.toLowerCase()) || null;
+  }, [email, users]);
+
   // Persistent filters (role + status).
   const [fsOpen, setFsOpen] = useState(false);
   const { filters, setFilters, resetFilters, activeCount } = useFilterState('staff', {
@@ -92,12 +108,14 @@ export default function BeauticiansScreen() {
 
   const load = async () => {
     try {
-      const [ppl, br] = await Promise.all([
+      const [ppl, br, us] = await Promise.all([
         api<Beautician[]>('/beauticians'),
         api<Branch[]>('/branches').catch(() => []),
+        isAdmin ? api<AppUser[]>('/auth/users').catch(() => []) : Promise.resolve([]),
       ]);
       setList(ppl || []);
       setBranches(br || []);
+      setUsers(us || []);
     } catch {}
   };
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -110,12 +128,14 @@ export default function BeauticiansScreen() {
     setCommissionPct(''); setMonthlyTarget(''); setAddress('');
     setIdType('Aadhaar'); setIdNumber(''); setActive(true);
     setErr(null); setEmailErr(null);
+    setLoginEnabled(false); setLoginPassword(''); setLoginPassword2(''); setLoginErr(null); setLoginPwdVisible(false);
   };
 
   const openAdd = () => { setEditing(null); resetForm(); setEditOpen(true); };
 
   const openEdit = (b: Beautician) => {
     setEditing(b); setErr(null); setEmailErr(null);
+    setLoginPassword(''); setLoginPassword2(''); setLoginErr(null); setLoginPwdVisible(false);
     setName(b.name || '');
     setEmployeeId(b.employee_id || '');
     setRole(b.role || 'Stylist');
@@ -132,6 +152,10 @@ export default function BeauticiansScreen() {
     setIdType(b.id_type || 'Aadhaar');
     setIdNumber(b.id_number || '');
     setActive(b.active !== false);
+    // If a matching user already exists, treat login as enabled.
+    const eLow = (b.email || '').toLowerCase();
+    const linked = eLow ? users.find(u => (u.email || '').toLowerCase() === eLow) : null;
+    setLoginEnabled(!!linked);
     setEditOpen(true);
   };
 
@@ -149,7 +173,7 @@ export default function BeauticiansScreen() {
   };
 
   const save = async () => {
-    setErr(null); setEmailErr(null);
+    setErr(null); setEmailErr(null); setLoginErr(null);
     if (!name.trim()) { setErr('Name is required'); return; }
     // Email — optional but must be valid if filled.
     const emsg = emailError(email, { required: false });
@@ -157,6 +181,31 @@ export default function BeauticiansScreen() {
     if (!isValidTime(workStart) || !isValidTime(workEnd)) {
       setErr('Work times must be HH:MM (24-hour)'); return;
     }
+    // ---- Login validation ----
+    const normalizedEmail = normalizeEmail(email);
+    if (loginEnabled) {
+      if (!normalizedEmail) {
+        setLoginErr('Email is required to enable app login');
+        emailRef.current?.focus();
+        return;
+      }
+      // On CREATE (no linked user yet) → password mandatory.
+      // On EDIT with linked user → password optional (only if changing).
+      const needsPassword = !linkedUser;
+      if (needsPassword) {
+        if (!loginPassword || loginPassword.length < 6) {
+          setLoginErr('Password must be at least 6 characters'); return;
+        }
+        if (loginPassword !== loginPassword2) {
+          setLoginErr('Passwords do not match'); return;
+        }
+      } else if (loginPassword) {
+        // password change flow
+        if (loginPassword.length < 6) { setLoginErr('Password must be at least 6 characters'); return; }
+        if (loginPassword !== loginPassword2) { setLoginErr('Passwords do not match'); return; }
+      }
+    }
+
     setSaving(true);
     try {
       // Numbers send 0 when blank (never "").
@@ -170,7 +219,7 @@ export default function BeauticiansScreen() {
         phone: sanitizePhone(phone),
         active,
         employee_id: employeeId.trim(),
-        email: normalizeEmail(email),
+        email: normalizedEmail,
         basic_salary: asNum(basicSalary),
         work_start: workStart || '',
         work_end: workEnd || '',
@@ -184,11 +233,61 @@ export default function BeauticiansScreen() {
       if (branchId) body.branch_id = branchId;
       if (editing) await api(`/beauticians/${editing.id}`, { method: 'PUT', body });
       else await api('/beauticians', { method: 'POST', body });
+
+      // ---- Sync login account ----
+      if (loginEnabled) {
+        if (!linkedUser) {
+          // Create new user account
+          try {
+            await api('/auth/register', {
+              method: 'POST',
+              body: {
+                name: name.trim(),
+                email: normalizedEmail,
+                password: loginPassword,
+                role: 'staff',
+                branch_id: branchId || null,
+              },
+            });
+          } catch (e: any) {
+            throw new Error(`Staff saved, but login could not be created: ${e?.message || e}`);
+          }
+        } else {
+          // Update linked user (name, branch, active) — email change is uncommon so we keep in-sync.
+          try {
+            await api(`/auth/users/${linkedUser.id}`, {
+              method: 'PUT',
+              body: {
+                name: name.trim(),
+                branch_id: branchId || null,
+                is_active: active,
+              },
+            });
+            if (loginPassword) {
+              await api(`/auth/users/${linkedUser.id}/reset-password`, {
+                method: 'POST',
+                body: { new_password: loginPassword },
+              });
+            }
+          } catch (e: any) {
+            throw new Error(`Staff saved, but login could not be updated: ${e?.message || e}`);
+          }
+        }
+      } else if (linkedUser) {
+        // Login disabled but a matching user still exists → deactivate (safer than deleting).
+        try {
+          await api(`/auth/users/${linkedUser.id}`, {
+            method: 'PUT',
+            body: { is_active: false },
+          });
+        } catch { /* non-blocking */ }
+      }
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setEditOpen(false); await load();
     } catch (e: any) {
       const raw = (e?.message || 'Failed').toString();
-      if (/email/i.test(raw)) setEmailErr('Please enter a valid email address');
+      if (/email/i.test(raw) && !/login/i.test(raw)) setEmailErr('Please enter a valid email address');
       else setErr(raw);
     }
     finally { setSaving(false); }
@@ -236,7 +335,12 @@ export default function BeauticiansScreen() {
               )}
             </View>
           )}
-          {displayList.map(b => (
+          {displayList.map(b => {
+            const bEmail = (b.email || '').toLowerCase();
+            const hasLogin = bEmail
+              ? users.some(u => (u.email || '').toLowerCase() === bEmail && u.is_active !== false)
+              : false;
+            return (
             <View key={b.id} style={styles.row} testID={`bt-row-${b.id}`}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{b.name.split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
@@ -247,6 +351,12 @@ export default function BeauticiansScreen() {
                   <View style={[styles.rolePill, { backgroundColor: (roleColors[b.role] || colors.info) + '22' }]}>
                     <Text style={[styles.roleText, { color: roleColors[b.role] || colors.info }]}>{b.role}</Text>
                   </View>
+                  {hasLogin && (
+                    <View style={styles.loginPill}>
+                      <Ionicons name="key" size={9} color={colors.brandPrimary} />
+                      <Text style={styles.loginPillText}>Login</Text>
+                    </View>
+                  )}
                   {b.employee_id ? <Text style={styles.rowMeta}>· {b.employee_id}</Text> : null}
                   {!b.active && <Text style={styles.rowMeta}>· Inactive</Text>}
                   {b.phone ? <Text style={styles.rowMeta}>· {b.phone}</Text> : null}
@@ -263,7 +373,8 @@ export default function BeauticiansScreen() {
                 </>
               )}
             </View>
-          ))}
+            );
+          })}
         </ScrollView>
       )}
 
@@ -496,6 +607,81 @@ export default function BeauticiansScreen() {
                   <Switch testID="bt-active-switch" value={active} onValueChange={setActive} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} />
                 </View>
 
+                {/* ---- App Login Access ---- */}
+                {isAdmin && (
+                  <View style={styles.loginBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                        <Ionicons name="key-outline" size={16} color={colors.brandPrimary} />
+                        <Text style={styles.loginTitle}>App login access</Text>
+                        {linkedUser && (
+                          <View style={styles.loginBadge}>
+                            <Text style={styles.loginBadgeText}>Linked</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Switch
+                        testID="bt-login-switch"
+                        value={loginEnabled}
+                        onValueChange={(v) => { setLoginEnabled(v); setLoginErr(null); }}
+                        trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }}
+                      />
+                    </View>
+                    <Text style={styles.loginHint}>
+                      {linkedUser
+                        ? `Logs in with ${linkedUser.email}. Toggle off to disable.`
+                        : 'Turn on so this staff can log in on the mobile app using their email and password.'}
+                    </Text>
+
+                    {loginEnabled && (
+                      <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+                        <View style={styles.field}>
+                          <Text style={styles.label}>
+                            {linkedUser ? 'New password (leave blank to keep current)' : 'Password *'}
+                          </Text>
+                          <View style={{ position: 'relative' }}>
+                            <TextInput
+                              testID="bt-login-password"
+                              value={loginPassword}
+                              onChangeText={(v) => { setLoginPassword(v); if (loginErr) setLoginErr(null); }}
+                              placeholder={linkedUser ? '••••••' : 'Min 6 characters'}
+                              placeholderTextColor={colors.onSurfaceTertiary}
+                              secureTextEntry={!loginPwdVisible}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              style={[styles.input, { paddingRight: 40 }]}
+                            />
+                            <TouchableOpacity
+                              testID="bt-login-pwd-eye"
+                              onPress={() => setLoginPwdVisible(v => !v)}
+                              style={styles.eyeBtn}
+                            >
+                              <Ionicons name={loginPwdVisible ? 'eye-off' : 'eye'} size={18} color={colors.onSurfaceTertiary} />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                        {(!linkedUser || loginPassword) && (
+                          <View style={styles.field}>
+                            <Text style={styles.label}>Confirm password *</Text>
+                            <TextInput
+                              testID="bt-login-password2"
+                              value={loginPassword2}
+                              onChangeText={(v) => { setLoginPassword2(v); if (loginErr) setLoginErr(null); }}
+                              placeholder="Re-enter password"
+                              placeholderTextColor={colors.onSurfaceTertiary}
+                              secureTextEntry={!loginPwdVisible}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              style={styles.input}
+                            />
+                          </View>
+                        )}
+                        {loginErr && <Text style={styles.errSmall}>{loginErr}</Text>}
+                      </View>
+                    )}
+                  </View>
+                )}
+
                 {err && <Text style={styles.err}>{err}</Text>}
               </ScrollView>
 
@@ -555,6 +741,12 @@ const styles = StyleSheet.create({
   rowMeta: { fontSize: 11, color: colors.onSurfaceTertiary },
   rolePill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
   roleText: { fontSize: 10, fontWeight: '700' },
+  loginPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill,
+    backgroundColor: colors.brandPrimary + '18',
+  },
+  loginPillText: { fontSize: 9, fontWeight: '700', color: colors.brandPrimary },
   smallBtn: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
 
   empty: { alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xxxl },
@@ -584,4 +776,15 @@ const styles = StyleSheet.create({
   errSmall: { color: colors.error, fontSize: 11, fontWeight: '600' },
   saveBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', marginTop: spacing.sm },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  loginBox: {
+    backgroundColor: colors.brandTertiary + '55',
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandTertiary,
+    padding: spacing.md, gap: 4,
+  },
+  loginTitle: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  loginHint: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  loginBadge: { backgroundColor: colors.success + '22', paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
+  loginBadgeText: { fontSize: 10, fontWeight: '700', color: colors.success },
+  eyeBtn: { position: 'absolute', right: 8, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
 });
