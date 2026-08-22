@@ -1368,3 +1368,31 @@ Client-only fix. Click **Publish** to push to Expo Go.
 
 ### Verified on preview
 Screenshots show all 15 fields render, chips wrap, Branch + ID type chip rows scroll horizontally, Week off pills toggle, Save button pinned at bottom. Lint clean.
+
+
+## Iteration 34.20 — GPS-gated attendance engine (mobile UI parity)
+
+### New files
+- `src/utils/attendance.ts` — helpers: `getFreshLocation()` (permission-safe, `maximumAge:0`), `postAction()`, `loadConfig()`, `loadMyToday()`, `haversine()`, `hhmmToDate()`.
+- `src/hooks/useAttendanceAutoLogout.ts` — polls GPS every 2 min for STAFF role only; auto check-out + logout when past `work_end` AND > `auto_logout_radius_m`.
+- `app/manage/attendance.tsx` — staff punch-clock. 2×2 buttons (Check In / Start Break / End Break / Check Out) driven by `/attendance/me/today`; each action captures fresh GPS and posts to `/attendance/action`. Backend error messages surface in Alert.
+- `app/manage/attendance-report.tsx` — owner view. `/attendance/summary?from=&to=` renders per-staff Total + Overtime; `/attendance/logs?date=` renders activity feed with distance chips (red if outside geofence).
+
+### Edits
+- `app/manage/salon-settings.tsx` — Branch section now has Latitude / Longitude / Check-in radius fields + **Capture My Location** button. Save payload includes `latitude`, `longitude`, `geofence_radius_m` (`null` when blank → disables gating server-side).
+- `app/(tabs)/manage.tsx` — new "Attendance" menu entry.
+- `app/_layout.tsx` — mounts `useAttendanceAutoLogout` in `AuthGate` so the watcher runs anywhere a staffer is logged in.
+- `app.json` — added `NSLocationWhenInUseUsageDescription` and the `expo-location` plugin.
+- `package.json` — added `expo-location@19.0.8`.
+
+### Behaviour
+- Owners/admins are never geofenced (server-side rule preserved).
+- Check-in captures a fresh GPS fix; failure surfaces "Location required" Alert; server may still return 400/403 and the message is shown verbatim.
+- Break / Check Out follow the state machine from `/attendance/me/today.status`.
+- Auto-logout watcher: silent, best-effort, active only when app is foregrounded and user role === 'staff'.
+
+### Verified on preview
+Screenshots confirm punch-clock, report, and geofence UI render. Lint clean across all 7 modified files.
+
+### Deployment note
+Requires a **rebuild** for iOS/Android to include the new `NSLocationWhenInUseUsageDescription` and the `expo-location` native module. Expo Go works for smoke testing after Publish, but real device install needs a fresh build for the location prompt.

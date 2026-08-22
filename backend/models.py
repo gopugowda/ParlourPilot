@@ -34,6 +34,10 @@ class BranchIn(BaseModel):
     is_head: Optional[bool] = False
     parent_branch_id: Optional[str] = None
     active: Optional[bool] = True
+    # GPS geofence for staff attendance gating (null = disabled)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    geofence_radius_m: Optional[int] = None
 
 
 class TenantUpdate(BaseModel):

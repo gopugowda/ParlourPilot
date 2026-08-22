@@ -8,14 +8,25 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useIconFonts } from '@/src/hooks/use-icon-fonts';
 import { AuthProvider, useAuth } from '@/src/context/AuthContext';
+import { useAttendanceAutoLogout } from '@/src/hooks/useAttendanceAutoLogout';
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 
 function AuthGate() {
-  const { user, loading, subscriptionExpired } = useAuth();
+  const { user, loading, subscriptionExpired, logout } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  // GPS-gated auto-logout: only STAFF role, only when app is active. Silently
+  // checks GPS every 2 min; if past work_end AND > 1km from branch → check-out + logout.
+  useAttendanceAutoLogout({
+    role: user?.role || null,
+    onAutoLogout: async () => {
+      try { await logout(); } catch {}
+      router.replace('/login');
+    },
+  });
 
   useEffect(() => {
     if (loading) return;

@@ -62,6 +62,11 @@ export default function SalonSettingsScreen() {
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [receiptHeader, setReceiptHeader] = useState('');
   const [receiptFooter, setReceiptFooter] = useState('');
+  // GPS geofence fields (for staff attendance gating)
+  const [branchLat, setBranchLat] = useState('');
+  const [branchLng, setBranchLng] = useState('');
+  const [branchRadiusM, setBranchRadiusM] = useState('');
+  const [capturingLoc, setCapturingLoc] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -111,6 +116,7 @@ export default function SalonSettingsScreen() {
       setBranchPhone(''); setBranchEmail('');
       setTaxEnabled(false); setTaxNumber(''); setTaxPercentage('');
       setInvoicePrefix(''); setReceiptHeader(''); setReceiptFooter('');
+      setBranchLat(''); setBranchLng(''); setBranchRadiusM('');
       return;
     }
     setBranchLogo(b.logo || null);
@@ -126,6 +132,9 @@ export default function SalonSettingsScreen() {
     setInvoicePrefix(b.invoice_prefix || '');
     setReceiptHeader(b.receipt_header || '');
     setReceiptFooter(b.receipt_footer || '');
+    setBranchLat(b.latitude != null ? String(b.latitude) : '');
+    setBranchLng(b.longitude != null ? String(b.longitude) : '');
+    setBranchRadiusM(b.geofence_radius_m != null ? String(b.geofence_radius_m) : '');
   }, [selectedBranch]);
 
   const pickImage = async (target: 'company' | 'branch') => {
@@ -247,6 +256,11 @@ export default function SalonSettingsScreen() {
         invoice_prefix: invoicePrefix.trim(),
         receipt_header: receiptHeader.trim(),
         receipt_footer: receiptFooter.trim(),
+        // GPS gating (blank → disable). Send numeric or explicit null so
+        // backend can clear the geofence when user wipes the field.
+        latitude: branchLat.trim() ? parseFloat(branchLat) : null,
+        longitude: branchLng.trim() ? parseFloat(branchLng) : null,
+        geofence_radius_m: branchRadiusM.trim() ? parseInt(branchRadiusM, 10) : null,
         is_head: (selectedBranch as any).is_head, // preserve
         active: (selectedBranch as any).active !== false,
       };
@@ -556,6 +570,61 @@ export default function SalonSettingsScreen() {
                 <LabeledInput label="Branch Email" value={branchEmail} onChangeText={setBranchEmail} keyboardType="email-address" autoCapitalize="none" />
               </View>
 
+              {/* Staff attendance geofence */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Staff Attendance Geofence</Text>
+                <Text style={styles.helpText}>Set the salon&rsquo;s coordinates so staff can only check-in within {branchRadiusM || 100}m. Leave blank to disable gating for this branch.</Text>
+                <View style={styles.rowGap}>
+                  <View style={{ flex: 1 }}>
+                    <LabeledInput
+                      label="Latitude"
+                      value={branchLat}
+                      onChangeText={(v: string) => setBranchLat(v.replace(/[^0-9.\-]/g, ''))}
+                      keyboardType="numbers-and-punctuation"
+                      testID="branch-lat"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <LabeledInput
+                      label="Longitude"
+                      value={branchLng}
+                      onChangeText={(v: string) => setBranchLng(v.replace(/[^0-9.\-]/g, ''))}
+                      keyboardType="numbers-and-punctuation"
+                      testID="branch-lng"
+                    />
+                  </View>
+                </View>
+                <LabeledInput
+                  label="Check-in radius (m, default 100)"
+                  value={branchRadiusM}
+                  onChangeText={(v: string) => setBranchRadiusM(v.replace(/[^0-9]/g, ''))}
+                  keyboardType="numeric"
+                  testID="branch-radius"
+                />
+                <TouchableOpacity
+                  testID="capture-loc-btn"
+                  disabled={capturingLoc}
+                  onPress={async () => {
+                    setCapturingLoc(true);
+                    try {
+                      const { getFreshLocation } = await import('@/src/utils/attendance');
+                      const loc = await getFreshLocation();
+                      if (!loc) {
+                        Alert.alert('Location', 'Could not read GPS. Enable location and try again.');
+                        return;
+                      }
+                      setBranchLat(loc.coords.latitude.toFixed(6));
+                      setBranchLng(loc.coords.longitude.toFixed(6));
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    } finally { setCapturingLoc(false); }
+                  }}
+                  style={[styles.captureBtn, { opacity: capturingLoc ? 0.6 : 1 }]}
+                >
+                  <Ionicons name="locate" size={16} color="#fff" />
+                  <Text style={styles.captureBtnText}>{capturingLoc ? 'Capturing…' : 'Capture My Location'}</Text>
+                </TouchableOpacity>
+              </View>
+
               {/* Branch tax */}
               <View style={styles.card}>
                 <View style={styles.switchRow}>
@@ -715,6 +784,9 @@ const styles = StyleSheet.create({
   actionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.sm, paddingVertical: 8, paddingHorizontal: 12 },
   actionText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
   helpText: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  rowGap: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandPrimary, paddingVertical: 10, borderRadius: radius.sm, marginTop: spacing.sm },
+  captureBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   addTierBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary },
   addTierText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
   tierRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },

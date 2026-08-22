@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.saloninvoiceapp.djfiom",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Upload your salon logo to personalize your invoices"
+        "NSPhotoLibraryUsageDescription": "Upload your salon logo to personalize your invoices",
+        "NSLocationWhenInUseUsageDescription": "Verify you're at the salon when punching attendance"
       }
     },
     "android": {
@@ -67,6 +68,12 @@
             "targetSdkVersion": 36,
             "buildToolsVersion": "36.0.0"
           }
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Verify you're at the salon when punching attendance"
         }
       ]
     ],

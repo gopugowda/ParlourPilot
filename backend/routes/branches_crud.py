@@ -66,6 +66,9 @@ async def create_branch(body: BranchIn, user=Depends(require_admin_active)):
         "is_head": bool(body.is_head),
         "parent_branch_id": body.parent_branch_id,
         "active": True if body.active is None else bool(body.active),
+        "latitude": body.latitude,
+        "longitude": body.longitude,
+        "geofence_radius_m": body.geofence_radius_m,
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -75,8 +78,11 @@ async def create_branch(body: BranchIn, user=Depends(require_admin_active)):
 
 @router.put("/branches/{bid}")
 async def update_branch(bid: str, body: BranchIn, user=Depends(require_admin_active)):
-    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
-    if "name" in updates:
+    raw = body.model_dump(exclude_unset=True)
+    # For geofence fields, allow explicit null (so user can clear the geofence)
+    geofence_fields = {"latitude", "longitude", "geofence_radius_m"}
+    updates = {k: v for k, v in raw.items() if v is not None or k in geofence_fields}
+    if "name" in updates and isinstance(updates["name"], str):
         updates["name"] = updates["name"].strip()
     updates["updated_at"] = now_iso()
     result = await db.branches.find_one_and_update(
