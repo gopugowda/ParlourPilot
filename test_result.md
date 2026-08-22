@@ -1345,3 +1345,26 @@ Repro on local backend / test tenant:
 
 ### For the user
 Client-only fix. Click **Publish** to push to Expo Go.
+
+
+## Iteration 34.19 — Full Staff form parity with web (Add + Edit)
+
+**Ask**: expand mobile Staff Add/Edit sheet from 4 fields (Name, Role, Phone, Active) to the complete 15-field web set.
+
+### Rewrite (`app/manage/beauticians.tsx`)
+- New fields (order + labels + types match web verbatim): Full name · Employee ID · Role (free-text + suggestion chips) · Phone · Email · Basic salary (₹) · Branch (dropdown from `/branches`) · Work start / Work end (HH:MM 24h) · Week off (multi-select Mon–Sun + Flexible mutually exclusive) · Commission % · Monthly target (₹) · Address (multiline) · ID type (Aadhaar / PAN / Passport / Driving License / Voter ID / Other) · ID number · Active toggle.
+- Role is a text input **plus** 7 tappable suggestion chips (Stylist, Senior Stylist, Manager, Therapist, Beautician, Assistant, Receptionist).
+- Branch dropdown loads from `GET /api/branches`; hidden if none. Sends `branch_id`.
+- Week off: picking any real day drops Flexible; picking Flexible clears real days.
+- `sanitizeTime()` coerces to `HH:MM`; `isValidTime()` gates save.
+- Email optional but validated with shared `emailError`.
+- Numbers persist as `0` when blank (never `""`).
+- `openEdit()` pre-fills all fields incl. week_off, times, branch_id.
+- Existing behaviours preserved: list surfaces `employee_id`, filters + Delete + Active toggle intact.
+
+### Backend contract verified
+- `POST /api/beauticians` with the 15-field payload from spec → HTTP 200.
+- Branch id lookup works via `/branches`.
+
+### Verified on preview
+Screenshots show all 15 fields render, chips wrap, Branch + ID type chip rows scroll horizontally, Week off pills toggle, Save button pinned at bottom. Lint clean.
