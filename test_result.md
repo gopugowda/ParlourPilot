@@ -1322,3 +1322,26 @@ Mobile displays the saved record as "UPI / QR" via `paymentLabel`. Round-trip pr
 
 ### For the user
 Client-only fix. Click **Publish** to push to Expo Go. Adding UPI / QR expenses will succeed.
+
+
+## Iteration 34.18 — Cash Closing: drawer only subtracts cash-mode expenses (UI fix)
+
+**User report**: Card / UPI expenses were being subtracted from the cash drawer (Expected in drawer = -₹2,000 for a ₹2,000 Card expense).
+
+### Root cause
+`cash-closing.tsx` prefilled `Cash expenses` from `summary.total_expenses`, which the backend computes as the sum of ALL expenses regardless of mode. So a card / UPI / bank expense inflated the drawer subtraction.
+
+### Fix (UI-only, per user's explicit instruction)
+- On `load()` we now also fetch `GET /expenses?date=<selectedDate>` in parallel.
+- Sum only rows where `payment_mode === 'cash'` (legacy blank mode also treated as cash).
+- Prefill the `Cash expenses` field with the cash-only sum. Tokens `upi` / `card` / `bank` / `other` are silently excluded from the drawer calc.
+- Existing (already-saved) closings keep whatever value was persisted — no regression.
+- Added helpText: *"Only cash-mode expenses count against the drawer. UPI / Card / Bank / Other are excluded."*
+
+### Verified end-to-end
+Repro on local backend / test tenant:
+- 2 non-cash expenses only (Card ₹2000 + UPI ₹500): backend total_expenses = ₹2500; new mobile calc = **₹0** ← drawer now correctly stays at 0 (was -₹2,500).
+- Mixed (Cash ₹150 + Card ₹2000 + UPI ₹500 + Bank ₹10,000): backend total_expenses = ₹12,650; new mobile calc = **₹150** ← only cash-mode counts.
+
+### For the user
+Client-only fix. Click **Publish** to push to Expo Go.

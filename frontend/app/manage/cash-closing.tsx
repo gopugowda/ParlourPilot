@@ -39,12 +39,23 @@ export default function CashClosingScreen() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, h]: any = await Promise.all([
+      // We fetch the raw expense list too so we can compute a CASH-ONLY total on
+      // the client — the backend's `total_expenses` in the summary is a lumped
+      // sum of every payment mode (UPI, Card, Bank, Cash, Other) which would
+      // wrongly inflate the drawer subtraction. Web app filters the same way.
+      const [s, h, exp]: any = await Promise.all([
         api(`/cash-closing/summary?date=${selectedDate}`),
         api('/cash-closing?limit=10'),
+        api(`/expenses?date=${selectedDate}`).catch(() => []),
       ]);
       setSummary(s);
       setHistory(h || []);
+      // Sum only rows where payment_mode === 'cash'. Legacy blank rows are
+      // treated as cash too (safe default matching what humans would do).
+      const cashOnlyExpenses = (Array.isArray(exp) ? exp : []).reduce((sum: number, e: any) => {
+        const mode = String(e?.payment_mode || 'cash').toLowerCase();
+        return mode === 'cash' ? sum + (Number(e?.amount) || 0) : sum;
+      }, 0);
       if (s.existing_closing) {
         setSavedDoc(s.existing_closing);
         setOpening(String(s.existing_closing.opening_balance));
@@ -54,7 +65,8 @@ export default function CashClosingScreen() {
       } else {
         setSavedDoc(null);
         setOpening(String(s.suggested_opening || 0));
-        setCashExpenses(String(s.total_expenses || 0));
+        // Prefill from cash-only expenses (not `total_expenses` which lumps all modes).
+        setCashExpenses(String(cashOnlyExpenses));
         setActualClosing('');
         setNotes('');
       }
@@ -192,6 +204,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
                   placeholderTextColor={colors.onSurfaceTertiary}
                   style={styles.input}
                 />
+                <Text style={styles.helpText}>Only cash-mode expenses count against the drawer. UPI / Card / Bank / Other are excluded.</Text>
               </View>
             </View>
 
