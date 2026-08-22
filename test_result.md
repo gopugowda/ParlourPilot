@@ -1293,3 +1293,32 @@ Screenshots captured for Staff, Stock, Members. Filter icon renders in header wi
 
 ### For the user
 Client-only change. Click **Publish** to push to Expo Go. After deploy, today's ₹8,900 UPI expense will show as **"UPI / QR"**, and Bank Transfer / Other bills won't distort Cash Closing.
+
+
+## Iteration 34.17 — Fix expense payment-mode 422 (qr vs upi mismatch)
+
+**User report**: Adding an expense with UPI / QR failed with backend 422:
+> `Input should be 'cash', 'upi', 'card', 'bank' or 'other', input: 'qr'`
+
+### Root cause
+The backend's `/expenses` endpoint uses a strict Pydantic `Literal['cash', 'upi', 'card', 'bank', 'other']` — the LEGACY expense token set — while iteration 34.16 standardised mobile to send the canonical Bill tokens (`qr`, `bank_transfer`). Mismatch → 422.
+
+### Fix (`src/utils/paymentModes.ts` + `app/(tabs)/expenses.tsx`)
+- Split payment tokens into two vocabularies:
+  - `PaymentToken` (Bills): `cash | card | qr | bank_transfer | split | other` — canonical.
+  - `ExpensePaymentToken` (Expenses): `cash | card | upi | bank | other` — matches backend Literal exactly.
+- `EXPENSE_PAYMENT_OPTIONS` now = `['cash', 'card', 'upi', 'bank', 'other']`.
+- New helper `toExpenseToken(token)`:
+  - `qr / qr_online / online / upi → 'upi'`
+  - `bank / bank_transfer → 'bank'`
+  - `cash / card / other → same`
+- Save payload runs through `toExpenseToken(payMode)`; editor prefill uses the same helper.
+- `paymentLabel()` unchanged — `'upi'` still displays as **"UPI / QR"**, `'bank'` as **"Bank Transfer"** via aliases.
+
+### Verified against the local backend (identical Pydantic schema as production)
+- `POST /api/expenses payment_mode='qr' → HTTP 422` (identical to user error)
+- `POST /api/expenses payment_mode='upi' → HTTP 200` ✓ saved with `payment_mode='upi'`
+Mobile displays the saved record as "UPI / QR" via `paymentLabel`. Round-trip preserved.
+
+### For the user
+Client-only fix. Click **Publish** to push to Expo Go. Adding UPI / QR expenses will succeed.

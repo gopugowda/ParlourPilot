@@ -13,10 +13,10 @@ import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 import {
-  type PaymentToken,
+  type ExpensePaymentToken,
   EXPENSE_PAYMENT_OPTIONS,
   paymentLabel,
-  canonicalPayment,
+  toExpenseToken,
 } from '@/src/utils/paymentModes';
 
 type Expense = {
@@ -34,12 +34,11 @@ const CATEGORY_ICON: Record<string, any> = {
   Other: 'ellipsis-horizontal-outline',
 };
 
-const PAY_ICON: Record<PaymentToken, any> = {
+const PAY_ICON: Record<ExpensePaymentToken, any> = {
   cash: 'cash-outline',
   card: 'card-outline',
-  qr: 'qr-code-outline',
-  bank_transfer: 'business-outline',
-  split: 'options-outline',
+  upi: 'qr-code-outline',
+  bank: 'business-outline',
   other: 'ellipsis-horizontal-outline',
 };
 
@@ -60,7 +59,7 @@ export default function ExpensesScreen() {
   const [desc, setDesc] = useState('');
   const [amt, setAmt] = useState('');
   const [expDate, setExpDate] = useState<string>('');
-  const [payMode, setPayMode] = useState<PaymentToken>('cash');
+  const [payMode, setPayMode] = useState<ExpensePaymentToken>('cash');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -98,7 +97,7 @@ export default function ExpensesScreen() {
     setEditing(e); setCat(e.category); setDesc(e.description);
     setAmt(String(e.amount));
     setExpDate(e.date || today);
-    setPayMode(canonicalPayment(e.payment_mode));
+    setPayMode(toExpenseToken(e.payment_mode));
     setNotes(e.notes || ''); setErr(null); setEditOpen(true);
   };
 
@@ -116,7 +115,7 @@ export default function ExpensesScreen() {
         description: desc.trim(),
         amount: n,
         date: expDate,
-        payment_mode: payMode,
+        payment_mode: toExpenseToken(payMode),
         notes: notes.trim(),
       };
       if (editing) await api(`/expenses/${editing.id}`, { method: 'PUT', body });

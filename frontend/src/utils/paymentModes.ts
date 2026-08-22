@@ -14,14 +14,24 @@
 
 export type PaymentToken = 'cash' | 'card' | 'qr' | 'bank_transfer' | 'split' | 'other';
 
+/**
+ * Tokens accepted by the /expenses endpoint (backend uses a strict Pydantic
+ * Literal of the legacy names — 'upi' / 'bank' — not the newer canonical
+ * 'qr' / 'bank_transfer' used by Bills).
+ */
+export type ExpensePaymentToken = 'cash' | 'upi' | 'card' | 'bank' | 'other';
+
 /** All 6 tokens in the canonical display order. */
 export const PAYMENT_TOKENS: PaymentToken[] = ['cash', 'card', 'qr', 'bank_transfer', 'split', 'other'];
 
 /** Selectable options for the "New Bill" screen (includes Split). */
 export const BILL_PAYMENT_OPTIONS: PaymentToken[] = ['cash', 'card', 'qr', 'bank_transfer', 'split', 'other'];
 
-/** Selectable options for the "Add Expense" screen (no Split — expenses are single-tender). */
-export const EXPENSE_PAYMENT_OPTIONS: PaymentToken[] = ['cash', 'card', 'qr', 'bank_transfer', 'other'];
+/**
+ * Selectable options for the "Add Expense" screen — expense-native tokens.
+ * Backend Literal accepts EXACTLY these values.
+ */
+export const EXPENSE_PAYMENT_OPTIONS: ExpensePaymentToken[] = ['cash', 'card', 'upi', 'bank', 'other'];
 
 /** Tender types that may participate inside a Split. */
 export const SPLIT_TENDERS: PaymentToken[] = ['cash', 'card', 'qr'];
@@ -77,4 +87,20 @@ export function canonicalPayment(token: string | null | undefined): PaymentToken
 /** Is this token a legal choice for expenses? */
 export function isExpensePayment(token: string): boolean {
   return (EXPENSE_PAYMENT_OPTIONS as string[]).includes(String(token).toLowerCase());
+}
+
+/**
+ * Normalise any legacy or canonical token to the exact 5 values the /expenses
+ * endpoint accepts. Handles both directions so we're safe against future changes:
+ *   qr | q_r_online | online → 'upi'
+ *   bank_transfer → 'bank'
+ * Falls back to 'other' if unknown.
+ */
+export function toExpenseToken(token: string | null | undefined): ExpensePaymentToken {
+  const t = String(token || 'cash').toLowerCase();
+  if (t === 'qr' || t === 'qr_online' || t === 'online' || t === 'upi') return 'upi';
+  if (t === 'bank_transfer' || t === 'bank') return 'bank';
+  if (t === 'cash' || t === 'card') return t;
+  if (t === 'other') return 'other';
+  return 'other';
 }
