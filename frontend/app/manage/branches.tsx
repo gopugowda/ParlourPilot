@@ -1,3 +1,5 @@
+// Branches management — matches Web app layout & fields.
+// Web parity: modal includes address, contact, GST toggle, invoice prefix/footer, geofence (with radius on mobile).
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
@@ -12,6 +14,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { branchApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { sanitizePhone, PHONE_MAX, emailError, normalizeEmail } from '@/src/utils/validators';
 
 type Branch = any;
 
@@ -22,74 +25,136 @@ export default function BranchesScreen() {
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Branch | null>(null);
+
+  // ---- Modal form state (mirrors web app fields) ----
   const [name, setName] = useState('');
-  const [address, setAddress] = useState('');
+  const [logo, setLogo] = useState<string | null>(null);
+  const [addr1, setAddr1] = useState('');
+  const [addr2, setAddr2] = useState('');
   const [city, setCity] = useState('');
+  const [stateVal, setStateVal] = useState('');
+  const [country, setCountry] = useState('India');
+  const [postal, setPostal] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [taxEnabled, setTaxEnabled] = useState(false);
+  const [taxNumber, setTaxNumber] = useState('');
+  const [taxPct, setTaxPct] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
+  const [invoiceFooter, setInvoiceFooter] = useState('');
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+  const [radiusM, setRadiusM] = useState('');
   const [isHead, setIsHead] = useState(false);
   const [active, setActive] = useState(true);
-  const [logo, setLogo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [capturingLoc, setCapturingLoc] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [emailErr, setEmailErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try { setList(await branchApi.list() as any); await refreshBranches(); }
     catch (e: any) { Alert.alert('Error', e.message || String(e)); }
     finally { setLoading(false); }
   }, [refreshBranches]);
-
   useEffect(() => { load(); }, [load]);
+
+  const resetForm = () => {
+    setName(''); setLogo(null);
+    setAddr1(''); setAddr2(''); setCity(''); setStateVal(''); setCountry('India'); setPostal('');
+    setEmail(''); setPhone('');
+    setTaxEnabled(false); setTaxNumber(''); setTaxPct('');
+    setInvoicePrefix(''); setInvoiceFooter('');
+    setLat(''); setLng(''); setRadiusM('');
+    setIsHead(false); setActive(true);
+    setErr(null); setEmailErr(null);
+  };
 
   const openAdd = () => {
     // Adding an EXTRA branch requires a paid subscription → route to checkout first.
-    // The checkout screen will create the branch on successful (mock) payment.
     router.push('/checkout?type=branch');
   };
   const openEdit = (b: Branch) => {
-    setEditing(b); setName(b.name || ''); setAddress(b.address || ''); setCity(b.city || '');
-    setPhone(b.phone || ''); setInvoicePrefix(b.invoice_prefix || '');
-    setIsHead(!!b.is_head); setActive(b.active !== false); setLogo(b.logo || null); setErr(null); setEditOpen(true);
+    setEditing(b); resetForm();
+    setName(b.name || ''); setLogo(b.logo || null);
+    setAddr1(b.address || ''); setAddr2(b.address_line_2 || '');
+    setCity(b.city || ''); setStateVal(b.state || ''); setCountry(b.country || 'India'); setPostal(b.postal_code || '');
+    setEmail(b.email || ''); setPhone(b.phone || '');
+    setTaxEnabled(!!b.tax_enabled); setTaxNumber(b.tax_number || '');
+    setTaxPct(b.tax_percentage != null ? String(b.tax_percentage) : '');
+    setInvoicePrefix(b.invoice_prefix || '');
+    setInvoiceFooter(b.receipt_footer || '');
+    setLat(b.latitude != null ? String(b.latitude) : '');
+    setLng(b.longitude != null ? String(b.longitude) : '');
+    setRadiusM(b.geofence_radius_m != null ? String(b.geofence_radius_m) : '');
+    setIsHead(!!b.is_head); setActive(b.active !== false);
+    setEditOpen(true);
   };
 
   const pickLogo = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        if (!perm.canAskAgain) {
-          Alert.alert('Permission needed', 'Photos permission is required to upload a logo. Please enable it in Settings.');
-        }
+        if (!perm.canAskAgain) Alert.alert('Permission needed', 'Photos permission is required. Enable it in Settings.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        base64: true,
-        quality: 0.6,
+        mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], base64: true, quality: 0.6,
       });
-      if (!result.canceled && result.assets && result.assets[0]) {
+      if (!result.canceled && result.assets?.[0]?.base64) {
         const a = result.assets[0];
-        if (a.base64) {
-          const dataUri = `data:image/${a.uri.endsWith('.png') ? 'png' : 'jpeg'};base64,${a.base64}`;
-          setLogo(dataUri);
-          Haptics.selectionAsync();
-        }
+        setLogo(`data:image/${a.uri.endsWith('.png') ? 'png' : 'jpeg'};base64,${a.base64}`);
+        Haptics.selectionAsync();
       }
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Could not pick image');
-    }
+    } catch (e: any) { Alert.alert('Error', e.message || 'Could not pick image'); }
+  };
+
+  const captureMyLocation = async () => {
+    setCapturingLoc(true);
+    try {
+      const { getFreshLocation } = await import('@/src/utils/attendance');
+      const loc = await getFreshLocation();
+      if (!loc) { Alert.alert('Location', 'Could not read GPS. Enable location and try again.'); return; }
+      setLat(loc.coords.latitude.toFixed(6));
+      setLng(loc.coords.longitude.toFixed(6));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } finally { setCapturingLoc(false); }
   };
 
   const save = async () => {
-    setErr(null);
-    if (!name.trim()) { setErr('Branch name required'); return; }
+    setErr(null); setEmailErr(null);
+    if (!name.trim()) { setErr('Branch name is required'); return; }
+    if (email) {
+      const em = emailError(email, { required: false });
+      if (em) { setEmailErr(em); return; }
+    }
+    if (taxEnabled && taxPct) {
+      const t = parseFloat(taxPct);
+      if (!Number.isFinite(t) || t < 0 || t > 100) { setErr('Tax % must be between 0 and 100'); return; }
+    }
     setSaving(true);
     try {
-      const body = {
-        name: name.trim(), address: address.trim(), city: city.trim(),
-        phone: phone.replace(/\D/g, ''), invoice_prefix: invoicePrefix.trim(),
-        is_head: isHead, active, logo,
+      const body: any = {
+        name: name.trim(),
+        logo,
+        address: addr1.trim(),
+        address_line_2: addr2.trim(),
+        city: city.trim(),
+        state: stateVal.trim(),
+        country: country.trim(),
+        postal_code: postal.trim(),
+        email: normalizeEmail(email),
+        phone: sanitizePhone(phone),
+        tax_enabled: taxEnabled,
+        tax_number: taxEnabled ? taxNumber.trim() : '',
+        tax_percentage: taxEnabled && taxPct ? parseFloat(taxPct) : 0,
+        invoice_prefix: invoicePrefix.trim(),
+        receipt_footer: invoiceFooter.trim(),
+        latitude: lat.trim() ? parseFloat(lat) : null,
+        longitude: lng.trim() ? parseFloat(lng) : null,
+        geofence_radius_m: radiusM.trim() ? parseInt(radiusM, 10) : null,
+        is_head: isHead,
+        active,
       };
       if (editing) await branchApi.update(editing.id, body);
       else await branchApi.create(body);
@@ -101,14 +166,17 @@ export default function BranchesScreen() {
   };
 
   const remove = async (b: Branch) => {
-    try {
-      await branchApi.remove(b.id);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      if (currentBranchId === b.id) await selectBranch(null);
-      await load();
-    } catch (e: any) {
-      Alert.alert('Cannot delete', e.message || 'Failed');
-    }
+    Alert.alert('Delete branch?', `This removes ${b.name} permanently.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await branchApi.remove(b.id);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            if (currentBranchId === b.id) await selectBranch(null);
+            await load();
+          } catch (e: any) { Alert.alert('Cannot delete', e.message || 'Failed'); }
+        } },
+    ]);
   };
 
   return (
@@ -122,7 +190,7 @@ export default function BranchesScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Branches</Text>
-          <Text style={styles.headerSub}>{list.length} branch{list.length === 1 ? '' : 'es'}</Text>
+          <Text style={styles.headerSub}>Your salon locations · {list.length} branch{list.length === 1 ? '' : 'es'}</Text>
         </View>
         <TouchableOpacity onPress={openAdd} style={styles.headerBtn}>
           <Ionicons name="add" size={20} color="#fff" />
@@ -136,7 +204,7 @@ export default function BranchesScreen() {
               <Ionicons name="business-outline" size={48} color={colors.onSurfaceTertiary} />
               <Text style={styles.emptyTitle}>No branches yet</Text>
               <TouchableOpacity style={styles.ctaBtn} onPress={openAdd}>
-                <Text style={styles.ctaBtnText}>Add First Branch</Text>
+                <Text style={styles.ctaBtnText}>Add first branch</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -145,120 +213,219 @@ export default function BranchesScreen() {
               {b.logo ? (
                 <RNImage source={{ uri: b.logo }} style={styles.rowLogo} resizeMode="contain" />
               ) : (
-                <View style={styles.rowLogoPh}><Ionicons name="business-outline" size={18} color={colors.onSurfaceTertiary} /></View>
+                <View style={styles.rowLogoPh}><Ionicons name="business-outline" size={18} color={colors.brandPrimary} /></View>
               )}
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Text style={styles.rowName}>{b.name}</Text>
-                  {b.is_head && (
-                    <View style={styles.headBadge}><Text style={styles.headBadgeText}>HEAD</Text></View>
-                  )}
-                  {!b.active && (
-                    <View style={styles.inactiveBadge}><Text style={styles.inactiveBadgeText}>INACTIVE</Text></View>
-                  )}
-                  {currentBranchId === b.id && (
-                    <View style={styles.activeBadge}><Text style={styles.activeBadgeText}>CURRENT</Text></View>
-                  )}
+                  {b.is_head && (<View style={styles.headBadge}><Text style={styles.headBadgeText}>HEAD</Text></View>)}
+                  {!b.active && (<View style={styles.inactiveBadge}><Text style={styles.inactiveBadgeText}>INACTIVE</Text></View>)}
+                  {currentBranchId === b.id && (<View style={styles.activeBadge}><Text style={styles.activeBadgeText}>CURRENT</Text></View>)}
                 </View>
                 <Text style={styles.rowMeta}>
-                  {[b.address, b.city].filter(Boolean).join(', ')}{b.invoice_prefix ? ` · Prefix: ${b.invoice_prefix}` : ''}
+                  {[b.city, b.state, b.country].filter(Boolean).join(', ') || 'No address set'}
+                  {b.invoice_prefix ? ` · ${b.invoice_prefix}` : ''}
+                  {b.latitude != null && b.longitude != null ? ' · 📍 geofence' : ''}
                 </Text>
               </View>
-              <TouchableOpacity style={styles.smallBtn} onPress={() => openEdit(b)}>
+              <TouchableOpacity style={styles.smallBtn} onPress={() => openEdit(b)} testID={`branch-edit-${b.id}`}>
                 <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(b)}>
-                <Ionicons name="trash" size={14} color={colors.error} />
-              </TouchableOpacity>
+              {!b.is_head && (
+                <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(b)} testID={`branch-del-${b.id}`}>
+                  <Ionicons name="trash" size={14} color={colors.error} />
+                </TouchableOpacity>
+              )}
             </View>
           ))}
 
           {list.length > 0 && (
-            <View style={styles.pricingBox}>
-              <Ionicons name="card-outline" size={18} color={colors.brandPrimary} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pricingTitle}>Subscription cost</Text>
-                <Text style={styles.pricingText}>Main salon: ₹999/mo or ₹9999/yr · Extra branch: ₹888/mo or ₹8888/yr</Text>
-                <Text style={styles.pricingText}>Active branches: {list.filter(b => b.active).length}</Text>
-              </View>
-            </View>
-          )}
-
-          {list.length > 0 && (
-            <TouchableOpacity testID="add-branch-cta" style={[styles.ctaBtn, { alignSelf: 'stretch', marginTop: spacing.md }]} onPress={openAdd}>
+            <TouchableOpacity testID="add-branch-cta" style={[styles.ctaBtn, { alignSelf: 'stretch', marginTop: spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }]} onPress={openAdd}>
               <Ionicons name="add-circle" size={18} color="#fff" />
-              <Text style={styles.ctaBtnText}>Add Branch (paid)</Text>
+              <Text style={styles.ctaBtnText}>Add branch (paid)</Text>
             </TouchableOpacity>
           )}
         </ScrollView>
       )}
 
+      {/* ============ Edit / Add sheet ============ */}
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit Branch' : 'Add Branch'}</Text>
+              <Text style={styles.sheetTitle}>{editing ? 'Edit branch' : 'Add branch'}</Text>
+              <Text style={styles.sheetSubtitle}>Location details.</Text>
 
-              {/* Branch logo */}
-              <View style={styles.logoBlock}>
-                <View style={styles.logoRow}>
-                  {logo ? (
-                    <RNImage source={{ uri: logo }} style={styles.logoImg} resizeMode="contain" />
-                  ) : (
-                    <View style={styles.logoPlaceholder}>
-                      <Ionicons name="image-outline" size={26} color={colors.onSurfaceTertiary} />
-                    </View>
-                  )}
-                  <View style={{ flex: 1, gap: 6 }}>
-                    <TouchableOpacity onPress={pickLogo} style={styles.logoBtn}>
-                      <Ionicons name="camera-outline" size={14} color={colors.brandPrimary} />
-                      <Text style={styles.logoBtnText}>{logo ? 'Change Logo' : 'Upload Branch Logo'}</Text>
-                    </TouchableOpacity>
-                    {logo && (
-                      <TouchableOpacity onPress={() => setLogo(null)} style={[styles.logoBtn, { backgroundColor: '#FEE' }]}>
-                        <Ionicons name="trash-outline" size={14} color={colors.error} />
-                        <Text style={[styles.logoBtnText, { color: colors.error }]}>Remove</Text>
-                      </TouchableOpacity>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
+                {/* Branch name */}
+                <View style={styles.field}>
+                  <Text style={styles.label}>Branch name *</Text>
+                  <TextInput value={name} onChangeText={setName} style={styles.input} placeholder="e.g. Head Branch" placeholderTextColor={colors.onSurfaceTertiary} />
+                </View>
+
+                {/* Logo */}
+                <View>
+                  <Text style={styles.label}>Branch logo</Text>
+                  <View style={styles.logoRow}>
+                    {logo ? (
+                      <RNImage source={{ uri: logo }} style={styles.logoImg} resizeMode="contain" />
+                    ) : (
+                      <View style={styles.logoPlaceholder}><Ionicons name="image-outline" size={26} color={colors.onSurfaceTertiary} /></View>
                     )}
+                    <View style={{ flex: 1, gap: 6 }}>
+                      <TouchableOpacity onPress={pickLogo} style={styles.logoBtn}>
+                        <Ionicons name="camera-outline" size={14} color={colors.brandPrimary} />
+                        <Text style={styles.logoBtnText}>{logo ? 'Change logo' : 'Upload logo'}</Text>
+                      </TouchableOpacity>
+                      {logo && (
+                        <TouchableOpacity onPress={() => setLogo(null)} style={[styles.logoBtn, { backgroundColor: '#FEE' }]}>
+                          <Ionicons name="trash-outline" size={14} color={colors.error} />
+                          <Text style={[styles.logoBtnText, { color: colors.error }]}>Remove</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.help}>Shown on this branch&apos;s dashboard & invoices. PNG/JPG/SVG · max 3 MB</Text>
+                </View>
+
+                {/* Address 1 & 2 */}
+                <View style={styles.field}>
+                  <Text style={styles.label}>Address Line 1 *</Text>
+                  <TextInput value={addr1} onChangeText={setAddr1} style={styles.input} placeholder="Building, street" placeholderTextColor={colors.onSurfaceTertiary} />
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.label}>Address Line 2</Text>
+                  <TextInput value={addr2} onChangeText={setAddr2} style={styles.input} placeholder="Area, landmark (optional)" placeholderTextColor={colors.onSurfaceTertiary} />
+                </View>
+
+                {/* City / State */}
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <View style={[styles.field, { flex: 1 }]}>
+                    <Text style={styles.label}>City *</Text>
+                    <TextInput value={city} onChangeText={setCity} style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
+                  </View>
+                  <View style={[styles.field, { flex: 1 }]}>
+                    <Text style={styles.label}>State</Text>
+                    <TextInput value={stateVal} onChangeText={setStateVal} style={styles.input} placeholder="State / Province" placeholderTextColor={colors.onSurfaceTertiary} />
                   </View>
                 </View>
-                <Text style={styles.help}>Shown on invoices for this branch. Falls back to salon logo if empty.</Text>
-              </View>
 
-              <View style={styles.field}><Text style={styles.label}>Branch Name *</Text>
-                <TextInput value={name} onChangeText={setName} style={styles.input} placeholder="e.g. Bangalore Branch" placeholderTextColor={colors.onSurfaceTertiary} />
-              </View>
-              <View style={styles.field}><Text style={styles.label}>Address</Text>
-                <TextInput value={address} onChangeText={setAddress} style={styles.input} placeholder="Street / locality" placeholderTextColor={colors.onSurfaceTertiary} />
-              </View>
-              <View style={{ flexDirection: 'row', gap: spacing.md }}>
-                <View style={[styles.field, { flex: 1 }]}><Text style={styles.label}>City</Text>
-                  <TextInput value={city} onChangeText={setCity} style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
+                {/* Country / Postal */}
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <View style={[styles.field, { flex: 1 }]}>
+                    <Text style={styles.label}>Country</Text>
+                    <TextInput value={country} onChangeText={setCountry} style={styles.input} placeholder="e.g. India" placeholderTextColor={colors.onSurfaceTertiary} />
+                  </View>
+                  <View style={[styles.field, { flex: 1 }]}>
+                    <Text style={styles.label}>Postal Code *</Text>
+                    <TextInput value={postal} onChangeText={setPostal} keyboardType="numeric" style={styles.input} placeholder="ZIP / PIN" placeholderTextColor={colors.onSurfaceTertiary} />
+                  </View>
                 </View>
-                <View style={[styles.field, { flex: 1 }]}><Text style={styles.label}>Phone</Text>
-                  <TextInput value={phone} onChangeText={setPhone} keyboardType="phone-pad" style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
-                </View>
-              </View>
-              <View style={styles.field}><Text style={styles.label}>Invoice Prefix (e.g. B1, HR)</Text>
-                <TextInput value={invoicePrefix} onChangeText={setInvoicePrefix} autoCapitalize="characters" style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
-              </View>
-              <View style={styles.switchRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Head Branch</Text>
-                  <Text style={styles.help}>Only one branch can be head</Text>
-                </View>
-                <Switch value={isHead} onValueChange={setIsHead} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={isHead ? colors.brandPrimary : '#f4f3f4'} />
-              </View>
-              <View style={styles.switchRow}>
-                <Text style={styles.label}>Active</Text>
-                <Switch value={active} onValueChange={setActive} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={active ? colors.brandPrimary : '#f4f3f4'} />
-              </View>
 
-              {err && <Text style={styles.err}>{err}</Text>}
-              <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add Branch'}</Text>}
-              </TouchableOpacity>
+                {/* Email / Phone */}
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <View style={[styles.field, { flex: 1 }]}>
+                    <Text style={styles.label}>Email ID</Text>
+                    <TextInput
+                      value={email}
+                      onChangeText={(v) => { setEmail(v); if (emailErr) setEmailErr(null); }}
+                      style={[styles.input, emailErr && styles.inputErr]}
+                      placeholder="branch@salon.com"
+                      autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                    />
+                    {emailErr && <Text style={styles.errSmall}>{emailErr}</Text>}
+                  </View>
+                  <View style={[styles.field, { flex: 1 }]}>
+                    <Text style={styles.label}>Phone Number *</Text>
+                    <TextInput
+                      value={phone} onChangeText={(v) => setPhone(sanitizePhone(v))}
+                      keyboardType="phone-pad" maxLength={PHONE_MAX}
+                      style={styles.input} placeholderTextColor={colors.onSurfaceTertiary}
+                    />
+                  </View>
+                </View>
+
+                {/* Tax */}
+                <View style={styles.switchRow}>
+                  <Text style={styles.label}>Enable GST / tax</Text>
+                  <Switch value={taxEnabled} onValueChange={setTaxEnabled} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={taxEnabled ? colors.brandPrimary : '#f4f3f4'} />
+                </View>
+                {taxEnabled && (
+                  <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                    <View style={[styles.field, { flex: 2 }]}>
+                      <Text style={styles.label}>GST / Tax number</Text>
+                      <TextInput value={taxNumber} onChangeText={setTaxNumber} autoCapitalize="characters" style={styles.input} placeholder="e.g. 29ABCDE1234F1Z5" placeholderTextColor={colors.onSurfaceTertiary} />
+                    </View>
+                    <View style={[styles.field, { flex: 1 }]}>
+                      <Text style={styles.label}>Tax %</Text>
+                      <TextInput value={taxPct} onChangeText={(v) => setTaxPct(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" style={styles.input} placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} />
+                    </View>
+                  </View>
+                )}
+
+                {/* Invoice prefix + footer */}
+                <View style={styles.field}>
+                  <Text style={styles.label}>Invoice prefix</Text>
+                  <TextInput value={invoicePrefix} onChangeText={setInvoicePrefix} autoCapitalize="characters" style={styles.input} placeholder="e.g. INV, B1" placeholderTextColor={colors.onSurfaceTertiary} />
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.label}>Invoice footer (tax / registration line)</Text>
+                  <TextInput value={invoiceFooter} onChangeText={setInvoiceFooter} style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]} multiline placeholder="Shown under this branch's address on every bill" placeholderTextColor={colors.onSurfaceTertiary} />
+                </View>
+
+                {/* Attendance geofence */}
+                <View style={styles.geoBox}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name="location-outline" size={16} color={colors.brandPrimary} />
+                    <Text style={styles.geoTitle}>Attendance geofence</Text>
+                  </View>
+                  <TouchableOpacity onPress={captureMyLocation} disabled={capturingLoc} style={[styles.captureBtn, { opacity: capturingLoc ? 0.6 : 1 }]}>
+                    <Ionicons name="locate" size={14} color="#fff" />
+                    <Text style={styles.captureBtnText}>{capturingLoc ? 'Capturing…' : 'Capture my location'}</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.help}>Staff can only check in within {radiusM || 100}m of these coordinates. Leave blank to disable GPS gating for this branch.</Text>
+                  <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                    <View style={[styles.field, { flex: 1 }]}>
+                      <Text style={styles.label}>Latitude</Text>
+                      <TextInput value={lat} onChangeText={(v) => setLat(v.replace(/[^0-9.\-]/g, ''))} keyboardType="numbers-and-punctuation" style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
+                    </View>
+                    <View style={[styles.field, { flex: 1 }]}>
+                      <Text style={styles.label}>Longitude</Text>
+                      <TextInput value={lng} onChangeText={(v) => setLng(v.replace(/[^0-9.\-]/g, ''))} keyboardType="numbers-and-punctuation" style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
+                    </View>
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Check-in radius (metres, default 100)</Text>
+                    <TextInput value={radiusM} onChangeText={(v) => setRadiusM(v.replace(/[^0-9]/g, ''))} keyboardType="numeric" style={styles.input} placeholder="100" placeholderTextColor={colors.onSurfaceTertiary} />
+                  </View>
+                </View>
+
+                {/* Head + Active */}
+                <View style={styles.switchRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Head branch</Text>
+                    <Text style={styles.help}>Only one branch can be head</Text>
+                  </View>
+                  <Switch value={isHead} onValueChange={setIsHead} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={isHead ? colors.brandPrimary : '#f4f3f4'} />
+                </View>
+                <View style={styles.switchRow}>
+                  <Text style={styles.label}>Active</Text>
+                  <Switch value={active} onValueChange={setActive} trackColor={{ true: colors.brandSecondary, false: '#ccc' }} thumbColor={active ? colors.brandPrimary : '#f4f3f4'} />
+                </View>
+
+                {err && <Text style={styles.err}>{err}</Text>}
+              </ScrollView>
+
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditOpen(false)}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>
+                  {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save</Text>}
+                </TouchableOpacity>
+              </View>
             </Pressable>
           </KeyboardAvoidingView>
         </Pressable>
@@ -279,7 +446,7 @@ const styles = StyleSheet.create({
   rowMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   smallBtn: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
   rowLogo: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
-  rowLogoPh: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  rowLogoPh: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
 
   headBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   headBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
@@ -293,26 +460,32 @@ const styles = StyleSheet.create({
   ctaBtn: { backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.xl, paddingVertical: 12, borderRadius: radius.pill },
   ctaBtnText: { color: '#fff', fontWeight: '700' },
 
-  pricingBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: spacing.lg, padding: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandSecondary },
-  pricingTitle: { fontSize: 13, fontWeight: '700', color: colors.brandPrimary },
-  pricingText: { fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2 },
-
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md, maxHeight: '92%', width: '100%', maxWidth: 480, alignSelf: 'center' },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
-  sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  sheetTitle: { fontSize: 20, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
+  sheetSubtitle: { fontSize: 12, color: colors.onSurfaceTertiary, textAlign: 'center', marginTop: -8 },
   field: { gap: 6 },
   label: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
   help: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface },
+  inputErr: { borderColor: colors.error, borderWidth: 1, backgroundColor: '#FDECEC' },
+  errSmall: { color: colors.error, fontSize: 11, fontWeight: '600' },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm },
   err: { color: colors.error, fontSize: 13 },
-  saveBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center' },
+  cancelBtn: { flex: 1, backgroundColor: colors.surfaceTertiary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
+  cancelBtnText: { color: colors.onSurface, fontWeight: '700', fontSize: 15 },
+  saveBtn: { flex: 1, backgroundColor: colors.brandPrimary, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center' },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  logoBlock: { gap: 6 },
+
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   logoImg: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   logoPlaceholder: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
   logoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.sm, paddingVertical: 8, paddingHorizontal: 12 },
   logoBtnText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
+
+  geoBox: { backgroundColor: colors.brandTertiary + '55', borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandTertiary, padding: spacing.md, gap: spacing.md },
+  geoTitle: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandPrimary, paddingVertical: 10, borderRadius: radius.sm, alignSelf: 'flex-start', paddingHorizontal: spacing.md },
+  captureBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

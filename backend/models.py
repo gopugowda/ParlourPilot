@@ -18,6 +18,7 @@ class TenantSignup(BaseModel):
 class BranchIn(BaseModel):
     name: str
     address: Optional[str] = ""
+    address_line_2: Optional[str] = ""
     city: Optional[str] = ""
     state: Optional[str] = ""
     country: Optional[str] = "India"
@@ -47,12 +48,14 @@ class TenantUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    address_line_2: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     country: Optional[str] = None
     postal_code: Optional[str] = None
     currency: Optional[str] = None
     currency_symbol: Optional[str] = None
+    number_format: Optional[str] = None  # 'indian' | 'us' | 'uk' | 'european' | 'french' | 'arabic'
     brand_color: Optional[str] = None
     timezone: Optional[str] = None
     tax_enabled: Optional[bool] = None
@@ -65,6 +68,9 @@ class TenantUpdate(BaseModel):
     member_discount_pct: Optional[float] = None
     member_min_price: Optional[float] = None
     member_tiers: Optional[list] = None
+    # Automated summary emails
+    daily_summary_email: Optional[bool] = None
+    weekly_summary_email: Optional[bool] = None
 
 
 class UserCreate(BaseModel):
