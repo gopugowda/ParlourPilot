@@ -1,7 +1,14 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+// -----------------------------------------------------------------------------
+// Team Management (formerly Staff).
+// Unified: one row = 1 user login + 1 staff profile (linked by user_id).
+// Backend: /api/team GET/POST/PUT/DELETE.
+// Login identifier can be email OR phone (both create a working login).
+// Owner is locked; last-admin cannot be demoted or deleted.
+// -----------------------------------------------------------------------------
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, Switch, KeyboardAvoidingView, Platform,
+  Modal, Pressable, Switch, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,14 +22,18 @@ import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 
 type Branch = { id: string; name: string };
-type Beautician = {
-  id: string; name: string; role: string; phone?: string; active: boolean;
-  employee_id?: string; email?: string; basic_salary?: number; branch_id?: string;
-  work_start?: string; work_end?: string; week_off?: string[];
-  commission_pct?: number; monthly_target?: number;
-  address?: string; id_type?: string; id_number?: string;
+type TeamMember = {
+  id: string; user_id?: string | null; beautician_id?: string | null;
+  name: string; email: string; phone: string;
+  has_login: boolean;
+  access_level: 'owner' | 'admin' | 'staff' | null;
+  branch_id?: string | null; is_active: boolean;
+  role: string; employee_id: string;
+  basic_salary: number; work_start: string; work_end: string; week_off: string[];
+  commission_pct: number; monthly_target: number;
+  address: string; id_type: string; id_number: string;
+  is_owner_locked: boolean;
 };
-type AppUser = { id: string; name: string; email: string; role: string; is_active: boolean; branch_id?: string | null };
 
 const ROLE_SUGGESTIONS = ['Stylist', 'Senior Stylist', 'Manager', 'Therapist', 'Beautician', 'Assistant', 'Receptionist'];
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -36,32 +47,38 @@ function sanitizeTime(v: string): string {
   return d.slice(0, 2) + ':' + d.slice(2);
 }
 function isValidTime(v: string): boolean {
-  if (!v) return true; // optional
+  if (!v) return true;
   const m = /^(\d{1,2}):(\d{2})$/.exec(v);
   if (!m) return false;
   const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
   return h >= 0 && h <= 23 && mi >= 0 && mi <= 59;
 }
 
-export default function BeauticiansScreen() {
+export default function TeamScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
-  const [list, setList] = useState<Beautician[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [users, setUsers] = useState<AppUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editOpen, setEditOpen] = useState(false);
-  const [editing, setEditing] = useState<Beautician | null>(null);
 
-  // Full field set — mirrors web parity.
+  const [list, setList] = useState<TeamMember[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // ---- Sheet state ----
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<TeamMember | null>(null);
+
+  // Form fields
   const [name, setName] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
-  const [role, setRole] = useState('Stylist');
-  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [basicSalary, setBasicSalary] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
+  const [pwdVisible, setPwdVisible] = useState(false);
+  const [accessLevel, setAccessLevel] = useState<'staff' | 'admin'>('staff');
+  const [role, setRole] = useState('Stylist');
+  const [employeeId, setEmployeeId] = useState('');
   const [branchId, setBranchId] = useState<string>('');
+  const [basicSalary, setBasicSalary] = useState('');
   const [workStart, setWorkStart] = useState('10:00');
   const [workEnd, setWorkEnd] = useState('20:00');
   const [weekOff, setWeekOff] = useState<string[]>([]);
@@ -75,151 +92,126 @@ export default function BeauticiansScreen() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [pwdErr, setPwdErr] = useState<string | null>(null);
   const emailRef = useRef<TextInput>(null);
 
-  // ---- App-login (user account) fields ----
-  // Beauticians are matched to a user by tenant + email (case-insensitive).
-  const [loginEnabled, setLoginEnabled] = useState(false);      // toggle in form
-  const [loginPassword, setLoginPassword] = useState('');       // new password (create OR reset)
-  const [loginPassword2, setLoginPassword2] = useState('');
-  const [loginPwdVisible, setLoginPwdVisible] = useState(false);
-  const [loginErr, setLoginErr] = useState<string | null>(null);
-  // Look up existing user by email (edit mode).
-  const linkedUser = React.useMemo(() => {
-    const e = normalizeEmail(email);
-    if (!e) return null;
-    return users.find(u => (u.email || '').toLowerCase() === e.toLowerCase()) || null;
-  }, [email, users]);
-
-  // Persistent filters (role + status).
+  // ---- Persistent filters ----
   const [fsOpen, setFsOpen] = useState(false);
-  const { filters, setFilters, resetFilters, activeCount } = useFilterState('staff', {
-    role: null as string | null,
+  const { filters, setFilters, resetFilters, activeCount } = useFilterState('team', {
+    access: null as 'owner' | 'admin' | 'staff' | 'no_login' | null,
     status: null as 'active' | 'inactive' | null,
   });
 
-  const availableRoles = Array.from(new Set(list.map(b => b.role || 'Stylist')));
-  const displayList = list.filter(b => {
-    if (filters.role && (b.role || 'Stylist') !== filters.role) return false;
-    if (filters.status === 'active' && !b.active) return false;
-    if (filters.status === 'inactive' && b.active) return false;
+  const displayList = useMemo(() => list.filter(m => {
+    if (filters.access === 'no_login' && m.has_login) return false;
+    if (filters.access === 'owner' && m.access_level !== 'owner') return false;
+    if (filters.access === 'admin' && m.access_level !== 'admin') return false;
+    if (filters.access === 'staff' && m.access_level !== 'staff') return false;
+    if (filters.status === 'active' && !m.is_active) return false;
+    if (filters.status === 'inactive' && m.is_active) return false;
     return true;
-  });
+  }), [list, filters]);
 
   const load = async () => {
     try {
-      const [ppl, br, us] = await Promise.all([
-        api<Beautician[]>('/beauticians'),
+      const [team, br] = await Promise.all([
+        api<TeamMember[]>('/team').catch(() => []),
         api<Branch[]>('/branches').catch(() => []),
-        isAdmin ? api<AppUser[]>('/auth/users').catch(() => []) : Promise.resolve([]),
       ]);
-      setList(ppl || []);
+      setList(team || []);
       setBranches(br || []);
-      setUsers(us || []);
     } catch {}
   };
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
   useFocusEffect(useCallback(() => { load(); }, []));
 
   const resetForm = () => {
-    setName(''); setEmployeeId(''); setRole('Stylist'); setPhone(''); setEmail('');
-    setBasicSalary(''); setBranchId(branches[0]?.id || '');
-    setWorkStart('10:00'); setWorkEnd('20:00'); setWeekOff([]);
-    setCommissionPct(''); setMonthlyTarget(''); setAddress('');
-    setIdType('Aadhaar'); setIdNumber(''); setActive(true);
-    setErr(null); setEmailErr(null);
-    setLoginEnabled(false); setLoginPassword(''); setLoginPassword2(''); setLoginErr(null); setLoginPwdVisible(false);
+    setName(''); setEmail(''); setPhone(''); setPassword(''); setPassword2('');
+    setPwdVisible(false); setAccessLevel('staff');
+    setRole('Stylist'); setEmployeeId(''); setBranchId(branches[0]?.id || '');
+    setBasicSalary(''); setWorkStart('10:00'); setWorkEnd('20:00');
+    setWeekOff([]); setCommissionPct(''); setMonthlyTarget('');
+    setAddress(''); setIdType('Aadhaar'); setIdNumber(''); setActive(true);
+    setErr(null); setEmailErr(null); setPwdErr(null);
   };
 
   const openAdd = () => { setEditing(null); resetForm(); setEditOpen(true); };
 
-  const openEdit = (b: Beautician) => {
-    setEditing(b); setErr(null); setEmailErr(null);
-    setLoginPassword(''); setLoginPassword2(''); setLoginErr(null); setLoginPwdVisible(false);
-    setName(b.name || '');
-    setEmployeeId(b.employee_id || '');
-    setRole(b.role || 'Stylist');
-    setPhone(b.phone || '');
-    setEmail(b.email || '');
-    setBasicSalary(b.basic_salary != null ? String(b.basic_salary) : '');
-    setBranchId(b.branch_id || branches[0]?.id || '');
-    setWorkStart(b.work_start || '10:00');
-    setWorkEnd(b.work_end || '20:00');
-    setWeekOff(Array.isArray(b.week_off) ? [...b.week_off] : []);
-    setCommissionPct(b.commission_pct != null ? String(b.commission_pct) : '');
-    setMonthlyTarget(b.monthly_target != null ? String(b.monthly_target) : '');
-    setAddress(b.address || '');
-    setIdType(b.id_type || 'Aadhaar');
-    setIdNumber(b.id_number || '');
-    setActive(b.active !== false);
-    // If a matching user already exists, treat login as enabled.
-    const eLow = (b.email || '').toLowerCase();
-    const linked = eLow ? users.find(u => (u.email || '').toLowerCase() === eLow) : null;
-    setLoginEnabled(!!linked);
+  const openEdit = (m: TeamMember) => {
+    setEditing(m); setErr(null); setEmailErr(null); setPwdErr(null);
+    setName(m.name || '');
+    setEmail(m.email || '');
+    setPhone(m.phone || '');
+    setPassword(''); setPassword2(''); setPwdVisible(false);
+    setAccessLevel(m.access_level === 'admin' ? 'admin' : 'staff');
+    setRole(m.role || 'Stylist');
+    setEmployeeId(m.employee_id || '');
+    setBranchId(m.branch_id || branches[0]?.id || '');
+    setBasicSalary(m.basic_salary != null ? String(m.basic_salary) : '');
+    setWorkStart(m.work_start || '10:00');
+    setWorkEnd(m.work_end || '20:00');
+    setWeekOff(Array.isArray(m.week_off) ? [...m.week_off] : []);
+    setCommissionPct(m.commission_pct != null ? String(m.commission_pct) : '');
+    setMonthlyTarget(m.monthly_target != null ? String(m.monthly_target) : '');
+    setAddress(m.address || '');
+    setIdType(m.id_type || 'Aadhaar');
+    setIdNumber(m.id_number || '');
+    setActive(m.is_active !== false);
     setEditOpen(true);
   };
 
   const toggleDay = (day: string) => {
     Haptics.selectionAsync();
     setWeekOff(prev => {
-      // If picking Flexible → clear everything else and set only Flexible.
-      if (day === 'Flexible') {
-        return prev.includes('Flexible') ? [] : ['Flexible'];
-      }
-      // If any real day picked → drop Flexible from the list.
+      if (day === 'Flexible') return prev.includes('Flexible') ? [] : ['Flexible'];
       const base = prev.filter(d => d !== 'Flexible');
       return base.includes(day) ? base.filter(d => d !== day) : [...base, day];
     });
   };
 
   const save = async () => {
-    setErr(null); setEmailErr(null); setLoginErr(null);
+    setErr(null); setEmailErr(null); setPwdErr(null);
     if (!name.trim()) { setErr('Name is required'); return; }
-    // Email — optional but must be valid if filled.
-    const emsg = emailError(email, { required: false });
-    if (emsg) { setEmailErr(emsg); emailRef.current?.focus(); return; }
+    // At least one identifier
+    const emailNorm = normalizeEmail(email);
+    const phoneNorm = sanitizePhone(phone);
+    if (!emailNorm && !phoneNorm) {
+      setErr('Email or phone is required — this is the login identifier'); return;
+    }
+    if (emailNorm) {
+      const emsg = emailError(email, { required: false });
+      if (emsg) { setEmailErr(emsg); emailRef.current?.focus(); return; }
+    }
     if (!isValidTime(workStart) || !isValidTime(workEnd)) {
       setErr('Work times must be HH:MM (24-hour)'); return;
     }
-    // ---- Login validation ----
-    const normalizedEmail = normalizeEmail(email);
-    if (loginEnabled) {
-      if (!normalizedEmail) {
-        setLoginErr('Email is required to enable app login');
-        emailRef.current?.focus();
-        return;
-      }
-      // On CREATE (no linked user yet) → password mandatory.
-      // On EDIT with linked user → password optional (only if changing).
-      const needsPassword = !linkedUser;
-      if (needsPassword) {
-        if (!loginPassword || loginPassword.length < 6) {
-          setLoginErr('Password must be at least 6 characters'); return;
-        }
-        if (loginPassword !== loginPassword2) {
-          setLoginErr('Passwords do not match'); return;
-        }
-      } else if (loginPassword) {
-        // password change flow
-        if (loginPassword.length < 6) { setLoginErr('Password must be at least 6 characters'); return; }
-        if (loginPassword !== loginPassword2) { setLoginErr('Passwords do not match'); return; }
-      }
+    // Password rules:
+    //  - CREATE: required
+    //  - EDIT with has_login: optional (blank = keep)
+    //  - EDIT legacy profile (no login) with email/phone: required
+    const isNew = !editing;
+    const editingHasLogin = !!editing?.has_login;
+    const needPassword = isNew || (!editingHasLogin);
+    if (needPassword) {
+      if (!password || password.length < 6) { setPwdErr('Password must be at least 6 characters'); return; }
+      if (password !== password2) { setPwdErr('Passwords do not match'); return; }
+    } else if (password) {
+      if (password.length < 6) { setPwdErr('New password must be at least 6 characters'); return; }
+      if (password !== password2) { setPwdErr('Passwords do not match'); return; }
     }
 
     setSaving(true);
     try {
-      // Numbers send 0 when blank (never "").
-      const asNum = (v: string) => {
-        const n = Number(String(v || '').trim());
-        return Number.isFinite(n) ? n : 0;
-      };
+      const asNum = (v: string) => { const n = Number(String(v || '').trim()); return Number.isFinite(n) ? n : 0; };
       const body: any = {
         name: name.trim(),
+        email: emailNorm,
+        phone: phoneNorm,
+        access_level: editing?.is_owner_locked ? 'owner' : accessLevel,
+        branch_id: branchId || null,
+        is_active: active,
         role: role.trim() || 'Stylist',
-        phone: sanitizePhone(phone),
-        active,
         employee_id: employeeId.trim(),
-        email: normalizedEmail,
         basic_salary: asNum(basicSalary),
         work_start: workStart || '',
         work_end: workEnd || '',
@@ -230,79 +222,57 @@ export default function BeauticiansScreen() {
         id_type: idType,
         id_number: idNumber.trim(),
       };
-      if (branchId) body.branch_id = branchId;
-      if (editing) await api(`/beauticians/${editing.id}`, { method: 'PUT', body });
-      else await api('/beauticians', { method: 'POST', body });
+      if (password) body.password = password;
 
-      // ---- Sync login account ----
-      if (loginEnabled) {
-        if (!linkedUser) {
-          // Create new user account
-          try {
-            await api('/auth/register', {
-              method: 'POST',
-              body: {
-                name: name.trim(),
-                email: normalizedEmail,
-                password: loginPassword,
-                role: 'staff',
-                branch_id: branchId || null,
-              },
-            });
-          } catch (e: any) {
-            throw new Error(`Staff saved, but login could not be created: ${e?.message || e}`);
-          }
-        } else {
-          // Update linked user (name, branch, active) — email change is uncommon so we keep in-sync.
-          try {
-            await api(`/auth/users/${linkedUser.id}`, {
-              method: 'PUT',
-              body: {
-                name: name.trim(),
-                branch_id: branchId || null,
-                is_active: active,
-              },
-            });
-            if (loginPassword) {
-              await api(`/auth/users/${linkedUser.id}/reset-password`, {
-                method: 'POST',
-                body: { new_password: loginPassword },
-              });
-            }
-          } catch (e: any) {
-            throw new Error(`Staff saved, but login could not be updated: ${e?.message || e}`);
-          }
-        }
-      } else if (linkedUser) {
-        // Login disabled but a matching user still exists → deactivate (safer than deleting).
-        try {
-          await api(`/auth/users/${linkedUser.id}`, {
-            method: 'PUT',
-            body: { is_active: false },
-          });
-        } catch { /* non-blocking */ }
+      if (editing) {
+        body.user_id = editing.user_id || null;
+        body.beautician_id = editing.beautician_id || null;
+        await api('/team', { method: 'PUT', body });
+      } else {
+        // POST requires password
+        await api('/team', { method: 'POST', body });
       }
-
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setEditOpen(false); await load();
+      setEditOpen(false);
+      await load();
     } catch (e: any) {
       const raw = (e?.message || 'Failed').toString();
-      if (/email/i.test(raw) && !/login/i.test(raw)) setEmailErr('Please enter a valid email address');
+      if (/email/i.test(raw) && /valid/i.test(raw)) setEmailErr(raw);
+      else if (/password/i.test(raw)) setPwdErr(raw);
       else setErr(raw);
-    }
-    finally { setSaving(false); }
+    } finally { setSaving(false); }
   };
 
-  const remove = async (b: Beautician) => {
-    try { await api(`/beauticians/${b.id}`, { method: 'DELETE' }); await load(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+  const remove = (m: TeamMember) => {
+    if (m.is_owner_locked) return;
+    Alert.alert(
+      'Delete team member?',
+      `This will remove ${m.name}'s login and staff profile permanently.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              const qs = new URLSearchParams();
+              if (m.user_id) qs.append('user_id', m.user_id);
+              if (m.beautician_id) qs.append('beautician_id', m.beautician_id);
+              await api(`/team?${qs.toString()}`, { method: 'DELETE' });
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              await load();
+            } catch (e: any) {
+              Alert.alert('Failed', e?.message || 'Could not delete');
+            }
+          } },
+      ],
+    );
   };
 
   const roleColors: Record<string, string> = {
-    Barber: colors.info, Beautician: colors.brandPrimary, Stylist: colors.success,
+    admin: colors.brandPrimary, owner: '#8B5CF6', staff: colors.info,
   };
+  const accessLabel = (a: TeamMember['access_level']) => a === 'owner' ? 'Owner' : a === 'admin' ? 'Admin' : a === 'staff' ? 'Staff' : 'No login';
 
   return (
-    <View style={styles.root} testID="beauticians-screen">
+    <View style={styles.root} testID="team-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
         <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
@@ -311,10 +281,10 @@ export default function BeauticiansScreen() {
           <Ionicons name="home-outline" size={20} color="#3A3937" />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Staff</Text>
+          <Text style={styles.headerTitle}>Team</Text>
           <Text style={styles.headerSub}>{displayList.length} of {list.length} shown</Text>
         </View>
-        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="staff-filter-btn" />
+        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="team-filter-btn" />
         {isAdmin && (
           <TouchableOpacity testID="add-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
             <Ionicons name="add" size={20} color="#fff" />
@@ -327,7 +297,7 @@ export default function BeauticiansScreen() {
           {list.length === 0 && (
             <View style={styles.empty}>
               <Ionicons name="people-outline" size={48} color={colors.onSurfaceTertiary} />
-              <Text style={styles.emptyTitle}>No staff yet</Text>
+              <Text style={styles.emptyTitle}>No team members yet</Text>
               {isAdmin && (
                 <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
                   <Text style={styles.ctaBtnText}>Add first team member</Text>
@@ -335,124 +305,204 @@ export default function BeauticiansScreen() {
               )}
             </View>
           )}
-          {displayList.map(b => {
-            const bEmail = (b.email || '').toLowerCase();
-            const hasLogin = bEmail
-              ? users.some(u => (u.email || '').toLowerCase() === bEmail && u.is_active !== false)
-              : false;
-            return (
-            <View key={b.id} style={styles.row} testID={`bt-row-${b.id}`}>
+          {displayList.map(m => (
+            <View key={m.id} style={styles.row} testID={`team-row-${m.id}`}>
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{b.name.split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
+                <Text style={styles.avatarText}>{(m.name || '?').split(' ').map(w => w[0]).slice(0, 2).join('')}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowName}>{b.name}</Text>
+                <Text style={styles.rowName}>{m.name || 'Unnamed'}</Text>
                 <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 3, flexWrap: 'wrap' }}>
-                  <View style={[styles.rolePill, { backgroundColor: (roleColors[b.role] || colors.info) + '22' }]}>
-                    <Text style={[styles.roleText, { color: roleColors[b.role] || colors.info }]}>{b.role}</Text>
-                  </View>
-                  {hasLogin && (
-                    <View style={styles.loginPill}>
-                      <Ionicons name="key" size={9} color={colors.brandPrimary} />
-                      <Text style={styles.loginPillText}>Login</Text>
+                  {m.access_level && (
+                    <View style={[styles.rolePill, { backgroundColor: (roleColors[m.access_level] || colors.info) + '22' }]}>
+                      <Text style={[styles.roleText, { color: roleColors[m.access_level] || colors.info }]}>
+                        {accessLabel(m.access_level)}{m.is_owner_locked ? ' 🔒' : ''}
+                      </Text>
                     </View>
                   )}
-                  {b.employee_id ? <Text style={styles.rowMeta}>· {b.employee_id}</Text> : null}
-                  {!b.active && <Text style={styles.rowMeta}>· Inactive</Text>}
-                  {b.phone ? <Text style={styles.rowMeta}>· {b.phone}</Text> : null}
+                  {!m.has_login && (
+                    <View style={[styles.rolePill, { backgroundColor: colors.warning + '22' }]}>
+                      <Text style={[styles.roleText, { color: colors.warning }]}>No login</Text>
+                    </View>
+                  )}
+                  {!m.is_active && <Text style={styles.rowMeta}>· Inactive</Text>}
+                  {m.role ? <Text style={styles.rowMeta}>· {m.role}</Text> : null}
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 2, flexWrap: 'wrap' }}>
+                  {m.email ? <Text style={styles.rowMetaSmall} numberOfLines={1}>{m.email}</Text> : null}
+                  {m.phone ? <Text style={styles.rowMetaSmall}>{m.email ? ' · ' : ''}{m.phone}</Text> : null}
                 </View>
               </View>
               {isAdmin && (
                 <>
-                  <TouchableOpacity testID={`bt-edit-${b.id}`} style={styles.smallBtn} onPress={() => openEdit(b)}>
+                  <TouchableOpacity testID={`team-edit-${m.id}`} style={styles.smallBtn} onPress={() => openEdit(m)}>
                     <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
                   </TouchableOpacity>
-                  <TouchableOpacity testID={`bt-del-${b.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(b)}>
-                    <Ionicons name="trash" size={14} color={colors.error} />
-                  </TouchableOpacity>
+                  {!m.is_owner_locked && (
+                    <TouchableOpacity testID={`team-del-${m.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(m)}>
+                      <Ionicons name="trash" size={14} color={colors.error} />
+                    </TouchableOpacity>
+                  )}
                 </>
               )}
             </View>
-            );
-          })}
+          ))}
         </ScrollView>
       )}
 
-      {/* Add / Edit Staff — full web-parity sheet */}
+      {/* ============ Add / Edit sheet ============ */}
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit Staff' : 'Add Staff'}</Text>
+              <Text style={styles.sheetTitle}>
+                {editing ? (editing.is_owner_locked ? 'Edit Owner' : 'Edit Team Member') : 'Add Team Member'}
+              </Text>
 
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
-                {/* Name — required */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Full name *</Text>
-                  <TextInput testID="bt-name-input" value={name} onChangeText={setName} placeholder="e.g. Preetha P" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+                  <TextInput testID="team-name-input" value={name} onChangeText={setName} placeholder="e.g. Preetha P" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
 
-                {/* Employee ID */}
-                <View style={styles.field}>
-                  <Text style={styles.label}>Employee ID</Text>
-                  <TextInput testID="bt-empid-input" value={employeeId} onChangeText={setEmployeeId} placeholder="e.g. EMP-001" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+                {/* ---- Login identifier (email OR phone) ---- */}
+                <View style={styles.loginBox}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="key-outline" size={16} color={colors.brandPrimary} />
+                    <Text style={styles.loginTitle}>Login credentials</Text>
+                    {editing?.has_login && (
+                      <View style={styles.linkedBadge}><Text style={styles.linkedBadgeText}>Linked</Text></View>
+                    )}
+                  </View>
+                  <Text style={styles.loginHint}>
+                    {editing?.is_owner_locked
+                      ? 'Owner login — you can update name, email, phone and password. Access level is locked.'
+                      : 'Provide email OR phone (or both). They\'ll use this + password to sign in.'}
+                  </Text>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Email {(!phone) ? '*' : '(optional if phone set)'}</Text>
+                    <TextInput
+                      testID="team-email-input"
+                      ref={emailRef}
+                      value={email}
+                      onChangeText={(v) => { setEmail(v); if (emailErr) setEmailErr(null); }}
+                      onBlur={() => { if (email) { const m = emailError(email, { required: false }); if (m) setEmailErr(m); } }}
+                      placeholder="staff@salon.com"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      autoCapitalize="none" keyboardType="email-address" autoCorrect={false}
+                      style={[styles.input, emailErr && { borderColor: colors.error, borderWidth: 1, backgroundColor: '#FDECEC' }]}
+                    />
+                    {emailErr && <Text style={styles.errSmall}>{emailErr}</Text>}
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Phone {(!email) ? '*' : '(can also log in)'}</Text>
+                    <TextInput
+                      testID="team-phone-input"
+                      value={phone}
+                      onChangeText={(v) => setPhone(sanitizePhone(v))}
+                      placeholder="10-digit number"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      keyboardType="number-pad" maxLength={PHONE_MAX}
+                      style={styles.input}
+                    />
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>
+                      {editing?.has_login ? 'New password (leave blank to keep current)' : 'Password *'}
+                    </Text>
+                    <View style={{ position: 'relative' }}>
+                      <TextInput
+                        testID="team-password"
+                        value={password}
+                        onChangeText={(v) => { setPassword(v); if (pwdErr) setPwdErr(null); }}
+                        placeholder={editing?.has_login ? '••••••' : 'Min 6 characters'}
+                        placeholderTextColor={colors.onSurfaceTertiary}
+                        secureTextEntry={!pwdVisible}
+                        autoCapitalize="none" autoCorrect={false}
+                        style={[styles.input, { paddingRight: 40 }]}
+                      />
+                      <TouchableOpacity onPress={() => setPwdVisible(v => !v)} style={styles.eyeBtn} testID="team-pwd-eye">
+                        <Ionicons name={pwdVisible ? 'eye-off' : 'eye'} size={18} color={colors.onSurfaceTertiary} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  {(!editing?.has_login || password) && (
+                    <View style={styles.field}>
+                      <Text style={styles.label}>Confirm password *</Text>
+                      <TextInput
+                        testID="team-password2"
+                        value={password2}
+                        onChangeText={(v) => { setPassword2(v); if (pwdErr) setPwdErr(null); }}
+                        placeholder="Re-enter password"
+                        placeholderTextColor={colors.onSurfaceTertiary}
+                        secureTextEntry={!pwdVisible} autoCapitalize="none" autoCorrect={false}
+                        style={styles.input}
+                      />
+                    </View>
+                  )}
+                  {pwdErr && <Text style={styles.errSmall}>{pwdErr}</Text>}
                 </View>
 
-                {/* Role — free text + suggestion chips */}
+                {/* ---- Access level ---- */}
                 <View style={styles.field}>
-                  <Text style={styles.label}>Role</Text>
-                  <TextInput testID="bt-role-input" value={role} onChangeText={setRole} placeholder="Type role or pick below" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+                  <Text style={styles.label}>Access level</Text>
+                  {editing?.is_owner_locked ? (
+                    <View style={styles.ownerLockRow}>
+                      <Ionicons name="lock-closed" size={14} color={colors.onSurfaceSecondary} />
+                      <Text style={styles.ownerLockText}>Owner (locked)</Text>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <TouchableOpacity
+                        testID="team-access-staff"
+                        onPress={() => setAccessLevel('staff')}
+                        style={[styles.suggChip, accessLevel === 'staff' && styles.suggChipActive, { flex: 1 }]}
+                      >
+                        <Text style={[styles.suggChipText, accessLevel === 'staff' && styles.suggChipTextActive]}>Staff</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="team-access-admin"
+                        onPress={() => setAccessLevel('admin')}
+                        style={[styles.suggChip, accessLevel === 'admin' && styles.suggChipActive, { flex: 1 }]}
+                      >
+                        <Text style={[styles.suggChipText, accessLevel === 'admin' && styles.suggChipTextActive]}>Admin</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {/* ---- Job title (Role) ---- */}
+                <View style={styles.field}>
+                  <Text style={styles.label}>Job title</Text>
+                  <TextInput testID="team-role-input" value={role} onChangeText={setRole} placeholder="Type role or pick below" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 6 }}>
                     {ROLE_SUGGESTIONS.map(r => (
-                      <TouchableOpacity
-                        key={r}
-                        testID={`bt-role-chip-${r}`}
-                        onPress={() => setRole(r)}
-                        style={[styles.suggChip, role === r && styles.suggChipActive]}
-                      >
+                      <TouchableOpacity key={r} onPress={() => setRole(r)} style={[styles.suggChip, role === r && styles.suggChipActive]}>
                         <Text style={[styles.suggChipText, role === r && styles.suggChipTextActive]}>{r}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
                 </View>
 
-                {/* Phone */}
+                {/* Employee ID */}
                 <View style={styles.field}>
-                  <Text style={styles.label}>Phone</Text>
-                  <TextInput testID="bt-phone-input" value={phone} onChangeText={(v) => setPhone(sanitizePhone(v))} placeholder="10-digit number" placeholderTextColor={colors.onSurfaceTertiary} keyboardType="number-pad" maxLength={PHONE_MAX} style={styles.input} />
-                </View>
-
-                {/* Email */}
-                <View style={styles.field}>
-                  <Text style={styles.label}>Email</Text>
-                  <TextInput
-                    testID="bt-email-input"
-                    ref={emailRef}
-                    value={email}
-                    onChangeText={(v) => { setEmail(v); if (emailErr) setEmailErr(null); }}
-                    onBlur={() => { const m = emailError(email, { required: false }); if (m) setEmailErr(m); }}
-                    placeholder="staff@salon.com"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    autoCorrect={false}
-                    style={[styles.input, emailErr && { borderColor: colors.error, borderWidth: 1, backgroundColor: '#FDECEC' }]}
-                  />
-                  {emailErr && <Text style={styles.errSmall}>{emailErr}</Text>}
+                  <Text style={styles.label}>Employee ID</Text>
+                  <TextInput testID="team-empid-input" value={employeeId} onChangeText={setEmployeeId} placeholder="e.g. EMP-001" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
 
                 {/* Basic salary */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Basic salary (₹)</Text>
                   <TextInput
-                    testID="bt-basic-salary-input"
+                    testID="team-basic-salary-input"
                     value={basicSalary}
                     onChangeText={(v) => setBasicSalary(v.replace(/[^0-9.]/g, ''))}
-                    placeholder="0"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    keyboardType="numeric"
-                    style={styles.input}
+                    placeholder="0" placeholderTextColor={colors.onSurfaceTertiary}
+                    keyboardType="numeric" style={styles.input}
                   />
                 </View>
 
@@ -464,7 +514,7 @@ export default function BeauticiansScreen() {
                       {branches.map(br => (
                         <TouchableOpacity
                           key={br.id}
-                          testID={`bt-branch-${br.id}`}
+                          testID={`team-branch-${br.id}`}
                           onPress={() => setBranchId(br.id)}
                           style={[styles.suggChip, branchId === br.id && styles.suggChipActive]}
                         >
@@ -478,84 +528,67 @@ export default function BeauticiansScreen() {
                 {/* Work times */}
                 <View style={styles.gridRow}>
                   <View style={styles.gridField}>
-                    <Text style={styles.label}>Work start (HH:MM)</Text>
+                    <Text style={styles.label}>Work start</Text>
                     <TextInput
-                      testID="bt-work-start"
+                      testID="team-work-start"
                       value={workStart}
                       onChangeText={(v) => setWorkStart(sanitizeTime(v))}
-                      placeholder="10:00"
-                      placeholderTextColor={colors.onSurfaceTertiary}
-                      keyboardType="numbers-and-punctuation"
-                      maxLength={5}
+                      placeholder="10:00" placeholderTextColor={colors.onSurfaceTertiary}
+                      keyboardType="numbers-and-punctuation" maxLength={5}
                       style={styles.input}
                     />
                   </View>
                   <View style={styles.gridField}>
-                    <Text style={styles.label}>Work end (HH:MM)</Text>
+                    <Text style={styles.label}>Work end</Text>
                     <TextInput
-                      testID="bt-work-end"
+                      testID="team-work-end"
                       value={workEnd}
                       onChangeText={(v) => setWorkEnd(sanitizeTime(v))}
-                      placeholder="20:00"
-                      placeholderTextColor={colors.onSurfaceTertiary}
-                      keyboardType="numbers-and-punctuation"
-                      maxLength={5}
+                      placeholder="20:00" placeholderTextColor={colors.onSurfaceTertiary}
+                      keyboardType="numbers-and-punctuation" maxLength={5}
                       style={styles.input}
                     />
                   </View>
                 </View>
 
-                {/* Week off — multi-select + Flexible mutually exclusive */}
+                {/* Week off */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Week off</Text>
                   <View style={styles.chipsWrap}>
                     {WEEK_DAYS.map(d => {
                       const sel = weekOff.includes(d);
                       return (
-                        <TouchableOpacity
-                          key={d}
-                          testID={`bt-day-${d}`}
-                          onPress={() => toggleDay(d)}
-                          style={[styles.suggChip, sel && styles.suggChipActive]}
-                        >
+                        <TouchableOpacity key={d} onPress={() => toggleDay(d)} style={[styles.suggChip, sel && styles.suggChipActive]}>
                           <Text style={[styles.suggChipText, sel && styles.suggChipTextActive]}>{d}</Text>
                         </TouchableOpacity>
                       );
                     })}
-                    <TouchableOpacity
-                      testID="bt-day-Flexible"
-                      onPress={() => toggleDay('Flexible')}
-                      style={[styles.suggChip, weekOff.includes('Flexible') && styles.suggChipActive]}
-                    >
+                    <TouchableOpacity onPress={() => toggleDay('Flexible')} style={[styles.suggChip, weekOff.includes('Flexible') && styles.suggChipActive]}>
                       <Text style={[styles.suggChipText, weekOff.includes('Flexible') && styles.suggChipTextActive]}>Flexible</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* Commission & monthly target */}
+                {/* Commission + target */}
                 <View style={styles.gridRow}>
                   <View style={styles.gridField}>
                     <Text style={styles.label}>Commission %</Text>
                     <TextInput
-                      testID="bt-commission"
+                      testID="team-commission"
                       value={commissionPct}
                       onChangeText={(v) => setCommissionPct(v.replace(/[^0-9.]/g, ''))}
-                      placeholder="0"
-                      placeholderTextColor={colors.onSurfaceTertiary}
-                      keyboardType="numeric"
-                      style={styles.input}
+                      placeholder="0" placeholderTextColor={colors.onSurfaceTertiary}
+                      keyboardType="numeric" style={styles.input}
                     />
                   </View>
                   <View style={styles.gridField}>
                     <Text style={styles.label}>Monthly target (₹)</Text>
                     <TextInput
-                      testID="bt-monthly-target"
+                      testID="team-monthly-target"
                       value={monthlyTarget}
                       onChangeText={(v) => setMonthlyTarget(v.replace(/[^0-9.]/g, ''))}
-                      placeholder="0"
-                      placeholderTextColor={colors.onSurfaceTertiary}
-                      keyboardType="numeric"
-                      style={styles.input}
+                      placeholder="0" placeholderTextColor={colors.onSurfaceTertiary}
+                      keyboardType="numeric" style={styles.input}
                     />
                   </View>
                 </View>
@@ -564,13 +597,9 @@ export default function BeauticiansScreen() {
                 <View style={styles.field}>
                   <Text style={styles.label}>Address</Text>
                   <TextInput
-                    testID="bt-address"
-                    value={address}
-                    onChangeText={setAddress}
-                    placeholder="Home address"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    multiline
-                    style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
+                    testID="team-address" value={address} onChangeText={setAddress}
+                    placeholder="Home address" placeholderTextColor={colors.onSurfaceTertiary}
+                    multiline style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
                   />
                 </View>
 
@@ -579,12 +608,7 @@ export default function BeauticiansScreen() {
                   <Text style={styles.label}>ID type</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
                     {ID_TYPES.map(t => (
-                      <TouchableOpacity
-                        key={t}
-                        testID={`bt-idtype-${t}`}
-                        onPress={() => setIdType(t)}
-                        style={[styles.suggChip, idType === t && styles.suggChipActive]}
-                      >
+                      <TouchableOpacity key={t} onPress={() => setIdType(t)} style={[styles.suggChip, idType === t && styles.suggChipActive]}>
                         <Text style={[styles.suggChipText, idType === t && styles.suggChipTextActive]}>{t}</Text>
                       </TouchableOpacity>
                     ))}
@@ -592,130 +616,48 @@ export default function BeauticiansScreen() {
                 </View>
                 <View style={styles.field}>
                   <Text style={styles.label}>ID number</Text>
-                  <TextInput
-                    testID="bt-id-number"
-                    value={idNumber}
-                    onChangeText={setIdNumber}
-                    placeholder="e.g. 1234-5678-9012"
-                    placeholderTextColor={colors.onSurfaceTertiary}
-                    style={styles.input}
-                  />
+                  <TextInput testID="team-id-number" value={idNumber} onChangeText={setIdNumber} placeholder="e.g. 1234-5678-9012" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
 
-                <View style={styles.switchRow}>
-                  <Text style={styles.label}>Active</Text>
-                  <Switch testID="bt-active-switch" value={active} onValueChange={setActive} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} />
-                </View>
-
-                {/* ---- App Login Access ---- */}
-                {isAdmin && (
-                  <View style={styles.loginBox}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                        <Ionicons name="key-outline" size={16} color={colors.brandPrimary} />
-                        <Text style={styles.loginTitle}>App login access</Text>
-                        {linkedUser && (
-                          <View style={styles.loginBadge}>
-                            <Text style={styles.loginBadgeText}>Linked</Text>
-                          </View>
-                        )}
-                      </View>
-                      <Switch
-                        testID="bt-login-switch"
-                        value={loginEnabled}
-                        onValueChange={(v) => { setLoginEnabled(v); setLoginErr(null); }}
-                        trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }}
-                      />
-                    </View>
-                    <Text style={styles.loginHint}>
-                      {linkedUser
-                        ? `Logs in with ${linkedUser.email}. Toggle off to disable.`
-                        : 'Turn on so this staff can log in on the mobile app using their email and password.'}
-                    </Text>
-
-                    {loginEnabled && (
-                      <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
-                        <View style={styles.field}>
-                          <Text style={styles.label}>
-                            {linkedUser ? 'New password (leave blank to keep current)' : 'Password *'}
-                          </Text>
-                          <View style={{ position: 'relative' }}>
-                            <TextInput
-                              testID="bt-login-password"
-                              value={loginPassword}
-                              onChangeText={(v) => { setLoginPassword(v); if (loginErr) setLoginErr(null); }}
-                              placeholder={linkedUser ? '••••••' : 'Min 6 characters'}
-                              placeholderTextColor={colors.onSurfaceTertiary}
-                              secureTextEntry={!loginPwdVisible}
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              style={[styles.input, { paddingRight: 40 }]}
-                            />
-                            <TouchableOpacity
-                              testID="bt-login-pwd-eye"
-                              onPress={() => setLoginPwdVisible(v => !v)}
-                              style={styles.eyeBtn}
-                            >
-                              <Ionicons name={loginPwdVisible ? 'eye-off' : 'eye'} size={18} color={colors.onSurfaceTertiary} />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                        {(!linkedUser || loginPassword) && (
-                          <View style={styles.field}>
-                            <Text style={styles.label}>Confirm password *</Text>
-                            <TextInput
-                              testID="bt-login-password2"
-                              value={loginPassword2}
-                              onChangeText={(v) => { setLoginPassword2(v); if (loginErr) setLoginErr(null); }}
-                              placeholder="Re-enter password"
-                              placeholderTextColor={colors.onSurfaceTertiary}
-                              secureTextEntry={!loginPwdVisible}
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              style={styles.input}
-                            />
-                          </View>
-                        )}
-                        {loginErr && <Text style={styles.errSmall}>{loginErr}</Text>}
-                      </View>
-                    )}
+                {!editing?.is_owner_locked && (
+                  <View style={styles.switchRow}>
+                    <Text style={styles.label}>Active</Text>
+                    <Switch testID="team-active-switch" value={active} onValueChange={setActive} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} />
                   </View>
                 )}
 
                 {err && <Text style={styles.err}>{err}</Text>}
               </ScrollView>
 
-              <TouchableOpacity testID="bt-save-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add'}</Text>}
+              <TouchableOpacity testID="team-save-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
+                {saving ? <ActivityIndicator color="#fff" /> : (
+                  <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add'}</Text>
+                )}
               </TouchableOpacity>
             </Pressable>
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
 
+      {/* ============ Filter sheet ============ */}
       <FilterSheet
         visible={fsOpen}
         onClose={() => setFsOpen(false)}
         onClear={resetFilters}
-        title="Filter staff"
-        testID="staff-filter-sheet"
+        title="Filter team"
+        testID="team-filter-sheet"
       >
-        <FilterSection label="Role">
-          <FilterChip label="Any" selected={!filters.role} onPress={() => setFilters({ role: null })} testID="staff-fs-role-any" />
-          {availableRoles.map(r => (
-            <FilterChip
-              key={r}
-              label={r}
-              selected={filters.role === r}
-              onPress={() => setFilters({ role: r })}
-              testID={`staff-fs-role-${r}`}
-            />
-          ))}
+        <FilterSection label="Access">
+          <FilterChip label="Any" selected={!filters.access} onPress={() => setFilters({ access: null })} testID="team-fs-access-any" />
+          <FilterChip label="Owner" selected={filters.access === 'owner'} onPress={() => setFilters({ access: 'owner' })} testID="team-fs-access-owner" />
+          <FilterChip label="Admin" selected={filters.access === 'admin'} onPress={() => setFilters({ access: 'admin' })} testID="team-fs-access-admin" />
+          <FilterChip label="Staff" selected={filters.access === 'staff'} onPress={() => setFilters({ access: 'staff' })} testID="team-fs-access-staff" />
+          <FilterChip label="No login" selected={filters.access === 'no_login'} onPress={() => setFilters({ access: 'no_login' })} testID="team-fs-access-nologin" />
         </FilterSection>
         <FilterSection label="Status">
-          <FilterChip label="Any" selected={!filters.status} onPress={() => setFilters({ status: null })} testID="staff-fs-status-any" />
-          <FilterChip label="Active" selected={filters.status === 'active'} onPress={() => setFilters({ status: 'active' })} testID="staff-fs-status-active" />
-          <FilterChip label="Inactive" selected={filters.status === 'inactive'} onPress={() => setFilters({ status: 'inactive' })} testID="staff-fs-status-inactive" />
+          <FilterChip label="Any" selected={!filters.status} onPress={() => setFilters({ status: null })} testID="team-fs-status-any" />
+          <FilterChip label="Active" selected={filters.status === 'active'} onPress={() => setFilters({ status: 'active' })} testID="team-fs-status-active" />
+          <FilterChip label="Inactive" selected={filters.status === 'inactive'} onPress={() => setFilters({ status: 'inactive' })} testID="team-fs-status-inactive" />
         </FilterSection>
       </FilterSheet>
     </View>
@@ -739,14 +681,9 @@ const styles = StyleSheet.create({
   avatarText: { color: colors.brandPrimary, fontWeight: '800', fontSize: 13 },
   rowName: { fontSize: 14, fontWeight: '600', color: colors.onSurface },
   rowMeta: { fontSize: 11, color: colors.onSurfaceTertiary },
+  rowMetaSmall: { fontSize: 11, color: colors.onSurfaceSecondary },
   rolePill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
   roleText: { fontSize: 10, fontWeight: '700' },
-  loginPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill,
-    backgroundColor: colors.brandPrimary + '18',
-  },
-  loginPillText: { fontSize: 9, fontWeight: '700', color: colors.brandPrimary },
   smallBtn: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: 'center', justifyContent: 'center' },
 
   empty: { alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xxxl },
@@ -766,7 +703,7 @@ const styles = StyleSheet.create({
   gridField: { flex: 1, gap: 6 },
 
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  suggChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  suggChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
   suggChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   suggChipText: { fontSize: 12, fontWeight: '600', color: colors.onSurfaceSecondary },
   suggChipTextActive: { color: '#fff', fontWeight: '700' },
@@ -780,11 +717,13 @@ const styles = StyleSheet.create({
   loginBox: {
     backgroundColor: colors.brandTertiary + '55',
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandTertiary,
-    padding: spacing.md, gap: 4,
+    padding: spacing.md, gap: spacing.sm,
   },
   loginTitle: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
-  loginHint: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
-  loginBadge: { backgroundColor: colors.success + '22', paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
-  loginBadgeText: { fontSize: 10, fontWeight: '700', color: colors.success },
+  loginHint: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2, marginBottom: 4 },
+  linkedBadge: { backgroundColor: colors.success + '22', paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
+  linkedBadgeText: { fontSize: 10, fontWeight: '700', color: colors.success },
   eyeBtn: { position: 'absolute', right: 8, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  ownerLockRow: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: spacing.md, backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm },
+  ownerLockText: { fontSize: 13, fontWeight: '600', color: colors.onSurfaceSecondary },
 });

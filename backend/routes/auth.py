@@ -69,10 +69,27 @@ async def register(body: UserCreate, user=Depends(require_admin)):
 
 @router.post("/auth/login")
 async def login(body: LoginReq):
-    email = body.email.lower()
-    user = await db.users.find_one({"email": email})
+    """Accept email OR phone in the `email` field — auto-detects.
+
+    - If identifier contains "@" → treated as email.
+    - Else digits are extracted and matched against `users.phone`.
+    """
+    identifier = (body.email or "").strip()
+    user = None
+    if "@" in identifier:
+        user = await db.users.find_one({"email": identifier.lower()})
+    else:
+        digits = re.sub(r"\D+", "", identifier)
+        if digits:
+            # Try direct match on user.phone first.
+            user = await db.users.find_one({"phone": digits})
+            if not user:
+                # Fallback: linked beautician has the phone → resolve to user.
+                beaut = await db.beauticians.find_one({"phone": digits, "user_id": {"$exists": True, "$ne": None}})
+                if beaut and beaut.get("user_id"):
+                    user = await db.users.find_one({"id": beaut["user_id"], "tenant_id": beaut.get("tenant_id")})
     if not user or not verify_password(body.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid email/phone or password")
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account disabled. Please contact administrator.")
 

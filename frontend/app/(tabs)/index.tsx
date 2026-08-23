@@ -64,7 +64,7 @@ export default function DashboardScreen() {
     { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
     { key: 'hist', label: 'History', icon: 'receipt', route: '/(tabs)/history', color: colors.success },
     { key: 'srv', label: 'Services', icon: 'pricetags', route: '/manage/services', color: colors.warning },
-    { key: 'staff', label: 'Staff', icon: 'people', route: '/manage/beauticians', color: colors.info },
+    { key: 'team', label: 'Team', icon: 'people', route: '/manage/beauticians', color: colors.info },
   ];
   const staffActions = [
     { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },

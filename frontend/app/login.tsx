@@ -45,12 +45,23 @@ export default function LoginScreen() {
 
   const onSubmit = async () => {
     setErr(null);
-    const emsg = emailError(email, { required: true });
-    if (emsg) { setErr(emsg); emailRef.current?.focus(); return; }
+    const raw = (email || '').trim();
+    if (!raw) { setErr('Please enter your email or phone'); emailRef.current?.focus(); return; }
+    // If it looks like an email (contains "@"), validate strictly.
+    // If it's digits only → phone; accept 6+ digits.
+    if (raw.includes('@')) {
+      const emsg = emailError(raw, { required: true });
+      if (emsg) { setErr(emsg); emailRef.current?.focus(); return; }
+    } else {
+      const digits = raw.replace(/\D+/g, '');
+      if (digits.length < 6) { setErr('Enter a valid email or phone number'); emailRef.current?.focus(); return; }
+    }
     if (!password) { setErr('Please enter your password'); passwordRef.current?.focus(); return; }
     setLoading(true);
     try {
-      await login(normalizeEmail(email), password);
+      // Normalize: emails go lowercase; phones keep digits only.
+      const identifier = raw.includes('@') ? normalizeEmail(raw) : raw.replace(/\D+/g, '');
+      await login(identifier, password);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -139,15 +150,15 @@ export default function LoginScreen() {
           <Text style={styles.title}>Sign in to continue</Text>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>Email or phone</Text>
             <View style={styles.inputWrap}>
-              <Ionicons name="mail-outline" size={18} color={colors.onSurfaceTertiary} />
+              <Ionicons name="person-outline" size={18} color={colors.onSurfaceTertiary} />
               <TextInput
                 testID="login-email-input"
                 ref={emailRef}
                 value={email}
                 onChangeText={setEmail}
-                placeholder="you@salon.com"
+                placeholder="you@salon.com or 9876543210"
                 placeholderTextColor={colors.onSurfaceTertiary}
                 autoCapitalize="none"
                 autoCorrect={false}

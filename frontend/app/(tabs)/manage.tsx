@@ -24,7 +24,7 @@ export default function ManageScreen() {
     { icon: 'calendar-outline', label: 'Appointments', hint: 'Book & manage customer bookings', route: '/manage/appointments' },
     { icon: 'star-outline', label: 'Members', hint: 'Yearly members & auto discount', route: '/manage/members' },
     { icon: 'pricetags-outline', label: 'Services', hint: 'Salon services & prices', route: '/manage/services' },
-    { icon: 'people-outline', label: 'Staff', hint: "Manage your team's roster", route: '/manage/beauticians' },
+    { icon: 'people-outline', label: 'Team', hint: 'Manage logins & staff profiles', route: '/manage/beauticians' },
     { icon: 'finger-print-outline', label: 'Attendance', hint: 'GPS-gated punch clock', route: '/manage/attendance' },
     { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock' },
     { icon: 'wallet-outline', label: 'Expenses', hint: 'Track daily expenses', route: '/(tabs)/expenses' },
@@ -32,7 +32,6 @@ export default function ManageScreen() {
     { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report' },
     { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Revenue per staff · top performer · payroll export', route: '/manage/staff-performance', adminOnly: true },
     { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', adminOnly: true },
-    { icon: 'person-add-outline', label: 'Users', hint: 'Add admin or staff logins', route: '/manage/users', adminOnly: true },
     { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', adminOnly: true },
     { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', adminOnly: true },
   ];

@@ -31,6 +31,7 @@ from routes.reports import router as reports_router
 from routes.platform import router as platform_router
 from routes.misc import router as misc_router
 from routes.billing import router as billing_router
+from routes.team import router as team_router
 
 app = FastAPI(title="ParlourPilot SaaS API")
 
@@ -41,7 +42,7 @@ for r in (
     plans_router, auth_router, beauticians_router, services_router,
     bills_router, members_router, expenses_router, stock_router,
     cash_closing_router, reports_router, platform_router, misc_router,
-    billing_router,
+    billing_router, team_router,
 ):
     api_router.include_router(r)
 

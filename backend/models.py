@@ -101,7 +101,8 @@ class ResetPasswordReq(BaseModel):
 
 
 class LoginReq(BaseModel):
-    email: EmailStr
+    # Accepts email OR phone digits. Server auto-detects on `/auth/login`.
+    email: str
     password: str
 
 
