@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert,
-  KeyboardAvoidingView, Platform, TextInput, Modal, Pressable,
+  KeyboardAvoidingView, Platform, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,50 +15,37 @@ import { colors, spacing, radius, shadows } from '@/src/theme';
 
 const API_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
-// SaaS pricing (INR base). These match the backend BRANCH_PLAN_PRICES_INR / TENANT_PLAN_PRICES_INR.
-const PRICES: Record<string, { monthly: number; yearly: number }> = {
+// SaaS pricing.
+// INR salons see local INR prices; every other salon sees flat USD prices.
+// The actual gateway charge is ALWAYS in INR (subscription is processed in India).
+const PRICES_INR: Record<string, { monthly: number; yearly: number }> = {
   branch: { monthly: 888, yearly: 8888 },
   tenant: { monthly: 999, yearly: 9999 },
 };
+const PRICES_USD: Record<string, { monthly: number; yearly: number }> = {
+  branch: { monthly: 10, yearly: 100 },
+  tenant: { monthly: 12, yearly: 120 },
+};
 
 type Plan = 'monthly' | 'yearly';
-
-// Curated list of major target currencies for SaaS billing (display only)
-const SUB_CURRENCIES: Array<{ code: string; symbol: string; label: string }> = [
-  { code: 'INR', symbol: '₹',  label: 'Indian Rupee' },
-  { code: 'USD', symbol: '$',  label: 'US Dollar' },
-  { code: 'EUR', symbol: '€',  label: 'Euro' },
-  { code: 'GBP', symbol: '£',  label: 'British Pound' },
-  { code: 'AUD', symbol: 'A$', label: 'Australian Dollar' },
-  { code: 'CAD', symbol: 'C$', label: 'Canadian Dollar' },
-  { code: 'AED', symbol: 'د.إ', label: 'UAE Dirham' },
-  { code: 'SGD', symbol: 'S$', label: 'Singapore Dollar' },
-  { code: 'MYR', symbol: 'RM', label: 'Malaysian Ringgit' },
-  { code: 'JPY', symbol: '¥',  label: 'Japanese Yen' },
-];
-
-async function fetchFxRates(base: string): Promise<Record<string, number>> {
-  // Free public FX API (no key). Rate keys are ISO codes: { USD: 0.012, ... }
-  try {
-    const res = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`);
-    const data = await res.json();
-    if (data && data.result === 'success' && data.rates) return data.rates as Record<string, number>;
-  } catch {}
-  // Fallback approximate rates (as of mid-2026) so the UI still works offline.
-  return { INR: 1, USD: 0.012, EUR: 0.011, GBP: 0.0094, AUD: 0.018, CAD: 0.016, AED: 0.044, SGD: 0.016, MYR: 0.054, JPY: 1.83 };
-}
 
 export default function CheckoutScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ type?: string }>();
   const type = (params?.type === 'tenant' ? 'tenant' : 'branch') as 'branch' | 'tenant';
-  const { refreshBranches, refreshTenant, user } = useAuth();
+  const { refreshBranches, refreshTenant, user, tenant } = useAuth();
 
   const [plan, setPlan] = useState<Plan>('monthly');
-  const [subCurrency, setSubCurrency] = useState<string>('INR');
-  const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
-  const [rates, setRates] = useState<Record<string, number>>({ INR: 1 });
-  const [ratesLoading, setRatesLoading] = useState(true);
+
+  // Determine display currency from the salon's chosen currency.
+  // INR salons → local ₹ pricing. Everyone else → flat USD ($) pricing.
+  const isINR = ((tenant as any)?.currency || 'INR').toUpperCase() === 'INR';
+  const displaySymbol = isINR ? '₹' : '$';
+  const displayCode = isINR ? 'INR' : 'USD';
+  const displayPrices = isINR ? PRICES_INR : PRICES_USD;
+  // Actual gateway amount is ALWAYS in INR (payments processed in India).
+  const priceINR = PRICES_INR[type][plan];
+  const displayAmount = displayPrices[type][plan];
 
   // Branch payload (collected after payment success)
   const [branchName, setBranchName] = useState('');
@@ -67,35 +54,6 @@ export default function CheckoutScreen() {
   const [phone, setPhone] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [processing, setProcessing] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      setRatesLoading(true);
-      const r = await fetchFxRates('INR');
-      setRates(r);
-      setRatesLoading(false);
-    })();
-  }, []);
-
-  // Attempt basic geolocation → auto-suggest currency by locale
-  useEffect(() => {
-    try {
-      const locale = (Intl.DateTimeFormat().resolvedOptions().locale || '').toLowerCase();
-      const mapping: Record<string, string> = {
-        us: 'USD', gb: 'GBP', in: 'INR', au: 'AUD', ca: 'CAD', ae: 'AED', sg: 'SGD',
-        my: 'MYR', jp: 'JPY', de: 'EUR', fr: 'EUR', it: 'EUR', es: 'EUR', ie: 'EUR', nl: 'EUR',
-      };
-      const parts = locale.split('-');
-      const region = parts[parts.length - 1];
-      const guess = mapping[region];
-      if (guess && SUB_CURRENCIES.find(c => c.code === guess)) setSubCurrency(guess);
-    } catch {}
-  }, []);
-
-  const priceINR = PRICES[type][plan];
-  const rate = rates[subCurrency] ?? 1;
-  const displayAmount = subCurrency === 'INR' ? priceINR : priceINR * rate;
-  const symbol = SUB_CURRENCIES.find(c => c.code === subCurrency)?.symbol || '₹';
 
   const canPay = useMemo(() => {
     if (processing) return false;
@@ -191,12 +149,12 @@ export default function CheckoutScreen() {
               active: true,
             },
             display_amount: Math.round(displayAmount * 100) / 100,
-            display_currency: subCurrency,
+            display_currency: displayCode,
           })
         : await tenantApi.createOrder({
             plan,
             display_amount: Math.round(displayAmount * 100) / 100,
-            display_currency: subCurrency,
+            display_currency: displayCode,
           });
 
       const verifyFn = type === 'branch' ? branchApi.verifyPayment : tenantApi.verifyPayment;
@@ -215,7 +173,7 @@ export default function CheckoutScreen() {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert(
             'Payment successful',
-            `Branch "${verified?.branch?.name || branchName}" activated on the ${plan} plan.\n\nAmount: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
+            `Branch "${verified?.branch?.name || branchName}" activated on the ${plan} plan.\n\nAmount: ${displaySymbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
             [{ text: 'Done', onPress: () => router.replace('/manage/branches') }]
           );
         } else {
@@ -223,7 +181,7 @@ export default function CheckoutScreen() {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert(
             'Subscription renewed',
-            `Your salon subscription is now active on the ${plan} plan.\n\nAmount: ${symbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
+            `Your salon subscription is now active on the ${plan} plan.\n\nAmount: ${displaySymbol}${displayAmount.toFixed(2)} (₹${priceINR} INR)\nPayment ID: ${response.razorpay_payment_id}`,
             [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
           );
         }
@@ -313,7 +271,9 @@ export default function CheckoutScreen() {
               onPress={() => setPlan('monthly')}
             >
               <Text style={[styles.planName, plan === 'monthly' && styles.planNameActive]}>Monthly</Text>
-              <Text style={[styles.planPrice, plan === 'monthly' && styles.planPriceActive]}>₹{PRICES[type].monthly}</Text>
+              <Text style={[styles.planPrice, plan === 'monthly' && styles.planPriceActive]}>
+                {displaySymbol}{displayPrices[type].monthly.toLocaleString(isINR ? 'en-IN' : 'en-US')}
+              </Text>
               <Text style={styles.planPer}>per month</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -323,35 +283,28 @@ export default function CheckoutScreen() {
             >
               <View style={styles.saveTag}><Text style={styles.saveTagText}>Save ~17%</Text></View>
               <Text style={[styles.planName, plan === 'yearly' && styles.planNameActive]}>Yearly</Text>
-              <Text style={[styles.planPrice, plan === 'yearly' && styles.planPriceActive]}>₹{PRICES[type].yearly}</Text>
+              <Text style={[styles.planPrice, plan === 'yearly' && styles.planPriceActive]}>
+                {displaySymbol}{displayPrices[type].yearly.toLocaleString(isINR ? 'en-IN' : 'en-US')}
+              </Text>
               <Text style={styles.planPer}>per year</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Currency selector */}
-          <Text style={styles.sectionLabel}>Pay in Currency</Text>
-          <TouchableOpacity style={styles.currencyBtn} onPress={() => setCurrencyPickerOpen(true)} testID="pay-currency">
-            <Text style={styles.currencySym}>{symbol}</Text>
-            <Text style={styles.currencyName}>{subCurrency} — {SUB_CURRENCIES.find(c => c.code === subCurrency)?.label}</Text>
-            <Ionicons name="chevron-down" size={18} color={colors.onSurfaceTertiary} />
-          </TouchableOpacity>
-
           {/* Amount preview */}
           <View style={styles.amountCard}>
-            {ratesLoading ? (
-              <ActivityIndicator color={colors.brandPrimary} />
-            ) : (
-              <>
-                <Text style={styles.amountLabel}>You will be charged</Text>
-                <Text style={styles.amountBig}>
-                  {symbol}{displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </Text>
-                {subCurrency !== 'INR' && (
-                  <Text style={styles.amountSub}>(base price ₹{priceINR} INR · live FX 1 INR ≈ {rate.toFixed(4)} {subCurrency})</Text>
-                )}
-                <Text style={styles.amountRenew}>Auto-renews {plan === 'yearly' ? 'yearly' : 'monthly'} — cancel anytime</Text>
-              </>
-            )}
+            <Text style={styles.amountLabel}>You will be charged</Text>
+            <Text style={styles.amountBig}>
+              {displaySymbol}{displayAmount.toLocaleString(isINR ? 'en-IN' : 'en-US', { maximumFractionDigits: 2 })}
+            </Text>
+            <Text style={styles.amountRenew}>Auto-renews {plan === 'yearly' ? 'yearly' : 'monthly'} — cancel anytime</Text>
+          </View>
+
+          {/* Payment disclosure */}
+          <View style={styles.disclosureCard}>
+            <Ionicons name="information-circle-outline" size={16} color={colors.brandPrimary} />
+            <Text style={styles.disclosureText}>
+              Note: All subscription payments are processed in INR. Your local currency symbol is used for your salon&apos;s internal reporting only. International bank conversion rates may apply.
+            </Text>
           </View>
 
           {/* Branch details */}
@@ -401,7 +354,7 @@ export default function CheckoutScreen() {
               <>
                 <Ionicons name="card" size={18} color="#fff" />
                 <Text style={styles.payBtnText}>
-                  Pay {symbol}{displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} with Razorpay
+                  Pay {displaySymbol}{displayAmount.toLocaleString(isINR ? 'en-IN' : 'en-US', { maximumFractionDigits: 2 })} with Razorpay
                 </Text>
               </>
             )}
@@ -412,43 +365,6 @@ export default function CheckoutScreen() {
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* Currency picker */}
-      <Modal visible={currencyPickerOpen} transparent animationType="fade" onRequestClose={() => setCurrencyPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setCurrencyPickerOpen(false)}>
-          <Pressable style={styles.pickerSheet} onPress={() => {}}>
-            <Text style={styles.pickerTitle}>Choose Payment Currency</Text>
-            <ScrollView style={{ maxHeight: 420 }}>
-              {SUB_CURRENCIES.map(c => {
-                const sel = c.code === subCurrency;
-                const rInv = rates[c.code] ?? null;
-                const approx = rInv ? (priceINR * rInv) : null;
-                return (
-                  <TouchableOpacity
-                    key={c.code}
-                    testID={`pay-cur-${c.code}`}
-                    onPress={() => { setSubCurrency(c.code); setCurrencyPickerOpen(false); Haptics.selectionAsync(); }}
-                    style={[styles.pickerItem, sel && styles.pickerItemActive]}
-                  >
-                    <Text style={{ fontSize: 20, fontWeight: '800', color: sel ? colors.brandPrimary : colors.onSurface, minWidth: 40 }}>{c.symbol}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.pickerItemText, sel && { color: colors.brandPrimary, fontWeight: '800' }]}>{c.code}</Text>
-                      <Text style={styles.pickerItemMeta}>
-                        {c.label}
-                        {approx !== null && ` · ≈ ${c.symbol}${approx.toFixed(2)}`}
-                      </Text>
-                    </View>
-                    {sel && <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <TouchableOpacity style={styles.ghostBtn} onPress={() => setCurrencyPickerOpen(false)}>
-              <Text style={styles.ghostBtnText}>Close</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -483,6 +399,14 @@ const styles = StyleSheet.create({
   amountBig: { fontSize: 40, fontWeight: '900', color: colors.brandPrimary, marginTop: 6 },
   amountSub: { fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 4 },
   amountRenew: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 8 },
+
+  disclosureCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    marginTop: spacing.md, padding: spacing.md,
+    backgroundColor: '#FFF8E7', borderWidth: 1, borderColor: '#F0D97A',
+    borderRadius: radius.sm,
+  },
+  disclosureText: { flex: 1, fontSize: 11, color: '#8A4B00', lineHeight: 16 },
 
   card: { backgroundColor: '#FFFFFF', padding: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, ...shadows.card, gap: spacing.md },
   field: { gap: 6 },

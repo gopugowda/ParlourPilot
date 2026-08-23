@@ -224,7 +224,7 @@ export default function SignupScreen() {
             />
           </View>
           <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
-            Start with 1 branch (Main). You can add more branches anytime. ₹999/month or ₹9999/year per branch.
+            Start with 1 branch (Main). You can add more branches anytime. Starts at ₹999/mo (₹9,999/yr) — or $12/mo ($120/yr) for international salons.
           </Text>
         </View>
 

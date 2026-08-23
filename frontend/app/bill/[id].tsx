@@ -10,7 +10,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows, fmtINR, getCurrencySymbol } from '@/src/theme';
 import { sendWhatsAppInvoice, buildWhatsAppInvoiceMessage } from '@/src/utils/whatsappInvoice';
 import { paymentLabel } from '@/src/utils/paymentModes';
 
@@ -50,6 +50,7 @@ export default function BillDetailScreen() {
 
   const buildHtml = () => {
     if (!bill) return '';
+    const CUR = getCurrencySymbol();
     const rows = bill.items.map((it: any, i: number) => {
       const eff = it.effective_discount_pct ?? it.discount_pct ?? 0;
       const lineTotal = (it.price * (1 - eff / 100)).toFixed(2);
@@ -57,9 +58,9 @@ export default function BillDetailScreen() {
       return `<tr>
         <td>${i + 1}</td>
         <td>${it.service_name}<br/><small style="color:#888">by ${it.beautician_name}</small></td>
-        <td style="text-align:right">₹${it.price.toFixed(2)}</td>
+        <td style="text-align:right">${CUR}${it.price.toFixed(2)}</td>
         <td style="text-align:right">${discStr}</td>
-        <td style="text-align:right"><b>₹${lineTotal}</b></td>
+        <td style="text-align:right"><b>${CUR}${lineTotal}</b></td>
       </tr>`;
     }).join('');
 
@@ -70,7 +71,7 @@ export default function BillDetailScreen() {
         <h3>Tip</h3>
         <div class="row" style="display:flex;justify-content:space-between">
           <span>Tip to ${bill.tip_beautician_name || 'beautician'} (${(bill.tip_via || '').toUpperCase()})</span>
-          <span><b>₹${bill.tip_amount.toFixed(2)}</b></span>
+          <span><b>${CUR}${bill.tip_amount.toFixed(2)}</b></span>
         </div>
       </div>
     ` : '';
@@ -179,16 +180,16 @@ ${tipBlock}
 
 <div class="box">
   <div class="totals">
-    <div class="row"><span>Subtotal</span><span>₹${bill.subtotal.toFixed(2)}</span></div>
-    <div class="row"><span>Discount</span><span>- ₹${bill.discount.toFixed(2)}</span></div>
-    <div class="row"><span>Services Net</span><span>₹${servicesNet.toFixed(2)}</span></div>
-    ${showTax ? `<div class="row"><span>Tax (${taxPctDisplay}%)</span><span>+ ₹${taxAmount.toFixed(2)}</span></div>` : ''}
-    ${(bill.tip_amount || 0) > 0 ? `<div class="row"><span>Tip</span><span>+ ₹${bill.tip_amount.toFixed(2)}</span></div>` : ''}
-    <div class="row"><span><b>Grand Total</b></span><span class="grand">₹${displayGrandTotal.toFixed(2)}</span></div>
+    <div class="row"><span>Subtotal</span><span>${CUR}${bill.subtotal.toFixed(2)}</span></div>
+    <div class="row"><span>Discount</span><span>- ${CUR}${bill.discount.toFixed(2)}</span></div>
+    <div class="row"><span>Services Net</span><span>${CUR}${servicesNet.toFixed(2)}</span></div>
+    ${showTax ? `<div class="row"><span>Tax (${taxPctDisplay}%)</span><span>+ ${CUR}${taxAmount.toFixed(2)}</span></div>` : ''}
+    ${(bill.tip_amount || 0) > 0 ? `<div class="row"><span>Tip</span><span>+ ${CUR}${bill.tip_amount.toFixed(2)}</span></div>` : ''}
+    <div class="row"><span><b>Grand Total</b></span><span class="grand">${CUR}${displayGrandTotal.toFixed(2)}</span></div>
   </div>
   <div style="margin-top:12px">
     <span class="pm">${paymentLabel(bill.payment_mode)}</span>
-    ${bill.payment_mode === 'split' ? `<div style="margin-top:6px;font-size:12px">Cash: ₹${bill.cash_amount.toFixed(2)} · Card: ₹${(bill.card_amount||0).toFixed(2)} · UPI/QR: ₹${bill.qr_amount.toFixed(2)}</div>` : ''}
+    ${bill.payment_mode === 'split' ? `<div style="margin-top:6px;font-size:12px">Cash: ${CUR}${bill.cash_amount.toFixed(2)} · Card: ${CUR}${(bill.card_amount||0).toFixed(2)} · UPI/QR: ${CUR}${bill.qr_amount.toFixed(2)}</div>` : ''}
   </div>
 </div>
 

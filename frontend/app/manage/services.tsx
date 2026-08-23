@@ -9,7 +9,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows, fmtINR, getCurrencySymbol } from '@/src/theme';
 
 type Gender = 'ladies' | 'men' | 'unisex';
 type Service = {
@@ -346,7 +346,7 @@ export default function ServicesScreen() {
                 {/* Pricing */}
                 <View style={{ flexDirection: 'row', gap: spacing.md }}>
                   <View style={[styles.field, { flex: 1 }]}>
-                    <Text style={styles.label}>Base price (₹)</Text>
+                    <Text style={styles.label}>Base price ({getCurrencySymbol()})</Text>
                     <TextInput testID="svc-price-input" value={price} onChangeText={(v) => setPrice(v.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="0" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                   </View>
                   <View style={[styles.field, { flex: 0.8 }]}>
@@ -370,7 +370,7 @@ export default function ServicesScreen() {
                 </View>
                 {(Number(additionalPrice) || 0) > 0 && (
                   <View style={styles.field}>
-                    <Text style={styles.label}>Suggested add-on (₹)</Text>
+                    <Text style={styles.label}>Suggested add-on ({getCurrencySymbol()})</Text>
                     <TextInput
                       testID="svc-additional-price-input"
                       value={additionalPrice}

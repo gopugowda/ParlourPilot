@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows, fmtINR, getCurrencySymbol } from '@/src/theme';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 import { MiniLineChart } from '@/src/components/MiniLineChart';
 import { DonutChart, DonutLegend } from '@/src/components/DonutChart';
@@ -130,14 +130,14 @@ export default function ReportScreen() {
   const buildHtml = () => {
     const { headers, dataRows, totalRow, t } = buildExport();
     const summary = isAdmin ? [
-      { label: 'Total Revenue', value: `₹${(t.total || 0).toLocaleString('en-IN')}` },
+      { label: 'Total Revenue', value: `${getCurrencySymbol()}${(t.total || 0).toLocaleString('en-IN')}` },
       { label: 'Bills', value: String(t.count || 0) },
-      { label: 'Cash', value: `₹${(t.cash || 0).toLocaleString('en-IN')}` },
-      { label: 'UPI/QR', value: `₹${(t.qr || 0).toLocaleString('en-IN')}` },
-      { label: 'Expenses', value: `₹${(t.expenses || 0).toLocaleString('en-IN')}` },
-      { label: 'Net', value: `₹${(t.net || 0).toLocaleString('en-IN')}` },
+      { label: 'Cash', value: `${getCurrencySymbol()}${(t.cash || 0).toLocaleString('en-IN')}` },
+      { label: 'UPI/QR', value: `${getCurrencySymbol()}${(t.qr || 0).toLocaleString('en-IN')}` },
+      { label: 'Expenses', value: `${getCurrencySymbol()}${(t.expenses || 0).toLocaleString('en-IN')}` },
+      { label: 'Net', value: `${getCurrencySymbol()}${(t.net || 0).toLocaleString('en-IN')}` },
     ] : [
-      { label: 'Total', value: `₹${(t.total || 0).toLocaleString('en-IN')}` },
+      { label: 'Total', value: `${getCurrencySymbol()}${(t.total || 0).toLocaleString('en-IN')}` },
       { label: 'Bills', value: String(t.count || 0) },
     ];
     return buildReportHtml({
@@ -526,7 +526,7 @@ function CompareCard({
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 4 }}>
         <View>
           <Text style={styles.compareLabel}>{labelCur}</Text>
-          <Text style={styles.compareValue}>{`₹${Math.round(cur.revenue).toLocaleString('en-IN')}`}</Text>
+          <Text style={styles.compareValue}>{`${getCurrencySymbol()}${Math.round(cur.revenue).toLocaleString('en-IN')}`}</Text>
           <Text style={styles.compareSub}>{cur.invoices} invoices</Text>
         </View>
         {change !== null && (

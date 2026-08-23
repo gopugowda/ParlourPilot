@@ -286,7 +286,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
                 </Text>
               </Text>
               <Text style={[styles.footerStatValue, { color: diff === 0 ? colors.onSurface : diff > 0 ? colors.warning : colors.error }]}>
-                {diff === 0 ? '₹0' : (diff > 0 ? '+' : '') + fmtINR(diff)}
+                {diff === 0 ? fmtINR(0) : (diff > 0 ? '+' : '') + fmtINR(diff)}
               </Text>
             </View>
           </View>

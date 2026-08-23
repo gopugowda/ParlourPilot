@@ -7,6 +7,7 @@
  * only needs to tap "Send" inside WhatsApp after this opens the chat.
  */
 import { Alert, Linking, Platform } from 'react-native';
+import { getCurrencySymbol } from '@/src/theme';
 
 const DEFAULT_COUNTRY_CODE = '91'; // India — adjust if you go global
 
@@ -60,7 +61,7 @@ export type WhatsAppInvoiceParams = {
  * consistently in the WhatsApp text bubble across iOS + Android.
  */
 export function buildWhatsAppInvoiceMessage(p: WhatsAppInvoiceParams): string {
-  const sym = p.currency || '₹';
+  const sym = p.currency || getCurrencySymbol();
   const money = (n: number) => `${sym}${(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const lines: string[] = [];
 

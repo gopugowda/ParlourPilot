@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows, fmtINR, getCurrencySymbol } from '@/src/theme';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 import {
   type ExpensePaymentToken,
@@ -163,8 +163,8 @@ export default function ExpensesScreen() {
     const summary = [
       { label: 'Range', value: rangeLabel },
       { label: 'Entries', value: String(list.length) },
-      { label: 'Total Spent', value: `₹${total.toLocaleString('en-IN')}` },
-      ...Object.entries(byCat).slice(0, 3).map(([c, a]) => ({ label: c, value: `₹${(a as number).toLocaleString('en-IN')}` })),
+      { label: 'Total Spent', value: `${getCurrencySymbol()}${total.toLocaleString('en-IN')}` },
+      ...Object.entries(byCat).slice(0, 3).map(([c, a]) => ({ label: c, value: `${getCurrencySymbol()}${(a as number).toLocaleString('en-IN')}` })),
     ];
     return buildReportHtml({
       title: 'Expenses Report',
@@ -333,7 +333,7 @@ export default function ExpensesScreen() {
 
               <View style={{ flexDirection: 'row', gap: spacing.md }}>
                 <View style={[styles.field, { flex: 1 }]}>
-                  <Text style={styles.label}>Amount (₹) <Text style={styles.req}>*</Text></Text>
+                  <Text style={styles.label}>Amount ({getCurrencySymbol()}) <Text style={styles.req}>*</Text></Text>
                   <TextInput
                     testID="exp-amount-input"
                     value={amt}

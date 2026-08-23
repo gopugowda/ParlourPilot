@@ -11,7 +11,7 @@ import { Calendar } from 'react-native-calendars';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows, fmtINR, getCurrencySymbol } from '@/src/theme';
 import { sanitizePhone, phoneError, PHONE_MAX } from '@/src/utils/validators';
 import { type PaymentToken, paymentLabel } from '@/src/utils/paymentModes';
 
@@ -471,7 +471,7 @@ export default function NewBillScreen() {
 
                   <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                     <View style={[styles.smallField, { flex: 1 }]}>
-                      <Text style={styles.smallLabel}>Price (₹)</Text>
+                      <Text style={styles.smallLabel}>Price ({getCurrencySymbol()})</Text>
                       <TextInput
                         testID={`item-price-${i}`}
                         value={it.price ? String(it.price) : ''}
@@ -503,7 +503,7 @@ export default function NewBillScreen() {
                   {/* Per-line tip */}
                   <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-end' }}>
                     <View style={[styles.smallField, { flex: 1 }]}>
-                      <Text style={styles.smallLabel}>Tip (₹) — to {it.beautician_name || 'beautician'}</Text>
+                      <Text style={styles.smallLabel}>Tip ({getCurrencySymbol()}) — to {it.beautician_name || 'beautician'}</Text>
                       <TextInput
                         testID={`item-tip-${i}`}
                         value={it.tip_amount ? String(it.tip_amount) : ''}
@@ -558,7 +558,7 @@ export default function NewBillScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>Yearly Membership</Text>
-                <Text style={styles.hintText}>Flat 10% off on services above ₹100</Text>
+                <Text style={styles.hintText}>Flat 10% off on services above {getCurrencySymbol()}100</Text>
               </View>
               <Switch
                 testID="member-switch"
@@ -594,7 +594,7 @@ export default function NewBillScreen() {
             </Text>
             <View style={{ flexDirection: 'row', gap: spacing.sm }}>
               <View style={[styles.smallField, { flex: 1 }]}>
-                <Text style={styles.smallLabel}>Amount (₹)</Text>
+                <Text style={styles.smallLabel}>Amount ({getCurrencySymbol()})</Text>
                 <TextInput
                   testID="tip-amount-input"
                   value={tipAmt}
@@ -695,7 +695,7 @@ export default function NewBillScreen() {
                 <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
                   <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                     <View style={[styles.smallField, { flex: 1 }]}>
-                      <Text style={styles.smallLabel}>Cash (₹)</Text>
+                      <Text style={styles.smallLabel}>Cash ({getCurrencySymbol()})</Text>
                       <TextInput
                         testID="split-cash-input"
                         value={cashAmt}
@@ -707,7 +707,7 @@ export default function NewBillScreen() {
                       />
                     </View>
                     <View style={[styles.smallField, { flex: 1 }]}>
-                      <Text style={styles.smallLabel}>Card (₹)</Text>
+                      <Text style={styles.smallLabel}>Card ({getCurrencySymbol()})</Text>
                       <TextInput
                         testID="split-card-input"
                         value={cardAmt}

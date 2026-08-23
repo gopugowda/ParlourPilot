@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import Svg, { Path, Line, Circle, LinearGradient, Defs, Stop } from 'react-native-svg';
-import { colors } from '@/src/theme';
+import { colors, getCurrencySymbol } from '@/src/theme';
 
 type Point = { date: string; value: number };
 
@@ -106,9 +106,10 @@ export function MiniLineChart({
 }
 
 function fmtShort(v: number): string {
-  if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`;
-  if (v >= 1000) return `₹${(v / 1000).toFixed(1)}k`;
-  return `₹${Math.round(v)}`;
+  const s = getCurrencySymbol();
+  if (v >= 100000) return `${s}${(v / 100000).toFixed(1)}L`;
+  if (v >= 1000) return `${s}${(v / 1000).toFixed(1)}k`;
+  return `${s}${Math.round(v)}`;
 }
 
 function fmtDateShort(iso: string): string {

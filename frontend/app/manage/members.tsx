@@ -9,7 +9,7 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { colors, spacing, radius, shadows } from '@/src/theme';
+import { colors, spacing, radius, shadows, getCurrencySymbol } from '@/src/theme';
 import { sanitizePhone, phoneError, parse422, PHONE_MAX } from '@/src/utils/validators';
 import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
@@ -159,9 +159,10 @@ export default function MembersScreen() {
     const memberOverride = (m as any).discount_pct;
     const discountPct = (memberOverride !== null && memberOverride !== undefined) ? memberOverride : (tenant?.member_discount_pct ?? 10);
     const minPrice = tenant?.member_min_price ?? 100;
+    const CUR = getCurrencySymbol();
     const msg = m.status === 'expired'
-      ? `Hi ${m.name}, your ${salon} yearly membership expired on ${m.expires_at}. Renew today to keep enjoying ${discountPct}% off on all services above ₹${minPrice}. Reply YES to renew. - ${salon}${cityLine}`
-      : `Hi ${m.name}, your ${salon} yearly membership expires on ${m.expires_at} (${m.days_left} days left). Renew now to continue enjoying ${discountPct}% off on all services above ₹${minPrice}. - ${salon}${cityLine}`;
+      ? `Hi ${m.name}, your ${salon} yearly membership expired on ${m.expires_at}. Renew today to keep enjoying ${discountPct}% off on all services above ${CUR}${minPrice}. Reply YES to renew. - ${salon}${cityLine}`
+      : `Hi ${m.name}, your ${salon} yearly membership expires on ${m.expires_at} (${m.days_left} days left). Renew now to continue enjoying ${discountPct}% off on all services above ${CUR}${minPrice}. - ${salon}${cityLine}`;
     const url = `https://wa.me/${phoneNum}?text=${encodeURIComponent(msg)}`;
     try {
       await Linking.openURL(url);

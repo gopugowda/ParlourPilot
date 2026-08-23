@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
-import { colors } from '@/src/theme';
+import { colors, getCurrencySymbol } from '@/src/theme';
 
 type Slice = { key: string; label: string; amount: number; share_pct: number; color?: string };
 
@@ -62,7 +62,7 @@ export function DonutChart({
       </Svg>
       <View style={styles.center}>
         <Text style={styles.centerLabel}>Total</Text>
-        <Text style={styles.centerValue}>₹{Math.round(total).toLocaleString('en-IN')}</Text>
+        <Text style={styles.centerValue}>{getCurrencySymbol()}{Math.round(total).toLocaleString('en-IN')}</Text>
       </View>
     </View>
   );
@@ -80,7 +80,7 @@ export function DonutLegend({ data, testID }: { data: Slice[]; testID?: string }
             <View style={[styles.dot, { backgroundColor: dot }]} />
             <Text style={styles.legendLabel}>{s.label}</Text>
             <Text style={styles.legendRight}>
-              ₹{Math.round(s.amount).toLocaleString('en-IN')}<Text style={styles.legendPct}>  ·  {share}%</Text>
+              {getCurrencySymbol()}{Math.round(s.amount).toLocaleString('en-IN')}<Text style={styles.legendPct}>  ·  {share}%</Text>
             </Text>
           </View>
         );
