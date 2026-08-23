@@ -56,6 +56,8 @@ function isValidTime(v: string): boolean {
   return h >= 0 && h <= 23 && mi >= 0 && mi <= 59;
 }
 
+type Seats = { seats_allowed: number; seats_used: number; can_add: boolean; seats_per_branch: number; branches: number; plan_tier?: string };
+
 export default function TeamScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -63,6 +65,7 @@ export default function TeamScreen() {
 
   const [list, setList] = useState<TeamMember[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [seats, setSeats] = useState<Seats | null>(null);
   const [loading, setLoading] = useState(true);
 
   // ---- Sheet state ----
@@ -124,12 +127,14 @@ export default function TeamScreen() {
 
   const load = async () => {
     try {
-      const [team, br] = await Promise.all([
+      const [team, br, sc] = await Promise.all([
         api<TeamMember[]>('/team').catch(() => []),
         api<Branch[]>('/branches').catch(() => []),
+        api<Seats>('/team/seats').catch(() => null),
       ]);
       setList(team || []);
       setBranches(br || []);
+      setSeats(sc);
     } catch {}
   };
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -257,7 +262,15 @@ export default function TeamScreen() {
       await load();
     } catch (e: any) {
       const raw = (e?.message || 'Failed').toString();
-      if (/email/i.test(raw) && /valid/i.test(raw)) setEmailErr(raw);
+      if (/team limit|seat/i.test(raw)) {
+        // Backend seat-cap 403 — close the sheet and surface via alert so user sees it clearly.
+        setEditOpen(false);
+        await load(); // refresh seat count
+        Alert.alert('Team limit reached', raw, [
+          { text: 'Close', style: 'cancel' },
+          { text: 'View plans', onPress: () => router.push('/subscription' as any) },
+        ]);
+      } else if (/email/i.test(raw) && /valid/i.test(raw)) setEmailErr(raw);
       else if (/password/i.test(raw)) setPwdErr(raw);
       else setErr(raw);
     } finally { setSaving(false); }
@@ -302,11 +315,35 @@ export default function TeamScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Team</Text>
-          <Text style={styles.headerSub}>{displayList.length} of {list.length} shown</Text>
+          <Text style={styles.headerSub}>
+            {displayList.length} of {list.length} shown
+            {seats ? `  ·  ${seats.seats_used} / ${seats.seats_allowed} seats used` : ''}
+          </Text>
         </View>
         <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="team-filter-btn" />
         {isAdmin && (
-          <TouchableOpacity testID="add-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
+          <TouchableOpacity
+            testID="add-header"
+            onPress={() => {
+              if (seats && !seats.can_add) {
+                Alert.alert(
+                  'Team limit reached',
+                  'Add a new branch or upgrade your plan to unlock 10 more seats.',
+                  [
+                    { text: 'Close', style: 'cancel' },
+                    { text: 'View plans', onPress: () => router.push('/subscription' as any) },
+                  ],
+                );
+                return;
+              }
+              openAdd();
+            }}
+            style={[
+              styles.headerBtn,
+              { marginLeft: spacing.sm },
+              seats && !seats.can_add && { backgroundColor: colors.borderStrong },
+            ]}
+          >
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
         )}
@@ -314,12 +351,29 @@ export default function TeamScreen() {
 
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
+          {seats && !seats.can_add && isAdmin && (
+            <View style={styles.limitBanner} testID="seat-limit-banner">
+              <Ionicons name="lock-closed-outline" size={18} color={colors.warning} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.limitTitle}>Team limit reached</Text>
+                <Text style={styles.limitBody}>Add a new branch or upgrade your plan to unlock 10 more seats.</Text>
+              </View>
+              <TouchableOpacity onPress={() => router.push('/subscription' as any)} style={styles.limitCta}>
+                <Text style={styles.limitCtaText}>Upgrade</Text>
+              </TouchableOpacity>
+            </View>
+          )}
           {list.length === 0 && (
             <View style={styles.empty}>
               <Ionicons name="people-outline" size={48} color={colors.onSurfaceTertiary} />
               <Text style={styles.emptyTitle}>No team members yet</Text>
               {isAdmin && (
-                <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
+                <TouchableOpacity
+                  testID="empty-add"
+                  style={[styles.ctaBtn, seats && !seats.can_add && { backgroundColor: colors.borderStrong }]}
+                  disabled={!!(seats && !seats.can_add)}
+                  onPress={openAdd}
+                >
                   <Text style={styles.ctaBtnText}>Add first team member</Text>
                 </TouchableOpacity>
               )}
@@ -816,4 +870,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brandPrimary, borderRadius: radius.sm,
   },
   permBulkText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+
+  limitBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    padding: spacing.md, borderRadius: radius.md,
+    backgroundColor: '#FFF3E0', borderWidth: 1, borderColor: '#F0C36D',
+    marginBottom: spacing.md,
+  },
+  limitTitle: { fontSize: 13, fontWeight: '800', color: '#8A4B00' },
+  limitBody: { fontSize: 11, color: '#8A4B00', marginTop: 2 },
+  limitCta: {
+    backgroundColor: colors.brandPrimary, paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: radius.pill,
+  },
+  limitCtaText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 });
