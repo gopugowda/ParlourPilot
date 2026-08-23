@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
-import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import { colors, spacing, radius, shadows } from '@/src/theme';
 
 const SUPPORT_EMAIL = 'support@parlourpilot.com';
 
@@ -104,13 +104,34 @@ export default function SubscriptionScreen() {
     : daysLeft <= 7 ? colors.warning
     : colors.onSurface;
 
+  // Subscription display: INR salons see ₹, everyone else sees flat USD.
+  // Maps the INR base price to the corresponding USD flat amount so the
+  // "Next payment" line matches the /checkout page and honours the disclosure.
+  const tenantCurrency = ((tenant as any)?.currency || 'INR').toUpperCase();
+  const isSubINR = tenantCurrency === 'INR';
+  const INR_TO_USD_MAP: Record<number, number> = {
+    999: 12, 9999: 120,   // tenant plan
+    888: 10, 8888: 100,   // branch add-on
+  };
+  const subSym = isSubINR ? '₹' : '$';
+  const subLocale = isSubINR ? 'en-IN' : 'en-US';
+  const toDisplay = (inr: number) => isSubINR ? inr : (INR_TO_USD_MAP[inr] ?? Math.round(inr * 0.012));
+
   const nextPaymentAmount = (() => {
     if (!entitlements) return null;
     const pricePerBranch = (subscription?.subscription_plan === 'yearly')
       ? entitlements.yearly_price_per_branch
       : entitlements.monthly_price_per_branch;
-    const total = pricePerBranch * Math.max(1, entitlements.branch_count || 1);
-    return { pricePerBranch, branches: entitlements.branch_count || 1, total };
+    const branches = Math.max(1, entitlements.branch_count || 1);
+    const perBranchDisplay = toDisplay(pricePerBranch);
+    const totalDisplay = perBranchDisplay * branches;
+    return {
+      pricePerBranch,
+      pricePerBranchDisplay: perBranchDisplay,
+      branches,
+      total: pricePerBranch * branches,
+      totalDisplay,
+    };
   })();
 
   const statusColorFor = (s: string) =>
@@ -270,11 +291,14 @@ export default function SubscriptionScreen() {
             <View style={styles.nextPayment} testID="next-payment-line">
               <Ionicons name="card-outline" size={16} color={colors.onSurfaceSecondary} />
               <Text style={styles.nextPaymentText}>
-                Next payment: <Text style={styles.bold}>{fmtINR(nextPaymentAmount.total)}</Text>
+                Next payment: <Text style={styles.bold}>{`${subSym}${nextPaymentAmount.totalDisplay.toLocaleString(subLocale)}`}</Text>
                 <Text style={styles.nextPaymentSub}>
-                  {`  (${fmtINR(nextPaymentAmount.pricePerBranch)} × ${nextPaymentAmount.branches} branch${nextPaymentAmount.branches === 1 ? '' : 'es'})`}
+                  {`  (${subSym}${nextPaymentAmount.pricePerBranchDisplay.toLocaleString(subLocale)} × ${nextPaymentAmount.branches} branch${nextPaymentAmount.branches === 1 ? '' : 'es'})`}
                 </Text>
               </Text>
+              {!isSubINR && (
+                <Text style={styles.disclosureNote}>  · charged in INR</Text>
+              )}
             </View>
           )}
 
@@ -427,6 +451,7 @@ const styles = StyleSheet.create({
   nextPayment: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
   nextPaymentText: { fontSize: 13, color: colors.onSurfaceSecondary, flexShrink: 1 },
   nextPaymentSub: { fontSize: 11, color: colors.onSurfaceTertiary },
+  disclosureNote: { fontSize: 10, color: colors.onSurfaceTertiary, fontStyle: 'italic', marginLeft: 4 },
 
   cancelNotice: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FDF3E4', borderColor: '#F0DCA6', borderWidth: 1, borderRadius: radius.sm, padding: spacing.sm },
   cancelNoticeText: { fontSize: 12, color: '#4B3A16', flex: 1, lineHeight: 16 },
