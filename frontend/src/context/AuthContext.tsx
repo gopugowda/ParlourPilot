@@ -15,6 +15,28 @@ export type User = {
   email: string;
   role: 'admin' | 'owner' | 'staff' | 'platform_admin' | 'platform_staff' | 'super_admin';
   is_owner?: boolean;
+  permissions?: Partial<Record<PermissionKey, boolean>>;
+};
+
+/** 11 permission keys. Owner (is_owner: true) is ALWAYS full-access. */
+export const PERMISSION_KEYS = [
+  'new_bill', 'bills', 'appointments', 'stock', 'expenses', 'cash_closing',
+  'members', 'attendance', 'services', 'reports', 'multi_branch',
+] as const;
+export type PermissionKey = typeof PERMISSION_KEYS[number];
+
+export const PERMISSION_LABELS: Record<PermissionKey, string> = {
+  new_bill: 'New Bill',
+  bills: 'Bill History',
+  appointments: 'Appointments',
+  stock: 'Stock / Inventory',
+  expenses: 'Expenses',
+  cash_closing: 'Cash Closing',
+  members: 'Members',
+  attendance: 'Attendance (admin)',
+  services: 'Services / price list',
+  reports: 'Dashboard & Reports',
+  multi_branch: 'Multi-branch switcher',
 };
 
 export type Branch = {
@@ -104,6 +126,11 @@ type AuthCtx = {
   refreshBranches: () => Promise<void>;
   selectBranch: (branchId: string | null) => Promise<void>;
   clearSubscriptionExpired: () => void;
+  /** Check if the current user has a permission. Owner + admin always true.
+   * Falls back to true when backend hasn't shipped permissions yet (legacy). */
+  can: (key: PermissionKey) => boolean;
+  /** First tab the user has access to, for landing redirects. */
+  firstAccessibleRoute: () => string;
 };
 
 const Ctx = createContext<AuthCtx>({} as any);
@@ -167,9 +194,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const brs: Branch[] = res.branches || [];
     setBranches(brs);
-    // Determine default branch: user.branch_id if set, else head, else first
+    // Determine default branch: user.branch_id if set, else head, else first.
+    // If multi_branch is disabled (and not owner), lock to user's own branch.
+    const perms = (u?.permissions || {}) as Partial<Record<PermissionKey, boolean>>;
+    const canMulti = !!u?.is_owner || perms.multi_branch !== false && (perms.multi_branch === true || !u?.permissions);
     let bid: string | null = u?.branch_id || null;
-    if (!bid && brs.length > 0) {
+    if (!canMulti && u?.branch_id) {
+      bid = u.branch_id;
+    } else if (!bid && brs.length > 0) {
       const head = brs.find(b => b.is_head) || brs[0];
       bid = head?.id || null;
     }
@@ -260,8 +292,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const token = await tokenStore.get();
           if (!token) return;
-          // Full refresh: tenant + subscription + branches
+          // Full refresh: user (perms may change) + tenant + subscription + branches
           const res: any = await authApi.me().catch(() => null);
+          if (res?.user) {
+            setUser(res.user);
+            await userStore.set(res.user);
+          }
           if (res?.tenant) {
             setTenant(res.tenant);
             await tenantStore.set(res.tenant);
@@ -287,12 +323,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearSubscriptionExpired = useCallback(() => setSubscriptionExpired(false), []);
 
+  // ---- Permissions helper ----
+  // Owner / role='owner' → always true.
+  // If user.permissions is undefined (legacy backend / me not yet loaded) → true (safe fallback).
+  // Else → key must be truthy.
+  const can = useCallback((key: PermissionKey): boolean => {
+    if (!user) return false;
+    if (user.is_owner || user.role === 'owner' || user.role === 'admin' && user.is_owner) return true;
+    // Legacy — permissions absent from backend response
+    if (!user.permissions || Object.keys(user.permissions).length === 0) return true;
+    return !!user.permissions[key];
+  }, [user]);
+
+  const firstAccessibleRoute = useCallback((): string => {
+    if (!user) return '/login';
+    // Owner / admin (backwards-compat) → dashboard
+    if (user.is_owner) return '/(tabs)';
+    const perms = user.permissions || {};
+    // Landing preference order
+    if (perms.reports) return '/(tabs)';
+    if (perms.new_bill) return '/(tabs)/new-bill';
+    if (perms.bills) return '/(tabs)/history';
+    if (perms.appointments) return '/manage/appointments';
+    if (perms.expenses) return '/(tabs)/expenses';
+    if (perms.members) return '/manage/members';
+    if (perms.services) return '/manage/services';
+    if (perms.stock) return '/manage/stock';
+    if (perms.cash_closing) return '/manage/cash-closing';
+    if (perms.attendance) return '/manage/attendance-report';
+    // Everyone can punch their own attendance
+    return '/manage/attendance';
+  }, [user]);
+
   // Derived brand colors reflect the latest applied theme
   const brandColor = themeColors.brandPrimary;
   const brandTextColor = contrastText(brandColor);
 
   return (
-    <Ctx.Provider value={{ user, tenant, subscription, branches, currentBranchId, loading, subscriptionExpired, brandColor, brandTextColor, themeRev, login, signup, logout, refreshTenant, refreshBranches, selectBranch, clearSubscriptionExpired }}>
+    <Ctx.Provider value={{ user, tenant, subscription, branches, currentBranchId, loading, subscriptionExpired, brandColor, brandTextColor, themeRev, login, signup, logout, refreshTenant, refreshBranches, selectBranch, clearSubscriptionExpired, can, firstAccessibleRoute }}>
       {children}
     </Ctx.Provider>
   );

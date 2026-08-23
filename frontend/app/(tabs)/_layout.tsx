@@ -5,16 +5,24 @@ import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, contrastText } from '@/src/theme';
-import { useBrand } from '@/src/context/AuthContext';
+import { useBrand, useAuth } from '@/src/context/AuthContext';
 import { useResponsive } from '@/src/hooks/use-responsive';
 import { DesktopSidebar } from '@/src/components/DesktopSidebar';
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { brandColor } = useBrand();
+  const { can } = useAuth();
   const onBrand = contrastText(brandColor || colors.brandPrimary);
   const inactive = onBrand === '#FFFFFF' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.55)';
   const { isDesktop } = useResponsive();
+
+  // Compute which tabs to hide via permissions.
+  const hideDashboard = !can('reports');
+  const hideNewBill = !can('new_bill');
+  const hideExpenses = !can('expenses');
+  const hideHistory = !can('bills');
+  // Manage always visible (child screens filter their own tiles).
 
   // On desktop, replace the bottom tab bar with a persistent left sidebar.
   if (isDesktop) {
@@ -50,6 +58,7 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Dashboard',
+          href: hideDashboard ? null : undefined,
           tabBarIcon: ({ color, size }) => <Ionicons name="grid-outline" size={size} color={color} />,
         }}
       />
@@ -57,6 +66,7 @@ export default function TabsLayout() {
         name="new-bill"
         options={{
           title: 'New Bill',
+          href: hideNewBill ? null : undefined,
           tabBarIcon: ({ color, size }) => <Ionicons name="add-circle" size={size + 4} color={color} />,
         }}
       />
@@ -64,6 +74,7 @@ export default function TabsLayout() {
         name="expenses"
         options={{
           title: 'Expenses',
+          href: hideExpenses ? null : undefined,
           tabBarIcon: ({ color, size }) => <Ionicons name="wallet-outline" size={size} color={color} />,
         }}
       />
@@ -71,6 +82,7 @@ export default function TabsLayout() {
         name="history"
         options={{
           title: 'History',
+          href: hideHistory ? null : undefined,
           tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" size={size} color={color} />,
         }}
       />

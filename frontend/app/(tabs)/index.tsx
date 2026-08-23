@@ -9,13 +9,13 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { api, appointmentApi } from '@/src/api/client';
-import { useAuth, useBrand } from '@/src/context/AuthContext';
+import { useAuth, useBrand, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 
 const LOGO = require('../../assets/images/parlourpilot-logo.png');
 
 export default function DashboardScreen() {
-  const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout, refreshTenant, refreshBranches } = useAuth();
+  const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout, refreshTenant, refreshBranches, can, firstAccessibleRoute } = useAuth();
   const { brandColor, brandTextColor } = useBrand();
   // Compute a darker shade for the hero gradient
   const hexToRgb = (h: string) => { const n = parseInt(h.replace('#', ''), 16); return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }; };
@@ -52,6 +52,15 @@ export default function DashboardScreen() {
   // Refetch when branch selection changes
   useEffect(() => { load(); }, [currentBranchId]);
 
+  // Redirect if the user lacks 'reports' — they shouldn't land here.
+  useEffect(() => {
+    if (!user) return;
+    if (!can('reports')) {
+      const first = firstAccessibleRoute();
+      if (first && first !== '/(tabs)') router.replace(first as any);
+    }
+  }, [user, can, firstAccessibleRoute, router]);
+
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
@@ -61,17 +70,17 @@ export default function DashboardScreen() {
   const effectiveLogoUri = currentBranch?.logo || tenant?.logo || null;
 
   const adminActions = [
-    { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
-    { key: 'hist', label: 'History', icon: 'receipt', route: '/(tabs)/history', color: colors.success },
-    { key: 'srv', label: 'Services', icon: 'pricetags', route: '/manage/services', color: colors.warning },
+    { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary, perm: 'new_bill' as PermissionKey },
+    { key: 'hist', label: 'History', icon: 'receipt', route: '/(tabs)/history', color: colors.success, perm: 'bills' as PermissionKey },
+    { key: 'srv', label: 'Services', icon: 'pricetags', route: '/manage/services', color: colors.warning, perm: 'services' as PermissionKey },
     { key: 'team', label: 'Team', icon: 'people', route: '/manage/beauticians', color: colors.info },
   ];
   const staffActions = [
-    { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary },
-    { key: 'hist', label: "Today's Bills", icon: 'receipt', route: '/(tabs)/history', color: colors.success },
-    { key: 'report', label: 'Daily Report', icon: 'bar-chart', route: '/manage/report', color: colors.warning },
+    { key: 'new', label: 'New Bill', icon: 'add-circle', route: '/(tabs)/new-bill', color: colors.brandPrimary, perm: 'new_bill' as PermissionKey },
+    { key: 'hist', label: "Today's Bills", icon: 'receipt', route: '/(tabs)/history', color: colors.success, perm: 'bills' as PermissionKey },
+    { key: 'report', label: 'Daily Report', icon: 'bar-chart', route: '/manage/report', color: colors.warning, perm: 'reports' as PermissionKey },
   ];
-  const actions = isAdmin ? adminActions : staffActions;
+  const actions = (isAdmin ? adminActions : staffActions).filter(a => !a.perm || can(a.perm));
 
   return (
     <View style={styles.root} testID="dashboard-screen">
@@ -107,7 +116,7 @@ export default function DashboardScreen() {
                       ? `  · ${subscription.days_left}d trial left`
                       : ''}
                   </Text>
-                  {branches.length > 0 && isAdmin && (
+                  {branches.length > 0 && isAdmin && can('multi_branch') && (
                     <TouchableOpacity
                       testID="branch-switcher"
                       onPress={() => setShowBranchPicker(true)}
@@ -120,7 +129,7 @@ export default function DashboardScreen() {
                       <Ionicons name="chevron-down" size={12} color={brandTextColor} />
                     </TouchableOpacity>
                   )}
-                  {branches.length > 0 && !isAdmin && currentBranchId && (
+                  {branches.length > 0 && (!isAdmin || !can('multi_branch')) && currentBranchId && (
                     <View style={styles.branchStatic}>
                       <Ionicons name="business-outline" size={11} color={brandTextColor} />
                       <Text style={[styles.branchSwitcherText, { color: brandTextColor }]} numberOfLines={1}>

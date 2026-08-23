@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
-import { useAuth } from '@/src/context/AuthContext';
+import { useAuth, PERMISSION_KEYS, PERMISSION_LABELS, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 import { sanitizePhone, emailError, PHONE_MAX, normalizeEmail } from '@/src/utils/validators';
 import { useFilterState } from '@/src/hooks/useFilterState';
@@ -33,6 +33,8 @@ type TeamMember = {
   commission_pct: number; monthly_target: number;
   address: string; id_type: string; id_number: string;
   is_owner_locked: boolean;
+  is_owner?: boolean;
+  permissions?: Partial<Record<PermissionKey, boolean>>;
 };
 
 const ROLE_SUGGESTIONS = ['Stylist', 'Senior Stylist', 'Manager', 'Therapist', 'Beautician', 'Assistant', 'Receptionist'];
@@ -89,6 +91,14 @@ export default function TeamScreen() {
   const [idNumber, setIdNumber] = useState('');
   const [active, setActive] = useState(true);
 
+  // ---- Per-user permissions (11 booleans). Owner row → ignored on save. ----
+  const initialPerms = (): Record<PermissionKey, boolean> => {
+    const p: Record<string, boolean> = {};
+    PERMISSION_KEYS.forEach(k => { p[k] = false; });
+    return p as Record<PermissionKey, boolean>;
+  };
+  const [perms, setPerms] = useState<Record<PermissionKey, boolean>>(initialPerms());
+
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [emailErr, setEmailErr] = useState<string | null>(null);
@@ -133,6 +143,8 @@ export default function TeamScreen() {
     setWeekOff([]); setCommissionPct(''); setMonthlyTarget('');
     setAddress(''); setIdType('Aadhaar'); setIdNumber(''); setActive(true);
     setErr(null); setEmailErr(null); setPwdErr(null);
+    // New members: default ALL permissions OFF (owner enables what they need).
+    setPerms(initialPerms());
   };
 
   const openAdd = () => { setEditing(null); resetForm(); setEditOpen(true); };
@@ -157,6 +169,12 @@ export default function TeamScreen() {
     setIdType(m.id_type || 'Aadhaar');
     setIdNumber(m.id_number || '');
     setActive(m.is_active !== false);
+    // Load per-user permissions (all defaults false if missing).
+    const p = initialPerms();
+    if (m.permissions) {
+      PERMISSION_KEYS.forEach(k => { p[k] = !!m.permissions?.[k]; });
+    }
+    setPerms(p);
     setEditOpen(true);
   };
 
@@ -223,6 +241,8 @@ export default function TeamScreen() {
         id_number: idNumber.trim(),
       };
       if (password) body.password = password;
+      // Permissions: only send for non-owner. Owner is always full access on backend.
+      if (!editing?.is_owner_locked) body.permissions = perms;
 
       if (editing) {
         body.user_id = editing.user_id || null;
@@ -475,6 +495,58 @@ export default function TeamScreen() {
                   )}
                 </View>
 
+                {/* ---- Permissions (11 keys) ---- */}
+                {!editing?.is_owner_locked && (
+                  <View style={styles.permsBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Ionicons name="shield-checkmark-outline" size={16} color={colors.brandPrimary} />
+                      <Text style={styles.loginTitle}>Feature access</Text>
+                    </View>
+                    <Text style={styles.loginHint}>
+                      Toggle exactly what this member can use. Changes take effect on their next tap — no re-login.
+                    </Text>
+                    <View style={styles.permsList}>
+                      {PERMISSION_KEYS.map(k => (
+                        <View key={k} style={styles.permRow}>
+                          <Text style={styles.permLabel}>{PERMISSION_LABELS[k]}</Text>
+                          <Switch
+                            testID={`team-perm-${k}`}
+                            value={!!perms[k]}
+                            onValueChange={(v) => setPerms(prev => ({ ...prev, [k]: v }))}
+                            trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                    <View style={styles.permsBulkRow}>
+                      <TouchableOpacity
+                        testID="team-perm-all"
+                        style={styles.permBulkBtn}
+                        onPress={() => {
+                          const on: Record<string, boolean> = {};
+                          PERMISSION_KEYS.forEach(k => { on[k] = true; });
+                          setPerms(on as Record<PermissionKey, boolean>);
+                        }}
+                      >
+                        <Text style={styles.permBulkText}>Enable all</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        testID="team-perm-none"
+                        style={[styles.permBulkBtn, { backgroundColor: colors.surfaceTertiary }]}
+                        onPress={() => setPerms(initialPerms())}
+                      >
+                        <Text style={[styles.permBulkText, { color: colors.onSurfaceSecondary }]}>Disable all</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+                {editing?.is_owner_locked && (
+                  <View style={styles.ownerLockRow}>
+                    <Ionicons name="shield" size={14} color={colors.brandPrimary} />
+                    <Text style={styles.ownerLockText}>Owner has full access to everything</Text>
+                  </View>
+                )}
+
                 {/* ---- Job title (Role) ---- */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Job title</Text>
@@ -726,4 +798,22 @@ const styles = StyleSheet.create({
   eyeBtn: { position: 'absolute', right: 8, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   ownerLockRow: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: spacing.md, backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm },
   ownerLockText: { fontSize: 13, fontWeight: '600', color: colors.onSurfaceSecondary },
+
+  permsBox: {
+    backgroundColor: '#FFF8E7',
+    borderRadius: radius.md, borderWidth: 1, borderColor: '#F0D97A',
+    padding: spacing.md, gap: spacing.sm,
+  },
+  permsList: { gap: 4, marginTop: spacing.xs },
+  permRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#F0D97A',
+  },
+  permLabel: { fontSize: 13, fontWeight: '600', color: colors.onSurface, flex: 1 },
+  permsBulkRow: { flexDirection: 'row', gap: 8, marginTop: spacing.sm },
+  permBulkBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: 8,
+    backgroundColor: colors.brandPrimary, borderRadius: radius.sm,
+  },
+  permBulkText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 });

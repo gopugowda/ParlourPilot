@@ -5,13 +5,17 @@ import { useAuth } from '@/src/context/AuthContext';
 import { colors } from '@/src/theme';
 
 export default function Index() {
-  const { user, loading } = useAuth();
+  const { user, loading, firstAccessibleRoute } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
-    if (user) router.replace('/(tabs)');
-    else router.replace('/login');
+    if (user) {
+      const route = firstAccessibleRoute();
+      router.replace((route || '/(tabs)') as any);
+    } else {
+      router.replace('/login');
+    }
   }, [user, loading]);
 
   return (
