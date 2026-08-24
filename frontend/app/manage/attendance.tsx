@@ -12,6 +12,7 @@ import { colors, spacing, radius, shadows } from '@/src/theme';
 import {
   type AttendanceConfig, type MyTodayEntry, type AttendanceAction,
   getFreshLocation, postAction, loadConfig, loadMyToday, fmtLocalTime,
+  parseTimestampMs,
 } from '@/src/utils/attendance';
 
 // Auto-refresh interval — keeps mobile in sync when the shift is toggled from web.
@@ -233,22 +234,28 @@ export default function AttendanceScreen() {
           <Text style={styles.cardTitle}>Today&rsquo;s punches</Text>
           {today.logs.length === 0 ? (
             <Text style={styles.empty}>No punches yet.</Text>
-          ) : today.logs.map((l, i) => {
-            const meta = ACTION_META[l.action] || ACTION_META.check_in;
-            return (
-              <View key={l.id || i} style={styles.logRow} testID={`log-row-${i}`}>
-                <Ionicons name={meta.icon} size={16} color={meta.color} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.logAction}>{meta.label}</Text>
-                  <Text style={styles.logMeta}>
-                    {fmtTime(l.timestamp)}
-                    {typeof l.distance_m === 'number' && ` · ${Math.round(l.distance_m)}m`}
-                    {l.within_geofence === false && ' · outside geofence'}
-                  </Text>
+          ) : (
+            // Backend returns logs in insertion order (not chronological).
+            // Sort ascending so the personal list reads oldest → newest, matching web.
+            [...today.logs]
+              .sort((a, b) => (parseTimestampMs(a.timestamp) ?? 0) - (parseTimestampMs(b.timestamp) ?? 0))
+              .map((l, i) => {
+              const meta = ACTION_META[l.action] || ACTION_META.check_in;
+              return (
+                <View key={l.id || i} style={styles.logRow} testID={`log-row-${i}`}>
+                  <Ionicons name={meta.icon} size={16} color={meta.color} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.logAction}>{meta.label}</Text>
+                    <Text style={styles.logMeta}>
+                      {fmtTime(l.timestamp)}
+                      {typeof l.distance_m === 'number' && ` · ${Math.round(l.distance_m)}m`}
+                      {l.within_geofence === false && ' · outside geofence'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            );
-          })}
+              );
+            })
+          )}
         </View>
 
         {/* Team-wide activity log — admin/owner only. Mirrors the "Activity log"
@@ -266,7 +273,10 @@ export default function AttendanceScreen() {
               <Text style={styles.empty}>No punches from your team today.</Text>
             ) : (
               <>
-                {teamLogs.slice(0, 20).map((row, i) => {
+                {[...teamLogs]
+                  .sort((a, b) => (parseTimestampMs(b.timestamp) ?? 0) - (parseTimestampMs(a.timestamp) ?? 0))
+                  .slice(0, 20)
+                  .map((row, i) => {
                   const meta = ACTION_META[row.action] || ACTION_META.check_in;
                   return (
                     <View key={row.id || i} style={styles.logRow} testID={`team-log-${i}`}>

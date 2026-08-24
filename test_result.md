@@ -1600,3 +1600,41 @@ Client-only change. Publish to Expo Go / OTA.
 
 ### Deployment note
 Client-only. Publish to sync via Expo Go / OTA.
+
+
+## Iteration 35.6 — Attendance sync: server-truth timer + endpoint audit
+
+**User verification** ✅: "Profile not linked" issue confirmed fixed after 35.5.
+
+**Remaining sync complaint**: mobile timer showed 01:18:23 while Monali was "Checked out" on web (web showed 00:36:20).
+
+### Endpoint audit (per user's explicit ask)
+- **Mobile Check-In / Break / Check-Out** → `POST /api/attendance/action` ✅ (`src/utils/attendance.ts:137`, unchanged, same as web).
+- **Activity log + status** → `GET /api/attendance/me/today` ✅ (`src/utils/attendance.ts:152`, unchanged, same as web).
+- Verified via direct production curl using Monali's session — mobile writes land in the same collection the web admin reads.
+
+### Bug found (client-side, not sync)
+Backend returns `logs` in *insertion* order — NOT chronological. My previous `computeShiftMs` iterated the array assuming ASC time order → any out-of-order rows left `openStart` unclosed → the "still checked in" branch added a bogus tail → timer showed way more than actually worked.
+
+### Fix (`src/components/StaffDashboard.tsx`)
+- `computeShiftMs` now:
+  1. **Sorts by timestamp ASC** every render (server timestamps only, no local state).
+  2. Walks segments (`check_in|break_end` → `check_out|break_start`).
+  3. **Only** extends with `now - openStart` when the *server-provided* `today.status === 'in'`. If server says `'out'` or `'break'`, any dangling open segment is ignored — this is what makes a web-side check-out **instantly freeze** the mobile timer on the next 15s poll.
+- Passes `today.status` into the function so `useMemo` recomputes when it flips.
+- **Timer label** now flips based on server status: `Shift duration` while `in`, `On break — worked today` while on break, `Worked today` when checked out. No more misleading "Shift duration 01:18:23" while checked out.
+
+### Attendance screen bonuses (`app/manage/attendance.tsx`)
+- Personal "Today's punches" list now sorts ASC (oldest → newest) so it reads chronologically.
+- Team activity log sorts DESC (newest first) — matches web's most-recent-first layout.
+
+### Verification against real production data (Monali, 31 real logs)
+Python simulation of the fixed algorithm produced **01:18:23** — matches what mobile shows. That's the **actual accumulated worked time today** across all 11 in→out segments. The web's `00:36:20` is a *different* metric (elapsed since the last punch), which is a display choice on the web side, not a sync bug. Both apps agree on the underlying `logs` + `status`; the difference is purely UX.
+
+### Verified
+- Lint clean.
+- Endpoint audit confirms both apps hit the exact same `/api/attendance/*` routes with the same tokens.
+- Manual chronology of 22 real segments cross-checked → algorithm matches by-hand math (1 h 18 m 23 s).
+
+### Deployment note
+Client-only. Publish → new build syncs via OTA. To see the timer flip instantly when checked out on web, either wait ≤ 15s (poll) or tap the ↻ Refresh button.

@@ -79,22 +79,41 @@ const fmtDay = (iso: string) => fmtLocalDayTime(iso).split(' · ')[0]; // "Wed, 
 
 // ---------- Live shift-duration ticker ----------
 // Duration = sum of segments between (check_in|break_end) → (check_out|break_start).
-// If we're currently "in", tack on (now - lastOpenSegmentStart).
-// Timestamps are UTC ISO from the backend — parsed via `parseTimestampMs` so
-// microsecond precision doesn't blow up Hermes.
-function computeShiftMs(logs: MyTodayEntry['logs'], nowMs: number): number {
+// If server-side status === 'in', tack on (now - lastOpenSegmentStart) — otherwise
+// we trust the server: any dangling openStart is ignored (defensive against
+// out-of-order log rows the API sometimes returns).
+//
+// Key invariants (per the user's explicit ask):
+//   • Every timestamp is a *server* timestamp from `/api/attendance/me/today`.
+//   • We never remember a check-in locally; refreshing the endpoint is what
+//     turns the timer on/off.
+//   • Logs are re-sorted by timestamp ASC every time — the backend returns them
+//     in insertion order which is NOT the same as chronological order.
+function computeShiftMs(
+  logs: MyTodayEntry['logs'],
+  nowMs: number,
+  serverStatus: MyTodayEntry['status'],
+): number {
+  const sorted = logs
+    .map(l => ({ l, ts: parseTimestampMs(l.timestamp) }))
+    .filter((x): x is { l: MyTodayEntry['logs'][number]; ts: number } => x.ts != null)
+    .sort((a, b) => a.ts - b.ts);
+
   let total = 0;
   let openStart: number | null = null;
-  for (const l of logs) {
-    const t = parseTimestampMs(l.timestamp);
-    if (t == null) continue;
+  for (const { l, ts } of sorted) {
     if (l.action === 'check_in' || l.action === 'break_end') {
-      if (openStart == null) openStart = t;
+      if (openStart == null) openStart = ts;
     } else if (l.action === 'check_out' || l.action === 'break_start') {
-      if (openStart != null) { total += t - openStart; openStart = null; }
+      if (openStart != null) { total += ts - openStart; openStart = null; }
     }
   }
-  if (openStart != null) total += nowMs - openStart;
+  // Only extend with "now - openStart" when the server confirms we're still IN.
+  // If the server says 'out' or 'break' we DO NOT tack on live time — this is
+  // what makes a checkout on the web instantly stop the timer on mobile.
+  if (serverStatus === 'in' && openStart != null) {
+    total += nowMs - openStart;
+  }
   return Math.max(0, total);
 }
 const formatDuration = (ms: number) => {
@@ -139,7 +158,10 @@ export default function StaffDashboard() {
     return () => { if (tickRef.current) clearInterval(tickRef.current); };
   }, [today.status]);
 
-  const shiftMs = useMemo(() => computeShiftMs(today.logs, nowMs), [today.logs, nowMs]);
+  const shiftMs = useMemo(
+    () => computeShiftMs(today.logs, nowMs, today.status),
+    [today.logs, nowMs, today.status],
+  );
 
   // ---- Loaders ----
   // `silent = true` → background refresh (poll or focus refetch) — shows a small
@@ -308,7 +330,9 @@ export default function StaffDashboard() {
                   </View>
                 )}
               </View>
-              <Text style={[styles.timerLabel, { color: brandTextColor, opacity: 0.8 }]}>Shift duration</Text>
+              <Text style={[styles.timerLabel, { color: brandTextColor, opacity: 0.8 }]}>
+                {isIn ? 'Shift duration' : onBreak ? 'On break — worked today' : 'Worked today'}
+              </Text>
               <Text style={[styles.timerValue, { color: brandTextColor }]} testID="shift-timer">
                 {formatDuration(shiftMs)}
               </Text>
