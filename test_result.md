@@ -1473,3 +1473,39 @@ The "Profile not linked" issue is a backend email-match sensitivity bug. Users l
 
 ### Deployment note
 Client-only change. Click **Publish** to sync to Expo Go / OTA. `dayjs` is a JS-only dep — no native rebuild required.
+
+
+## Iteration 35.2 — Sync UX (identity chip + faster poll + manual refresh)
+
+**Bugs reported by user**:
+- "Profile not linked" persists on mobile even though the *same staff* on the web app shows a linked beautician (basic salary, target visible).
+- Web-app check-in doesn't reflect on mobile.
+
+**Root cause hypothesis** (backend-side, not fixable from mobile):
+The mobile is authenticated as a **different `user_id`** than the web app. On the shared backend, `/api/me/*` finds the beautician via `user_id → phone → email` — but if mobile logged in with a phone that produces a *different* user record from the email-based web login, no beautician is linked to that mobile user. Attendance is also `user_id`-scoped, so it independently fails to sync.
+
+### Mobile-side UX fixes (this iteration)
+- **`src/components/StaffDashboard.tsx`**:
+  - Identity chip in the hero: "Signed in as email · phone" (testID=`identity-chip`) — lets the user instantly compare with what the web app shows.
+  - Manual **Refresh (↻)** button in the hero (testID=`manual-refresh-btn`) — forces a fresh `/api/me/*` + attendance re-fetch on demand; also shows the polling spinner inline.
+  - **Sign-out button** now confirms via `Alert.alert` before clearing tokens (helpful when the user needs to re-login to fix a stale token).
+  - Poll interval **30s → 15s**.
+  - Consolidated two `useFocusEffect` calls into one (refetch + setInterval + cleanup) — safer under React Navigation / Expo Go.
+- **`app/manage/attendance.tsx`**:
+  - Identity chip below the header (testID=`attendance-identity`).
+  - Manual **Refresh** button in the header (testID=`attendance-refresh`).
+  - **Sign-out** button in header (testID=`attendance-signout`, with confirmation).
+  - Same consolidated focus effect and 15s poll.
+
+### Backend actions still needed by user (on the shared web-app repo)
+1. Merge the duplicate user records (or delete the mobile-only one and re-invite the staff so they log in with the linked account).
+2. On the web app: apply the same dayjs-based `parseTimestamp` helper to the activity log rows — the web app itself shows several "Invalid Date" chips in the shift-control activity log because it's parsing the same microsecond ISO strings with `new Date(...)`.
+3. Consider normalising email to lowercase on user creation (not just at lookup) so future signups can't create dup records with different casing.
+
+### Verified
+- Lint clean.
+- Bundler starts, login page renders, no crashes.
+- New testIDs available for testing.
+
+### Deployment note
+Client-only change. Publish to sync via OTA / new Expo Go build.

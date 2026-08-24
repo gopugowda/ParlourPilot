@@ -10,8 +10,7 @@
  *   3) Performance     — /api/me/earnings (progress bar + financial cards)
  *   4) Quick Actions   — icon buttons gated by user.permissions
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl,
   ActivityIndicator, Alert,
 } from 'react-native';
@@ -31,7 +30,7 @@ import {
 } from '@/src/utils/attendance';
 
 // Polling — keep mobile in sync when web toggles the shift or new appointments land.
-const POLL_MS = 30_000;
+const POLL_MS = 15_000;
 
 // ---------- Types (self-scoped) ----------
 type ScheduleAppt = {
@@ -161,19 +160,37 @@ export default function StaffDashboard() {
   }, []);
 
   useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
-  useFocusEffect(useCallback(() => { load(true); }, [load]));
 
-  // Poll every 30s while focused — this is what makes mobile sync when the web
-  // app checks the shift out (attendance status flips → button state + timer stop).
-  const pollRef = useRef<any>(null);
+  // Single combined focus effect: refetch on focus AND start a 15s poll while focused.
+  // Two separate useFocusEffect calls made React Navigation flaky under Expo Go, so
+  // we consolidate mount + interval + cleanup here.
   useFocusEffect(useCallback(() => {
-    pollRef.current = setInterval(() => { load(true); }, POLL_MS);
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    };
+    load(true);
+    const id = setInterval(() => { load(true); }, POLL_MS);
+    return () => { clearInterval(id); };
   }, [load]));
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // Manual refresh button — force a fresh fetch on demand (helps when user just
+  // toggled shift on web and doesn't want to wait for the next poll).
+  const onManualRefresh = async () => {
+    Haptics.selectionAsync();
+    await load(true);
+  };
+
+  // Force sign out — clears the stored token so the user can re-login (useful if
+  // the mobile is stuck on an older account that isn't linked to their beautician).
+  const onSignOut = () => {
+    Alert.alert(
+      'Sign out?',
+      'You will be returned to the login screen and need to sign in again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => logout() },
+      ],
+    );
+  };
 
   // ---- Attendance action handler ----
   const doAction = async (action: AttendanceAction) => {
@@ -244,9 +261,36 @@ export default function StaffDashboard() {
                   {tenant?.business_name || 'ParlourPilot'}
                 </Text>
               </View>
-              <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
+              <TouchableOpacity
+                testID="manual-refresh-btn"
+                onPress={onManualRefresh}
+                style={styles.iconHeaderBtn}
+                accessibilityLabel="Refresh"
+              >
+                {polling ? (
+                  <ActivityIndicator size="small" color={brandTextColor} />
+                ) : (
+                  <Ionicons name="refresh" size={20} color={brandTextColor} />
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="logout-btn"
+                onPress={onSignOut}
+                style={styles.iconHeaderBtn}
+                accessibilityLabel="Sign out"
+              >
                 <Ionicons name="log-out-outline" size={20} color={brandTextColor} />
               </TouchableOpacity>
+            </View>
+
+            {/* Identity chip — mirrors exactly what the backend sees for this session.
+                Lets the user compare with what the web app shows and spot a stale/other-user login. */}
+            <View style={styles.identityChip} testID="identity-chip">
+              <Ionicons name="person-circle-outline" size={14} color={brandTextColor} />
+              <Text style={[styles.identityText, { color: brandTextColor }]} numberOfLines={1}>
+                Signed in as {user?.email || user?.phone || '—'}
+                {user?.email && user?.phone ? ` · ${user.phone}` : ''}
+              </Text>
             </View>
 
             <View style={{ marginTop: spacing.xl }}>
@@ -549,10 +593,20 @@ const styles = StyleSheet.create({
   // Hero
   heroWrap: { minHeight: 240, overflow: 'hidden', position: 'relative' },
   heroContent: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
-  heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md },
+  heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.md, gap: spacing.sm },
   heroGreeting: { fontSize: 13, fontWeight: '600' },
   heroBrand: { fontSize: 20, fontWeight: '900', letterSpacing: 0.3, marginTop: 2 },
+  iconHeaderBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  identityChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginTop: spacing.sm, alignSelf: 'flex-start',
+    paddingHorizontal: 8, paddingVertical: 4,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    maxWidth: '95%',
+  },
+  identityText: { fontSize: 11, fontWeight: '600', flexShrink: 1 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   statusLabel: { fontSize: 13, fontWeight: '700' },

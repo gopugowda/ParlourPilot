@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert,
 } from 'react-native';
@@ -14,7 +14,7 @@ import {
 } from '@/src/utils/attendance';
 
 // Auto-refresh interval — keeps mobile in sync when the shift is toggled from web.
-const POLL_MS = 30_000;
+const POLL_MS = 15_000;
 
 const fmtTime = (iso: string) => fmtLocalTime(iso);
 
@@ -27,7 +27,7 @@ const ACTION_META: Record<AttendanceAction, { label: string; color: string; icon
 
 export default function AttendanceScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [config, setConfig] = useState<AttendanceConfig | null>(null);
   const [today, setToday] = useState<MyTodayEntry>({ status: 'out', logs: [] });
@@ -44,17 +44,26 @@ export default function AttendanceScreen() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
-  useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
 
-  // Auto-poll every 30s so status reflects check-outs performed on the web app.
-  // Only polls while the screen is focused (mount/unmount via useFocusEffect wrapper).
-  const pollRef = useRef<any>(null);
+  // Single focus effect: refetch on focus AND run a 15s poll while focused.
   useFocusEffect(useCallback(() => {
-    pollRef.current = setInterval(() => { refresh(true); }, POLL_MS);
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    };
+    refresh(true);
+    const id = setInterval(() => { refresh(true); }, POLL_MS);
+    return () => { clearInterval(id); };
   }, [refresh]));
+
+  const onManualRefresh = async () => { Haptics.selectionAsync(); await refresh(true); };
+
+  const onSignOut = () => {
+    Alert.alert(
+      'Sign out?',
+      'You will be returned to the login screen and need to sign in again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => logout() },
+      ],
+    );
+  };
 
   const doAction = async (action: AttendanceAction) => {
     setBusy(action);
@@ -107,6 +116,12 @@ export default function AttendanceScreen() {
             </Text>
           )}
         </View>
+        <TouchableOpacity onPress={onManualRefresh} style={styles.iconBtn} testID="attendance-refresh" accessibilityLabel="Refresh">
+          <Ionicons name="refresh" size={20} color={colors.brandPrimary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onSignOut} style={styles.iconBtn} testID="attendance-signout" accessibilityLabel="Sign out">
+          <Ionicons name="log-out-outline" size={20} color={colors.onSurfaceSecondary} />
+        </TouchableOpacity>
         {isAdmin && (
           <TouchableOpacity onPress={() => router.push('/manage/attendance-report')} style={styles.reportBtn} testID="open-report">
             <Ionicons name="bar-chart-outline" size={18} color={colors.brandPrimary} />
@@ -118,6 +133,14 @@ export default function AttendanceScreen() {
         contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} />}
       >
+        {/* Identity chip — helps compare with what the web app is signed in as. */}
+        <View style={styles.identityChip} testID="attendance-identity">
+          <Ionicons name="person-circle-outline" size={14} color={colors.onSurfaceSecondary} />
+          <Text style={styles.identityText} numberOfLines={1}>
+            Signed in as {user?.email || user?.phone || '—'}
+            {user?.email && user?.phone ? ` · ${user.phone}` : ''}
+          </Text>
+        </View>
         {/* Status card */}
         <View style={[styles.statusCard, {
           borderColor: isIn ? colors.success : onBreak ? colors.warning : colors.borderStrong,
@@ -226,6 +249,16 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   reportBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary },
+
+  identityChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10, paddingVertical: 5,
+    backgroundColor: colors.brandTertiary,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandSecondary,
+    maxWidth: '100%',
+  },
+  identityText: { fontSize: 11, fontWeight: '600', color: colors.brandPrimary, flexShrink: 1 },
 
   statusCard: { padding: spacing.md, borderRadius: radius.md, borderWidth: 1, backgroundColor: colors.surfaceSecondary, gap: 4 },
   dot: { width: 10, height: 10, borderRadius: 5 },
