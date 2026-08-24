@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/src/context/AuthContext';
+import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 import {
   type AttendanceConfig, type MyTodayEntry, type AttendanceAction,
@@ -18,6 +19,26 @@ const POLL_MS = 15_000;
 
 const fmtTime = (iso: string) => fmtLocalTime(iso);
 
+// Type for the /attendance/logs response (admin-only, tenant-wide log).
+// Matches what the web app renders in its "Activity log" table.
+type TeamLogRow = {
+  id: string;
+  user_id?: string;
+  user_name?: string;
+  action: AttendanceAction;
+  timestamp: string;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
+function todayISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 const ACTION_META: Record<AttendanceAction, { label: string; color: string; icon: any }> = {
   check_in:    { label: 'Checked In',   color: colors.success, icon: 'log-in-outline' },
   check_out:   { label: 'Checked Out',  color: colors.error,   icon: 'log-out-outline' },
@@ -27,21 +48,32 @@ const ACTION_META: Record<AttendanceAction, { label: string; color: string; icon
 
 export default function AttendanceScreen() {
   const router = useRouter();
-  const { user, logout } = useAuth();
-  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  const { user, logout, can } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'owner' || !!user?.is_owner;
+  // Team-wide log is only fetched for users with the attendance permission (or owner).
+  const canViewTeam = isAdmin || can('attendance');
   const [config, setConfig] = useState<AttendanceConfig | null>(null);
   const [today, setToday] = useState<MyTodayEntry>({ status: 'out', logs: [] });
+  const [teamLogs, setTeamLogs] = useState<TeamLogRow[]>([]);
   const [busy, setBusy] = useState<AttendanceAction | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [polling, setPolling] = useState(false);
 
   const refresh = useCallback(async (silent = false) => {
     if (silent) setPolling(true);
-    const [c, t] = await Promise.all([loadConfig(), loadMyToday()]);
+    const [c, t, team] = await Promise.all([
+      loadConfig(),
+      loadMyToday(),
+      // Only admins/owners can hit /attendance/logs — silently ignore 403 for others.
+      canViewTeam
+        ? api<TeamLogRow[]>(`/attendance/logs?date=${todayISO()}`).catch(() => [] as TeamLogRow[])
+        : Promise.resolve([] as TeamLogRow[]),
+    ]);
     setConfig(c || {});
     setToday(t || { status: 'out', logs: [] });
+    setTeamLogs(Array.isArray(team) ? team : []);
     if (silent) setPolling(false);
-  }, []);
+  }, [canViewTeam]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -196,7 +228,7 @@ export default function AttendanceScreen() {
           />
         </View>
 
-        {/* Today's punches */}
+        {/* Today's punches (personal shift log) */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Today&rsquo;s punches</Text>
           {today.logs.length === 0 ? (
@@ -218,6 +250,50 @@ export default function AttendanceScreen() {
             );
           })}
         </View>
+
+        {/* Team-wide activity log — admin/owner only. Mirrors the "Activity log"
+            table on the web app's Attendance page. Empty for anyone lacking
+            the `attendance` permission (backend returns 403 → we swallow it). */}
+        {canViewTeam && (
+          <View style={styles.card} testID="team-activity-log">
+            <View style={styles.teamHeader}>
+              <Text style={styles.cardTitle}>Team activity log</Text>
+              <TouchableOpacity onPress={() => router.push('/manage/attendance-report')} testID="open-full-report">
+                <Text style={styles.teamLink}>Full report ›</Text>
+              </TouchableOpacity>
+            </View>
+            {teamLogs.length === 0 ? (
+              <Text style={styles.empty}>No punches from your team today.</Text>
+            ) : (
+              <>
+                {teamLogs.slice(0, 20).map((row, i) => {
+                  const meta = ACTION_META[row.action] || ACTION_META.check_in;
+                  return (
+                    <View key={row.id || i} style={styles.logRow} testID={`team-log-${i}`}>
+                      <Ionicons name={meta.icon} size={16} color={meta.color} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.logAction} numberOfLines={1}>
+                          {row.user_name || 'Staff'} <Text style={{ color: meta.color, fontWeight: '700' }}>· {meta.label}</Text>
+                        </Text>
+                        <Text style={styles.logMeta}>
+                          {fmtTime(row.timestamp)}
+                          {typeof row.latitude === 'number' && typeof row.longitude === 'number'
+                            ? ` · 📍 ${row.latitude.toFixed(3)}, ${row.longitude.toFixed(3)}`
+                            : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+                {teamLogs.length > 20 && (
+                  <Text style={styles.moreHint}>
+                    Showing latest 20 of {teamLogs.length} · tap “Full report” for the complete list
+                  </Text>
+                )}
+              </>
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -281,4 +357,7 @@ const styles = StyleSheet.create({
   logRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.divider },
   logAction: { fontSize: 13, fontWeight: '600', color: colors.onSurface },
   logMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  teamHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
+  teamLink: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
+  moreHint: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: spacing.sm, textAlign: 'center', fontStyle: 'italic' },
 });

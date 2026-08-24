@@ -387,22 +387,17 @@ export default function StaffDashboard() {
             )}
           </View>
 
-          {!schedule || schedule.beautician_id == null ? (
-            <View style={styles.notLinkedBox} testID="schedule-not-linked">
-              <Ionicons name="person-remove-outline" size={22} color={colors.warning} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.notLinkedTitle}>Profile not linked</Text>
-                <Text style={styles.notLinkedSub}>Ask your manager to link your staff profile so your schedule appears here.</Text>
-              </View>
-            </View>
-          ) : schedule.today.length === 0 ? (
+          {/* Always render this section — mirrors the web app, which shows the
+              schedule for every staff regardless of whether a beautician doc
+              is linked. If nothing came back or nothing scheduled → empty state. */}
+          {(schedule?.today.length || 0) === 0 ? (
             <View style={styles.emptyBox}>
               <Ionicons name="calendar-outline" size={28} color={colors.onSurfaceTertiary} />
               <Text style={styles.emptyText}>No appointments today. Enjoy the quiet!</Text>
             </View>
           ) : (
             <View style={{ gap: spacing.sm }}>
-              {schedule.today.map(a => <ScheduleRow key={a.id} appt={a} />)}
+              {schedule!.today.map(a => <ScheduleRow key={a.id} appt={a} />)}
             </View>
           )}
 
@@ -423,72 +418,91 @@ export default function StaffDashboard() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>My Performance</Text>
 
-          {!earnings || earnings.linked === false ? (
-            <View style={styles.notLinkedBox} testID="earnings-not-linked">
-              <Ionicons name="person-remove-outline" size={22} color={colors.warning} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.notLinkedTitle}>Profile not linked</Text>
-                <Text style={styles.notLinkedSub}>Ask your manager to link your staff profile to see your earnings.</Text>
-              </View>
-            </View>
-          ) : (
-            <>
-              {/* Progress card */}
-              <View style={styles.progressCard}>
-                <View style={styles.progressHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.progressLabel}>Monthly Target</Text>
-                    <Text style={styles.progressValue} testID="month-revenue">
-                      {fmtINR(earnings.month_revenue)} <Text style={styles.progressTargetSub}>/ {fmtINR(earnings.monthly_target)}</Text>
-                    </Text>
+          {/* Always render — even without a beautician link, we show ₹0/₹0 with a
+              neutral "no target set" note. Matches the web app's behavior. */}
+          {(() => {
+            const e = earnings || {
+              linked: false,
+              basic_salary: 0,
+              commission_pct: 0,
+              monthly_target: 0,
+              month_revenue: 0,
+              target_met: true,
+              progress_pct: 100,
+              remaining_to_target: 0,
+              monthly_commission: 0,
+              advances: 0,
+              net_payable: 0,
+            } as MyEarnings;
+            return (
+              <>
+                {/* Progress card */}
+                <View style={styles.progressCard}>
+                  <View style={styles.progressHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.progressLabel}>This month&apos;s revenue</Text>
+                      <Text style={styles.progressValue} testID="month-revenue">
+                        {fmtINR(e.month_revenue)}
+                        {e.monthly_target > 0 && (
+                          <Text style={styles.progressTargetSub}> / {fmtINR(e.monthly_target)}</Text>
+                        )}
+                      </Text>
+                    </View>
+                    {e.monthly_target > 0 && (
+                      <View style={[styles.progressPctChip, { backgroundColor: e.target_met ? '#DDF3E4' : colors.brandTertiary }]}>
+                        <Text style={[styles.progressPctText, { color: e.target_met ? colors.success : colors.brandPrimary }]}>
+                          {Math.min(100, Math.round(e.progress_pct))}%
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                  <View style={[styles.progressPctChip, { backgroundColor: earnings.target_met ? '#DDF3E4' : colors.brandTertiary }]}>
-                    <Text style={[styles.progressPctText, { color: earnings.target_met ? colors.success : colors.brandPrimary }]}>
-                      {Math.min(100, Math.round(earnings.progress_pct))}%
-                    </Text>
+                  <View style={styles.progressBarBg}>
+                    <View
+                      style={[
+                        styles.progressBarFill,
+                        {
+                          width: `${Math.min(100, Math.max(0, e.progress_pct))}%` as any,
+                          backgroundColor: e.target_met ? colors.success : colors.brandPrimary,
+                        },
+                      ]}
+                      testID="progress-fill"
+                    />
                   </View>
+                  {e.monthly_target === 0 ? (
+                    <Text style={styles.progressNote} testID="target-msg">
+                      No monthly target set — every sale earns commission.
+                    </Text>
+                  ) : e.target_met ? (
+                    <Text style={[styles.progressNote, { color: colors.success, fontWeight: '700' }]} testID="target-msg">
+                      🎉 Target achieved! Commissions are now active.
+                    </Text>
+                  ) : (
+                    <Text style={styles.progressNote} testID="target-msg">
+                      {fmtINR(e.remaining_to_target)} more to reach your target!
+                    </Text>
+                  )}
                 </View>
-                <View style={styles.progressBarBg}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      {
-                        width: `${Math.min(100, Math.max(0, earnings.progress_pct))}%` as any,
-                        backgroundColor: earnings.target_met ? colors.success : colors.brandPrimary,
-                      },
-                    ]}
-                    testID="progress-fill"
-                  />
-                </View>
-                {earnings.monthly_target === 0 ? (
-                  <Text style={styles.progressNote}>No monthly target set. Ask your manager to set one to unlock commissions.</Text>
-                ) : earnings.target_met ? (
-                  <Text style={[styles.progressNote, { color: colors.success, fontWeight: '700' }]} testID="target-msg">
-                    🎉 Target achieved! Commissions are now active.
-                  </Text>
-                ) : (
-                  <Text style={styles.progressNote} testID="target-msg">
-                    {fmtINR(earnings.remaining_to_target)} more to reach your target!
-                  </Text>
-                )}
-              </View>
 
-              {/* Financial cards */}
-              <View style={styles.finGrid}>
-                <FinancialCard label="Basic Salary" value={fmtINR(earnings.basic_salary)} icon="briefcase-outline" color={colors.info} testID="fin-basic" />
-                <FinancialCard
-                  label="Commission"
-                  value={fmtINR(earnings.monthly_commission)}
-                  icon="trending-up-outline"
-                  color={colors.success}
-                  hint={earnings.target_met ? `${earnings.commission_pct}% of overage` : `Unlocks at target`}
-                  testID="fin-commission"
-                />
-                <FinancialCard label="Advances" value={fmtINR(earnings.advances)} icon="arrow-down-circle-outline" color={colors.error} testID="fin-advances" />
-                <FinancialCard label="Net Payable" value={fmtINR(earnings.net_payable)} icon="wallet-outline" color={colors.brandPrimary} highlight testID="fin-net" />
-              </View>
-            </>
-          )}
+                {/* Financial cards — always visible with 0 defaults. */}
+                <View style={styles.finGrid}>
+                  <FinancialCard label="Basic Salary" value={fmtINR(e.basic_salary)} icon="briefcase-outline" color={colors.info} testID="fin-basic" />
+                  <FinancialCard
+                    label="Monthly Commission"
+                    value={fmtINR(e.monthly_commission)}
+                    icon="trending-up-outline"
+                    color={colors.success}
+                    hint={e.monthly_target === 0
+                      ? `${e.commission_pct || 0}% on every sale`
+                      : e.target_met ? `${e.commission_pct}% of overage` : 'Unlocks at target'}
+                    testID="fin-commission"
+                  />
+                  <FinancialCard label="Advances Taken" value={fmtINR(e.advances)} icon="arrow-down-circle-outline" color={colors.error} testID="fin-advances" />
+                  <FinancialCard label="Net Payable" value={fmtINR(e.net_payable)} icon="wallet-outline" color={colors.brandPrimary} highlight testID="fin-net" />
+                </View>
+                <Text style={styles.finFormula}>Net Payable = Basic Salary + Monthly Commission − Advances</Text>
+              </>
+            );
+          })()}
         </View>
 
         {/* Section 4 — Quick Actions grid */}
@@ -665,6 +679,7 @@ const styles = StyleSheet.create({
 
   emptyBox: { alignItems: 'center', gap: spacing.sm, padding: spacing.xl, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   emptyText: { fontSize: 13, color: colors.onSurfaceTertiary },
+  finFormula: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: spacing.sm, textAlign: 'center', fontStyle: 'italic' },
   notLinkedBox: { flexDirection: 'row', gap: spacing.md, alignItems: 'center', padding: spacing.md, backgroundColor: '#FDF3E4', borderRadius: radius.md, borderWidth: 1, borderColor: '#F0DCA6' },
   notLinkedTitle: { fontSize: 14, fontWeight: '700', color: colors.warning },
   notLinkedSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },

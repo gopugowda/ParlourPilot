@@ -1565,3 +1565,38 @@ Client-only change. When you Publish:
 
 ### Deployment note
 Client-only change. Publish to Expo Go / OTA.
+
+
+## Iteration 35.5 — Admin Team-Log + Always-render Schedule/Performance
+
+**User report** (production, monali@glowup.com):
+1. Admin's mobile Attendance screen only shows their own punches — web shows the full team activity log with all staff.
+2. Even when staff has a linked beautician profile, mobile can hit legacy "Profile not linked" prompts in edge cases.
+3. Ask: default state should be Today's Schedule + My Performance **rendered with empty/zero data**, not a "profile not linked" wall. Match web app behavior.
+4. Confirm both apps use same backend/DB.
+
+**Confirmation** (direct production curl with Monali's creds):
+- `POST /api/auth/login` returns token → decoded tenant `0a06080d-a593-4fe5-923a-e2a6e0daf2b5` (Glow Up Unisex Salon)
+- `GET /api/me/earnings` → `linked: true, basic_salary: 0, monthly_target: 0, ...`
+- `GET /api/me/schedule` → `beautician_id: "de0fa5ab...", today: [], upcoming: []`
+- `GET /api/attendance/me/today` → today's punches under `user_id: 117c8c66...` (Monali)
+- ✅ Both apps share the same shared backend + Mongo tenant. Production: `https://parlourpilot.com`. Mobile production build uses that URL via `app.config.ts`.
+
+### Fix 1 — Team activity log on Attendance screen (`app/manage/attendance.tsx`)
+- New state `teamLogs: TeamLogRow[]`. Refreshed alongside `/attendance/me/today` and polled every 15s (in sync with existing logic).
+- Uses existing `GET /api/attendance/logs?date=YYYY-MM-DD` endpoint that the `attendance-report.tsx` screen already relies on.
+- Only fetched when the user is owner/admin OR has the `attendance` permission (staff without the perm silently skip — backend returns 403).
+- New card "Team activity log" renders below "Today's punches", shows latest 20 rows with `<staff> · <action>` and local HH:mm timestamp + GPS coords if present. "Full report ›" link opens `/manage/attendance-report` for the complete table.
+
+### Fix 2 — StaffDashboard sections always render (`src/components/StaffDashboard.tsx`)
+- Removed the two `notLinkedBox` prompts for Schedule + Performance.
+- **Today's Schedule** now always renders the section header + list. If no appointments (regardless of linked status) → single "No appointments today. Enjoy the quiet!" empty state.
+- **My Performance** now always renders the progress card + 4 financial cards with `₹0` defaults when the earnings response is missing or `linked=false`. Progress chip and "%" pill only appear when `monthly_target > 0`. "No monthly target set — every sale earns commission." shown when target is zero. Added the helper line `Net Payable = Basic Salary + Monthly Commission − Advances`.
+- No behavior change when data is fully populated — the section already handles that path.
+
+### Verified
+- Lint clean across both files.
+- App bundles + login page renders. Prod-side sanity checked via curl (backend returns expected shapes).
+
+### Deployment note
+Client-only. Publish to sync via Expo Go / OTA.
