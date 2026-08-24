@@ -115,6 +115,10 @@ type AuthCtx = {
   branches: Branch[];
   currentBranchId: string | null;
   loading: boolean;
+  /** True once a login/signup/me response has been applied. Consumers should
+   * gate any permission-derived UI on this — while false, `can()` returns
+   * false for everything except owner/owner-role (Default Restricted). */
+  permissionsReady: boolean;
   subscriptionExpired: boolean;
   brandColor: string;
   brandTextColor: string;
@@ -127,7 +131,8 @@ type AuthCtx = {
   selectBranch: (branchId: string | null) => Promise<void>;
   clearSubscriptionExpired: () => void;
   /** Check if the current user has a permission. Owner + admin always true.
-   * Falls back to true when backend hasn't shipped permissions yet (legacy). */
+   * When `permissionsReady` is false OR the backend didn't send a permissions
+   * object, we default to **false** (restricted) — see `permissionsReady`. */
   can: (key: PermissionKey) => boolean;
   /** First tab the user has access to, for landing redirects. */
   firstAccessibleRoute: () => string;
@@ -143,6 +148,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentBranchId, setCurrentBranchIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [subscriptionExpired, setSubscriptionExpired] = useState(false);
+  // Guards permission-derived UI. True only after login/signup/me applied.
+  const [permissionsReady, setPermissionsReady] = useState(false);
 
   // Register listeners for global API events
   useEffect(() => {
@@ -154,6 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await subscriptionStore.clear();
       await currentBranchStore.clear();
       setUser(null); setTenant(null); setSubscription(null); setBranches([]); setCurrentBranchIdState(null);
+      setPermissionsReady(false);
     });
   }, []);
 
@@ -212,6 +220,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setCurrentBranchIdState(null);
       await currentBranchStore.clear();
     }
+
+    // Mark permissions ready. Owner/owner-role bypass permissions checks entirely,
+    // so they are always ready. For other roles, if the backend included a
+    // `permissions` object we're good; otherwise we schedule a background /auth/me
+    // hydration so the UI never gets stuck on the loading skeleton.
+    const isOwnerRole = !!u?.is_owner || u?.role === 'owner';
+    const hasPermsInResponse = u?.permissions !== undefined && u?.permissions !== null;
+    if (isOwnerRole || hasPermsInResponse) {
+      setPermissionsReady(true);
+    } else {
+      // Safety net: fetch again — if the server responds with permissions we flip
+      // ready=true; otherwise we still flip ready=true so we don't spin forever
+      // (in that pathological case, `can()` will simply return false and the user
+      // will see the Default Restricted UI, which is safer than open access).
+      setPermissionsReady(false);
+      (async () => {
+        try {
+          const res: any = await authApi.me();
+          if (res?.user) {
+            setUser(res.user);
+            await userStore.set(res.user);
+          }
+        } catch {}
+        setPermissionsReady(true);
+      })();
+    }
   };
 
   useEffect(() => {
@@ -260,6 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setBranches([]);
     setCurrentBranchIdState(null);
     setSubscriptionExpired(false);
+    setPermissionsReady(false);
   }, []);
 
   const refreshTenant = useCallback(async () => {
@@ -324,16 +359,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearSubscriptionExpired = useCallback(() => setSubscriptionExpired(false), []);
 
   // ---- Permissions helper ----
-  // Owner / role='owner' → always true.
-  // If user.permissions is undefined (legacy backend / me not yet loaded) → true (safe fallback).
-  // Else → key must be truthy.
+  // Rules (in order):
+  //   1) No user           → false (login required first)
+  //   2) Owner / owner-role → true (always full access — no gating)
+  //   3) Not yet ready     → false (Default Restricted while permissions load)
+  //   4) No permissions obj → false (server didn't send perms; deny by default)
+  //   5) Explicit flag     → !!user.permissions[key]
   const can = useCallback((key: PermissionKey): boolean => {
     if (!user) return false;
-    if (user.is_owner || user.role === 'owner' || user.role === 'admin' && user.is_owner) return true;
-    // Legacy — permissions absent from backend response
-    if (!user.permissions || Object.keys(user.permissions).length === 0) return true;
+    if (user.is_owner || user.role === 'owner') return true;
+    if (!permissionsReady) return false;
+    if (!user.permissions) return false;
     return !!user.permissions[key];
-  }, [user]);
+  }, [user, permissionsReady]);
 
   const firstAccessibleRoute = useCallback((): string => {
     if (!user) return '/login';
@@ -362,7 +400,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const brandTextColor = contrastText(brandColor);
 
   return (
-    <Ctx.Provider value={{ user, tenant, subscription, branches, currentBranchId, loading, subscriptionExpired, brandColor, brandTextColor, themeRev, login, signup, logout, refreshTenant, refreshBranches, selectBranch, clearSubscriptionExpired, can, firstAccessibleRoute }}>
+    <Ctx.Provider value={{ user, tenant, subscription, branches, currentBranchId, loading, permissionsReady, subscriptionExpired, brandColor, brandTextColor, themeRev, login, signup, logout, refreshTenant, refreshBranches, selectBranch, clearSubscriptionExpired, can, firstAccessibleRoute }}>
       {children}
     </Ctx.Provider>
   );

@@ -1,0 +1,42 @@
+{
+  "summary": "Frontend-only verification of iteration 35.4 permission-first loading fix. ALL 7 requested checks PASS. Verified via real login form + slowed /auth/me route interception (2s delay): (1) login page renders unchanged with all testIDs present; (2) after Sign In, testID=`perms-loading` centered spinner appears at +368ms and stays visible for ~2.2s until /me returns, during which NO staff-dashboard, NO tab bar, and NO quick-action tiles are rendered (`permSeenCount: 71` continuous observations); (3) owner-role user (is_owner=true, role='admin') skips the gate entirely — testID=`dashboard-screen` present immediately after nav with all 5 tabs, no perms-loading DOM node ever appears; (4) staff-role non-owner (is_owner=false, role='staff') sees testID=`staff-dashboard` AFTER the spinner clears with all quick-action tiles (quick-new_bill, quick-expenses, quick-stock, quick-cash, quick-members) and no button flicker; (5) can() returns false while permissionsReady=false — proved by absence of any tab/button/tile in the DOM during the entire gate window (only [data-testid='perms-loading'] present); (6) logout via `logout-btn` on Staff Dashboard clears session and returns to /login (verified in the third browser run: after logout, localStorage cleared and page redirected to login screen); (7) 300ms fade-in animation is wired via Animated.timing in `_layout.tsx` line 32 (opacity 0→1 duration 300 useNativeDriver true) and runs the moment gateActive flips to false. Owner and Staff dashboards render cleanly; no red screens; no unhandled promise rejections. Note: the shared preview backend `https://staff-portal-331.preview.emergentagent.com` returns 404 for all /api/* paths from the internet — testing was performed by routing browser fetch calls through localhost:8001 (same MongoDB, same code) via Playwright route interception. This is a preview-hosting concern, not an app bug.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "ALL /api/*", "issue": "Shared preview backend host https://staff-portal-331.preview.emergentagent.com returns 404 for every /api/* path (verified from curl and browser). If a real user opens the preview URL they cannot log in. Local backend at :8001 responds correctly with same code, so this is likely a Kubernetes/ingress routing config on the preview environment, NOT a code bug. Testing was performed by routing browser fetches to localhost:8001. Main agent should confirm whether staff-portal-331 is intended to be used or if EXPO_PUBLIC_BACKEND_URL in /app/frontend/.env should point elsewhere.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Deprecated shadow* style props", "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Reference: /app/frontend/src/theme.ts shadows.card/strong (same as iter 35/36). Non-blocking on RN Web / Expo SDK 54."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/it37_login.jpeg",
+    "/app/test_reports/screenshots/it37_owner.jpeg",
+    "/app/test_reports/screenshots/it37_staff_after_form_login.jpeg",
+    "/app/test_reports/screenshots/it37_after_logout.jpeg"
+  ],
+  "action_items": [
+    "INVESTIGATE (HIGH): Shared preview backend at staff-portal-331.preview.emergentagent.com/api/* returns 404. Either fix the preview ingress OR update EXPO_PUBLIC_BACKEND_URL in /app/frontend/.env to point at the correct preview backend host.",
+    "INFO ONLY: iteration 35.4 permission-first loading fix VERIFIED end-to-end. The `perms-loading` gate cleanly blocks the tabs subtree for staff users until /auth/me confirms permissions; owner users bypass; can() correctly defaults to false during the ready=false window; 300ms fade-in is wired.",
+    "OPTIONAL: migrate `shadow*` styles in /app/frontend/src/theme.ts to `boxShadow` for RN Web / Expo SDK 54+ (deprecation warning, non-blocking; still open from iter 35/36)."
+  ],
+  "critical_code_review_comments": [
+    "AuthContext.tsx line 371-373: `can()` correctly returns false when `!permissionsReady` OR `!user.permissions` — Default Restricted pattern. Owner bypass on line 370 is safe (checks both is_owner and role==='owner').",
+    "AuthContext.tsx line 228-248: applyLoginResponse correctly distinguishes hasPermsInResponse (undefined vs null). The safety-net /me refetch (line 238-247) always flips permissionsReady=true in finally to prevent stuck spinners — verified via slowed /me test.",
+    "AuthContext.tsx line 164 & 297: permissionsReady is correctly reset to false on unauthorized listener AND on manual logout — so re-login after sign-out will re-trigger the gate for staff (verified indirectly: after logout, subsequent /me hydration on / will re-mount AuthContext with permissionsReady=false).",
+    "app/(tabs)/_layout.tsx line 25: `gateActive = !!user && !permissionsReady` — correctly narrow (does NOT gate when user is null, which is the pre-login/pre-hydration state — router redirects to /login instead). If user exists but perms not ready, gate holds tabs. Clean.",
+    "app/(tabs)/_layout.tsx line 28-34: Animated fade begins at opacity=0 while gate is active, resets to 0 and animates to 1 on gate release — exactly the requested 300ms fade-in. useNativeDriver=true is correct for opacity animations."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only per request)", "frontend": "100% (7/7 checks pass)"},
+  "seed_data_creation": "Reused iter-36 tenant/staff creds: t1owner_1758@testparlourpilot.com / admin123 (is_owner=true) and t1staff_1758@testparlourpilot.com / staff123 (staff, no permissions in login response — triggers safety-net /me). No new seed data created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "PREVIEW BACKEND IS BROKEN: https://staff-portal-331.preview.emergentagent.com/api/* returns 404 from Cloudflare edge for every path. Local backend at localhost:8001 is healthy and identical. Workaround: use Playwright `page.route('**/*', handler)` to intercept requests to staff-portal-331.preview.emergentagent.com/api/* and re-fetch them from http://localhost:8001. Add `headers['access-control-allow-origin']='*'` to fulfilled response. Login via the FORM works if you use `element.click()` then `page.keyboard.type(..., delay=20)` — RN Web inputs pick up React state via keyboard events (contradicts iter-36 note which said fills fail). Slow the /auth/me route by 1.5-2s to catch the perms-loading gate in the DOM. Use `page.on('dialog', lambda d: asyncio.create_task(d.accept()))` to auto-accept the logout confirm Alert. All testIDs from iter 36 still present: staff-dashboard, dashboard-screen, perms-loading, logout-btn, login-submit-button.",
+  "rca_of_issue": "N/A — iteration 35.4 fix verified end-to-end. Backend preview-URL 404 is an environment/ingress issue, not app code."
+}

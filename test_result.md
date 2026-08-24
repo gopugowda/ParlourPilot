@@ -1534,3 +1534,34 @@ Client-only change. When you Publish:
 - **Dev / Expo Go preview builds** → use `staff-portal-331.preview.emergentagent.com` (same as web preview).
 - **Production builds** → automatically use `https://parlourpilot.com`, because either Emergent's deploy pipeline sets `APP_ENV=production` OR EAS sets `EAS_BUILD_PROFILE=production`, and `app.config.ts` picks that up.
 - If the production Publish flow doesn't set either flag, add `APP_ENV=production` to your Emergent Publish environment.
+
+
+## Iteration 35.4 — Permission-First Loading (Default Restricted)
+
+**Bug**: staff briefly saw all buttons for ~30s before permissions loaded and hid them.
+**Root cause**: `AuthContext.can()` fallback was `return true` when `user.permissions` was undefined or empty.
+
+### Fix
+- **`src/context/AuthContext.tsx`**:
+  - New state `permissionsReady: boolean` — `true` only after login/signup/me response applied.
+  - `applyLoginResponse` sets it: `true` immediately if `is_owner` OR `user.permissions !== undefined`; otherwise schedules a background `authApi.me()` hydration and flips ready once complete.
+  - `can()` rules (in order): no user → false; owner/owner-role → true; `!permissionsReady` → false; `!user.permissions` → false; else `!!user.permissions[key]`.
+  - `logout()` and 401-unauthorized listener now reset `permissionsReady` to false so a re-login starts fresh.
+  - Exposed via `useAuth()`.
+- **`app/(tabs)/_layout.tsx`**:
+  - Renders a centered branded spinner (testID=`perms-loading`, "Loading your workspace…") whenever `user && !permissionsReady` — nothing else in the tabs subtree renders.
+  - Tabs / DesktopSidebar wrapped in `Animated.View` with a **300ms fade-in** the moment permissions land.
+  - Owner/is_owner=true bypass the gate entirely (ready immediately).
+
+### Verified (testing_agent iteration_37, 7/7 pass)
+- Staff login → gate visible ~2.2s while `/auth/me` returns → NO tabs / tiles / buttons in DOM during window → StaffDashboard renders with correct Quick Actions after.
+- Owner login → dashboard-screen renders immediately, gate never shown.
+- `can()` returns `false` during the gate window (no permission-derived UI leaks).
+- 300ms fade-in confirmed in code.
+- Logout resets `permissionsReady` and returns to login screen.
+
+### Backend concern flagged by tester (unrelated to this fix)
+- `https://staff-portal-331.preview.emergentagent.com/api/*` currently returns 404 at the Cloudflare edge (backend appears down or ingress mis-routed). Real users on the deployed mobile preview will get login failures until the web-app agent restores the preview backend. Production URL (`https://parlourpilot.com`) is unaffected — health probe returns 200.
+
+### Deployment note
+Client-only change. Publish to Expo Go / OTA.
