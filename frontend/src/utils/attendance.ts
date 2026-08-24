@@ -82,11 +82,48 @@ export type AttendanceConfig = {
 export type MyTodayEntry = {
   status: 'in' | 'out' | 'break';
   logs: Array<{
-    id?: string; action: AttendanceAction; timestamp: string;
+    id?: string; action: AttendanceAction;
+    /** Canonical timestamp field (web ↔ mobile parity). */
+    ts?: string;
+    /** Legacy alias — backend now dual-writes both. */
+    timestamp?: string;
+    /** Older aliases some rows may carry. */
+    time?: string;
+    created_at?: string;
+    /** Canonical staff-name field. */
+    staff_name?: string;
+    /** Legacy aliases. */
+    name?: string;
+    staffName?: string;
+    user_name?: string;
     latitude?: number; longitude?: number;
     distance_m?: number; within_geofence?: boolean;
   }>;
 };
+
+/**
+ * Pick the best available timestamp from a log row, tolerating both the
+ * canonical `ts` key and legacy aliases (`timestamp`, `time`, `created_at`).
+ * This matches the backend's `_normalize_log` fallback order and stays
+ * defensive for any row the migration hasn't touched yet.
+ */
+export function pickLogTimestamp(row: {
+  ts?: string; timestamp?: string; time?: string; created_at?: string;
+} | null | undefined): string | undefined {
+  if (!row) return undefined;
+  return row.ts || row.timestamp || row.time || row.created_at || undefined;
+}
+
+/**
+ * Pick the best available staff-name from a log row, tolerating canonical
+ * `staff_name` + legacy `name`/`staffName`/`user_name`.
+ */
+export function pickLogStaffName(row: {
+  staff_name?: string; name?: string; staffName?: string; user_name?: string;
+} | null | undefined): string | undefined {
+  if (!row) return undefined;
+  return row.staff_name || row.name || row.staffName || row.user_name || undefined;
+}
 
 /**
  * Ask for location permission (contextual) and return the current fix.

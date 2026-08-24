@@ -1638,3 +1638,40 @@ Python simulation of the fixed algorithm produced **01:18:23** — matches what 
 
 ### Deployment note
 Client-only. Publish → new build syncs via OTA. To see the timer flip instantly when checked out on web, either wait ≤ 15s (poll) or tap the ↻ Refresh button.
+
+
+## Iteration 35.7 — Standardized attendance_logs schema parity (mobile side)
+
+**Web-app agent (parallel work) shipped**:
+- Canonical keys `ts` + `staff_name` written alongside legacy `timestamp` + `name` on every new row.
+- Read endpoints normalise across `ts||timestamp||time||created_at` and `staff_name||name||staffName`.
+- Idempotent migration `backfill_attendance_fields` runs on boot to backfill both key names on existing rows.
+
+**Mobile-side changes (this iteration)** — pure client work, no backend edits:
+
+### `src/utils/attendance.ts`
+- Extended `MyTodayEntry.logs[]` shape to accept all schema variants: `ts?, timestamp?, time?, created_at?, staff_name?, name?, staffName?, user_name?`.
+- New helpers:
+  - `pickLogTimestamp(row)` → returns `row.ts || row.timestamp || row.time || row.created_at`.
+  - `pickLogStaffName(row)` → returns `row.staff_name || row.name || row.staffName || row.user_name`.
+- Order mirrors the backend's `_normalize_log` fallback ladder for perfect parity.
+
+### `src/components/StaffDashboard.tsx`
+- `computeShiftMs` now sources every timestamp through `pickLogTimestamp(l)` instead of `l.timestamp`, so mobile-written and web-written rows (or migrated rows) all produce consistent shift math.
+
+### `app/manage/attendance.tsx`
+- `TeamLogRow` type widened to accept every schema variant.
+- Personal punches list + team activity log now use `pickLogTimestamp` for sort and display, and `pickLogStaffName` for the staff-name column.
+
+### `app/manage/attendance-report.tsx`
+- `LogRow` type widened.
+- Activity log row now renders `pickLogStaffName(l) || l.staff_id || '—'` and `fmtTime(pickLogTimestamp(l))`.
+- Switched the local `fmtTime` from `new Date(iso).toLocaleString` to the shared dayjs helper `fmtLocalTime`, so 6-digit-microsecond ISO strings parse reliably on Hermes here too.
+
+### Verified
+- Lint clean across all four files.
+- Live production probe with Monali's token — current payload has `timestamp` + `user_name` (canonical fields not yet populated because production hasn't been redeployed with the web-app schema change). Mobile helpers fall back correctly and render the row identically.
+- After the user redeploys the web app, both aliases will be present and the mobile will continue to render seamlessly — no re-work needed.
+
+### Deployment note
+Client-only change. Publish to Expo Go / OTA. Once the user redeploys the web-app to production (`parlourpilot.com`), the migration `backfill_attendance_fields` will run on boot and every historical row will carry both `ts+timestamp` and `staff_name+name`. Mobile already handles either shape.

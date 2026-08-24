@@ -12,7 +12,7 @@ import { colors, spacing, radius, shadows } from '@/src/theme';
 import {
   type AttendanceConfig, type MyTodayEntry, type AttendanceAction,
   getFreshLocation, postAction, loadConfig, loadMyToday, fmtLocalTime,
-  parseTimestampMs,
+  parseTimestampMs, pickLogTimestamp, pickLogStaffName,
 } from '@/src/utils/attendance';
 
 // Auto-refresh interval — keeps mobile in sync when the shift is toggled from web.
@@ -22,12 +22,24 @@ const fmtTime = (iso: string) => fmtLocalTime(iso);
 
 // Type for the /attendance/logs response (admin-only, tenant-wide log).
 // Matches what the web app renders in its "Activity log" table.
+// Reflects the standardized schema with both canonical + legacy aliases so
+// mobile can render rows written by any client (old or new).
 type TeamLogRow = {
   id: string;
   user_id?: string;
+  /** Canonical staff-name field (schema standardization). */
+  staff_name?: string;
+  /** Legacy aliases. */
+  name?: string;
+  staffName?: string;
   user_name?: string;
   action: AttendanceAction;
-  timestamp: string;
+  /** Canonical timestamp field. */
+  ts?: string;
+  /** Legacy aliases. */
+  timestamp?: string;
+  time?: string;
+  created_at?: string;
   latitude?: number | null;
   longitude?: number | null;
 };
@@ -237,8 +249,10 @@ export default function AttendanceScreen() {
           ) : (
             // Backend returns logs in insertion order (not chronological).
             // Sort ascending so the personal list reads oldest → newest, matching web.
+            // Timestamp field is picked via `pickLogTimestamp` so we tolerate
+            // both the canonical `ts` and the legacy `timestamp` aliases.
             [...today.logs]
-              .sort((a, b) => (parseTimestampMs(a.timestamp) ?? 0) - (parseTimestampMs(b.timestamp) ?? 0))
+              .sort((a, b) => (parseTimestampMs(pickLogTimestamp(a)) ?? 0) - (parseTimestampMs(pickLogTimestamp(b)) ?? 0))
               .map((l, i) => {
               const meta = ACTION_META[l.action] || ACTION_META.check_in;
               return (
@@ -247,7 +261,7 @@ export default function AttendanceScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.logAction}>{meta.label}</Text>
                     <Text style={styles.logMeta}>
-                      {fmtTime(l.timestamp)}
+                      {fmtTime(pickLogTimestamp(l) || '')}
                       {typeof l.distance_m === 'number' && ` · ${Math.round(l.distance_m)}m`}
                       {l.within_geofence === false && ' · outside geofence'}
                     </Text>
@@ -274,19 +288,21 @@ export default function AttendanceScreen() {
             ) : (
               <>
                 {[...teamLogs]
-                  .sort((a, b) => (parseTimestampMs(b.timestamp) ?? 0) - (parseTimestampMs(a.timestamp) ?? 0))
+                  .sort((a, b) => (parseTimestampMs(pickLogTimestamp(b)) ?? 0) - (parseTimestampMs(pickLogTimestamp(a)) ?? 0))
                   .slice(0, 20)
                   .map((row, i) => {
                   const meta = ACTION_META[row.action] || ACTION_META.check_in;
+                  const rowTs = pickLogTimestamp(row) || '';
+                  const rowName = pickLogStaffName(row) || 'Staff';
                   return (
                     <View key={row.id || i} style={styles.logRow} testID={`team-log-${i}`}>
                       <Ionicons name={meta.icon} size={16} color={meta.color} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.logAction} numberOfLines={1}>
-                          {row.user_name || 'Staff'} <Text style={{ color: meta.color, fontWeight: '700' }}>· {meta.label}</Text>
+                          {rowName} <Text style={{ color: meta.color, fontWeight: '700' }}>· {meta.label}</Text>
                         </Text>
                         <Text style={styles.logMeta}>
-                          {fmtTime(row.timestamp)}
+                          {fmtTime(rowTs)}
                           {typeof row.latitude === 'number' && typeof row.longitude === 'number'
                             ? ` · 📍 ${row.latitude.toFixed(3)}, ${row.longitude.toFixed(3)}`
                             : ''}

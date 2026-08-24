@@ -27,6 +27,7 @@ import {
   type AttendanceAction, type AttendanceConfig, type MyTodayEntry,
   getFreshLocation, postAction, loadConfig, loadMyToday,
   parseTimestampMs, fmtLocalTime, fmtLocalDayTime,
+  pickLogTimestamp,
 } from '@/src/utils/attendance';
 
 // Polling — keep mobile in sync when web toggles the shift or new appointments land.
@@ -95,7 +96,7 @@ function computeShiftMs(
   serverStatus: MyTodayEntry['status'],
 ): number {
   const sorted = logs
-    .map(l => ({ l, ts: parseTimestampMs(l.timestamp) }))
+    .map(l => ({ l, ts: parseTimestampMs(pickLogTimestamp(l)) }))
     .filter((x): x is { l: MyTodayEntry['logs'][number]; ts: number } => x.ts != null)
     .sort((a, b) => a.ts - b.ts);
 

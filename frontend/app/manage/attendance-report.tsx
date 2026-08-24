@@ -7,14 +7,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { pickLogTimestamp, pickLogStaffName, fmtLocalTime } from '@/src/utils/attendance';
 
 type SummaryRow = {
   staff_name: string; employee_id?: string; total_hours: number; overtime_hours: number; days: number;
 };
 type LogRow = {
-  staff_name?: string; staff_id?: string; employee_id?: string;
+  staff_name?: string; name?: string; staffName?: string; user_name?: string;
+  staff_id?: string; employee_id?: string;
   action: 'check_in' | 'check_out' | 'break_start' | 'break_end';
-  timestamp: string; distance_m?: number; within_geofence?: boolean;
+  ts?: string; timestamp?: string; time?: string; created_at?: string;
+  distance_m?: number; within_geofence?: boolean;
 };
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -22,7 +25,9 @@ const daysAgoISO = (n: number) => {
   const d = new Date(); d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 };
-const fmtTime = (iso: string) => { try { return new Date(iso).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }); } catch { return iso; } };
+// Uses the dayjs helper so backend microsecond ISO strings parse reliably on Hermes,
+// and honours the canonical `ts` alias when present.
+const fmtTime = (iso?: string) => fmtLocalTime(iso || '');
 
 export default function AttendanceReportScreen() {
   const router = useRouter();
@@ -113,8 +118,8 @@ export default function AttendanceReportScreen() {
             logs.map((l, i) => (
               <View key={i} style={styles.logRow} testID={`log-row-${i}`}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.staffName}>{l.staff_name || l.staff_id || '—'}</Text>
-                  <Text style={styles.meta}>{prettyAction(l.action)} · {fmtTime(l.timestamp)}</Text>
+                  <Text style={styles.staffName}>{pickLogStaffName(l) || l.staff_id || '—'}</Text>
+                  <Text style={styles.meta}>{prettyAction(l.action)} · {fmtTime(pickLogTimestamp(l))}</Text>
                 </View>
                 {typeof l.distance_m === 'number' && (
                   <View style={[styles.distPill, {
