@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert,
 } from 'react-native';
@@ -10,13 +10,13 @@ import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 import {
   type AttendanceConfig, type MyTodayEntry, type AttendanceAction,
-  getFreshLocation, postAction, loadConfig, loadMyToday,
+  getFreshLocation, postAction, loadConfig, loadMyToday, fmtLocalTime,
 } from '@/src/utils/attendance';
 
-const fmtTime = (iso: string) => {
-  try { return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }); }
-  catch { return iso; }
-};
+// Auto-refresh interval — keeps mobile in sync when the shift is toggled from web.
+const POLL_MS = 30_000;
+
+const fmtTime = (iso: string) => fmtLocalTime(iso);
 
 const ACTION_META: Record<AttendanceAction, { label: string; color: string; icon: any }> = {
   check_in:    { label: 'Checked In',   color: colors.success, icon: 'log-in-outline' },
@@ -33,15 +33,28 @@ export default function AttendanceScreen() {
   const [today, setToday] = useState<MyTodayEntry>({ status: 'out', logs: [] });
   const [busy, setBusy] = useState<AttendanceAction | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [polling, setPolling] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (silent = false) => {
+    if (silent) setPolling(true);
     const [c, t] = await Promise.all([loadConfig(), loadMyToday()]);
     setConfig(c || {});
     setToday(t || { status: 'out', logs: [] });
+    if (silent) setPolling(false);
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
+
+  // Auto-poll every 30s so status reflects check-outs performed on the web app.
+  // Only polls while the screen is focused (mount/unmount via useFocusEffect wrapper).
+  const pollRef = useRef<any>(null);
+  useFocusEffect(useCallback(() => {
+    pollRef.current = setInterval(() => { refresh(true); }, POLL_MS);
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [refresh]));
 
   const doAction = async (action: AttendanceAction) => {
     setBusy(action);
@@ -84,7 +97,10 @@ export default function AttendanceScreen() {
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Attendance</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.headerTitle}>Attendance</Text>
+            {polling && <ActivityIndicator size="small" color={colors.brandPrimary} testID="attendance-polling" />}
+          </View>
           {config?.branch_name && (
             <Text style={styles.headerSub}>
               {config.branch_name}{config.gating_active ? ` · Geofence ${config.check_in_radius_m}m` : ' · Geofence off'}

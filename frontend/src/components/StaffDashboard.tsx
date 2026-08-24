@@ -27,7 +27,11 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import {
   type AttendanceAction, type AttendanceConfig, type MyTodayEntry,
   getFreshLocation, postAction, loadConfig, loadMyToday,
+  parseTimestampMs, fmtLocalTime, fmtLocalDayTime,
 } from '@/src/utils/attendance';
+
+// Polling — keep mobile in sync when web toggles the shift or new appointments land.
+const POLL_MS = 30_000;
 
 // ---------- Types (self-scoped) ----------
 type ScheduleAppt = {
@@ -71,25 +75,20 @@ const shade = (h: string, f: number) => {
   return `#${[c(r), c(g), c(b)].map(x => x.toString(16).padStart(2, '0')).join('')}`;
 };
 
-const fmtTime = (iso: string) => {
-  try { return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }); }
-  catch { return iso; }
-};
-const fmtDay = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' });
-  } catch { return iso; }
-};
+const fmtTime = (iso: string) => fmtLocalTime(iso);
+const fmtDay = (iso: string) => fmtLocalDayTime(iso).split(' · ')[0]; // "Wed, Jun 4"
 
 // ---------- Live shift-duration ticker ----------
 // Duration = sum of segments between (check_in|break_end) → (check_out|break_start).
 // If we're currently "in", tack on (now - lastOpenSegmentStart).
+// Timestamps are UTC ISO from the backend — parsed via `parseTimestampMs` so
+// microsecond precision doesn't blow up Hermes.
 function computeShiftMs(logs: MyTodayEntry['logs'], nowMs: number): number {
   let total = 0;
   let openStart: number | null = null;
   for (const l of logs) {
-    const t = new Date(l.timestamp).getTime();
-    if (isNaN(t)) continue;
+    const t = parseTimestampMs(l.timestamp);
+    if (t == null) continue;
     if (l.action === 'check_in' || l.action === 'break_end') {
       if (openStart == null) openStart = t;
     } else if (l.action === 'check_out' || l.action === 'break_start') {
@@ -124,6 +123,7 @@ export default function StaffDashboard() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [polling, setPolling] = useState(false);
   const [busy, setBusy] = useState<AttendanceAction | null>(null);
 
   // ---- Live ticker (only when checked in) ----
@@ -143,7 +143,10 @@ export default function StaffDashboard() {
   const shiftMs = useMemo(() => computeShiftMs(today.logs, nowMs), [today.logs, nowMs]);
 
   // ---- Loaders ----
-  const load = useCallback(async () => {
+  // `silent = true` → background refresh (poll or focus refetch) — shows a small
+  // spinner in the header instead of the pull-to-refresh indicator.
+  const load = useCallback(async (silent = false) => {
+    if (silent) setPolling(true);
     const [c, t, s, e] = await Promise.all([
       loadConfig(),
       loadMyToday(),
@@ -154,10 +157,21 @@ export default function StaffDashboard() {
     setToday(t || { status: 'out', logs: [] });
     setSchedule(s);
     setEarnings(e);
+    if (silent) setPolling(false);
   }, []);
 
   useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => { load(true); }, [load]));
+
+  // Poll every 30s while focused — this is what makes mobile sync when the web
+  // app checks the shift out (attendance status flips → button state + timer stop).
+  const pollRef = useRef<any>(null);
+  useFocusEffect(useCallback(() => {
+    pollRef.current = setInterval(() => { load(true); }, POLL_MS);
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [load]));
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
@@ -243,6 +257,12 @@ export default function StaffDashboard() {
                 <Text style={[styles.statusLabel, { color: brandTextColor }]}>
                   {isIn ? 'On the clock' : onBreak ? 'On break' : 'Checked out'}
                 </Text>
+                {polling && (
+                  <View style={styles.refreshChip} testID="staff-polling">
+                    <ActivityIndicator size="small" color={brandTextColor} />
+                    <Text style={[styles.refreshChipText, { color: brandTextColor }]}>Syncing…</Text>
+                  </View>
+                )}
               </View>
               <Text style={[styles.timerLabel, { color: brandTextColor, opacity: 0.8 }]}>Shift duration</Text>
               <Text style={[styles.timerValue, { color: brandTextColor }]} testID="shift-timer">
@@ -536,6 +556,15 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   statusLabel: { fontSize: 13, fontWeight: '700' },
+  refreshChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginLeft: spacing.sm,
+    paddingHorizontal: 8, paddingVertical: 3,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: radius.pill,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+  },
+  refreshChipText: { fontSize: 10, fontWeight: '700' },
   timerLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1, marginTop: spacing.md, textTransform: 'uppercase' },
   timerValue: { fontSize: 44, fontWeight: '900', marginTop: 2, fontVariant: ['tabular-nums'] as any },
   branchChip: {

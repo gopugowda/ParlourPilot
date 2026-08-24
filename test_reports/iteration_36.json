@@ -1,0 +1,42 @@
+{
+  "summary": "Frontend-only regression + fix-verification for iteration 35.1 (dayjs migration for microsecond ISO timestamps + 30s polling). ALL 10 requested checks PASS. Staff Dashboard renders (testID='staff-dashboard'); shift-timer displays HH:MM:SS and ticks live (observed 00:02:58 → 00:03:01 in 3s) — this proves `parseTimestampMs` correctly parses the backend's 6-digit-microsecond ISO string `2026-08-24T10:51:05.498994+00:00`. Attendance screen (testID='attendance-screen') renders 3 log rows (Checked In / Break Start / Break End) all showing `HH:mm` (10:51) with NO 'Invalid Date' strings visible. Owner Dashboard (testID='dashboard-screen') and Expenses screen render without regression. Login page renders (email input + submit button testIDs present) and no 'Invalid Date' text anywhere on any tested screen (staff dash, attendance, owner dash, expenses, login). dayjs 1.11.23 is installed and bundled; UI proves it works. Also verified 'Syncing…' indicator element exists (testID='staff-polling' and 'attendance-polling') in the DOM tree — only visible during active poll refresh. Preview backend still 404s /api/me/schedule and /api/me/earnings (documented in iter 35 as expected) → graceful 'Profile not linked' fallback still works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/me/schedule", "issue": "Still 404 on preview — frontend gracefully shows 'Profile not linked' as designed."},
+      {"endpoint": "GET /api/me/earnings", "issue": "Still 404 on preview — frontend gracefully shows 'Profile not linked' as designed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Deprecated shadow* style props", "issue": "Console warning on every screen: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Reference: /app/frontend/src/theme.ts shadows.card/strong. Same warning as iter 35 — non-blocking on RN Web / Expo SDK 54."},
+      {"component": "Deprecated props.pointerEvents", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Likely from a react-native-web component or third-party lib; low priority."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/it36_staff.jpeg",
+    "/app/test_reports/screenshots/it36_attendance2.jpeg",
+    "/app/test_reports/screenshots/it36_owner.jpeg",
+    "/app/test_reports/screenshots/it36_expenses.jpeg"
+  ],
+  "action_items": [
+    "OPTIONAL: Migrate /app/frontend/src/theme.ts `shadow*` style props to `boxShadow` for RN Web / Expo SDK 54+ (deprecation, non-blocking).",
+    "INFO ONLY: iteration 35.1 fix VERIFIED — mobile now correctly parses 6-digit-microsecond ISO timestamps via dayjs (`parseTimestamp` / `parseTimestampMs`) and the 30-second poll keeps the shift status/timer in sync. No 'Invalid Date' anywhere in the attendance / staff dashboard UI."
+  ],
+  "critical_code_review_comments": [
+    "attendance.ts parseTimestamp fallback uses dayjs.utc(normalized).local() — good, matches RFC 3339 handling. Regex `(\\.\\d{3})\\d+` correctly trims 6-digit fractional seconds to 3 without touching well-formed ms strings.",
+    "Both StaffDashboard and attendance.tsx wrap the poll interval in useFocusEffect — good, no leaked timers when navigating away.",
+    "attendance.tsx line 47 `useEffect(() => { refresh(); }, [refresh])` combined with `useFocusEffect(useCallback(() => { refresh(); }, [refresh]))` will double-fetch on first mount + focus — harmless duplicate GET but could dedup by removing the useEffect since focus fires on mount too.",
+    "StaffDashboard.load's Promise.all fires 4 requests in parallel including the two /api/me/* endpoints that currently 404 — .catch(()=>null) handles it cleanly, no unhandled rejection."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (10/10 checks pass)"},
+  "seed_data_creation": "Reused iter-35 tenant/staff (t1owner_1758@testparlourpilot.com / admin123 and t1staff_1758@testparlourpilot.com / staff123). Punched check_in + break_start + break_end via /api/attendance/action to seed 3 log rows with real 6-digit-microsecond timestamps (2026-08-24T10:51:05.498994+00:00 etc.) to exercise the fix.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The React Native Web login form is still broken for Playwright — native input setter + input event does NOT wire through to React state, so page.fill/type/keyboard.type all fail to submit login. Workaround that works reliably: POST /api/auth/login via fetch inside page.evaluate(), then set localStorage keys `parlourpilot_auth_token`, `parlourpilot_auth_user`, `parlourpilot_auth_tenant`, `parlourpilot_auth_subscription`, then goto('/'). Preview creds admin@glowup.com still 401. Reuse test tenant creds from this iteration.",
+  "rca_of_issue": "N/A — fix from iteration 35.1 is verified end-to-end via UI. Backend emits `2026-08-24T10:51:05.498994+00:00`; dayjs-based `parseTimestamp` normalizes the fractional seconds to 3 digits, and the shift-timer + attendance log rows render correctly formatted local times with no 'Invalid Date' anywhere."
+}

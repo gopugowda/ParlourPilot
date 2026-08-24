@@ -10,7 +10,59 @@
  */
 import * as Location from 'expo-location';
 import { Alert, Linking } from 'react-native';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
 import { api } from '@/src/api/client';
+
+// Extend dayjs with UTC support so we can safely convert backend UTC → user local time.
+dayjs.extend(utc);
+
+/**
+ * Robustly parse a backend timestamp into a dayjs object (local time).
+ *
+ * Why this exists: the FastAPI backend emits `datetime.now(timezone.utc).isoformat()`
+ * → e.g. `2026-08-24T13:22:00.123456+00:00`. React Native's Hermes engine returns
+ * `Invalid Date` on strings with **6-digit microseconds** on some Android builds.
+ * We normalize by trimming to millisecond precision and coercing the `Z` variant.
+ *
+ * Returns null if the input is falsy or unparseable — callers should defend against it.
+ */
+export function parseTimestamp(iso?: string | number | null): dayjs.Dayjs | null {
+  if (iso == null) return null;
+  if (typeof iso === 'number') {
+    const d = dayjs(iso);
+    return d.isValid() ? d : null;
+  }
+  const raw = String(iso).trim();
+  if (!raw) return null;
+  // Trim microseconds to milliseconds: `.123456` → `.123`.
+  const normalized = raw
+    .replace(/(\.\d{3})\d+/, '$1')     // 6-digit → 3-digit fractional seconds
+    .replace(/Z$/, '+00:00');          // Z → explicit UTC offset (RFC 3339)
+  const d = dayjs(normalized);
+  if (d.isValid()) return d;
+  // Fallback: treat as UTC without offset (older serialisers).
+  const d2 = dayjs.utc(normalized);
+  return d2.isValid() ? d2.local() : null;
+}
+
+/** Milliseconds since epoch for a backend timestamp, or null if unparseable. */
+export function parseTimestampMs(iso?: string | number | null): number | null {
+  const d = parseTimestamp(iso);
+  return d ? d.valueOf() : null;
+}
+
+/** Format a backend timestamp as local HH:mm (24h). Returns '—' on failure. */
+export function fmtLocalTime(iso?: string | number | null): string {
+  const d = parseTimestamp(iso);
+  return d ? d.format('HH:mm') : '—';
+}
+
+/** Format a backend timestamp as local weekday + short time (used in Upcoming lists). */
+export function fmtLocalDayTime(iso?: string | number | null): string {
+  const d = parseTimestamp(iso);
+  return d ? d.format('ddd, MMM D · HH:mm') : '—';
+}
 
 export type AttendanceAction = 'check_in' | 'check_out' | 'break_start' | 'break_end';
 

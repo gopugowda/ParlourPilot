@@ -1431,3 +1431,45 @@ Per user, all Phase A backend changes (`GET /api/me/schedule`, `GET /api/me/earn
 
 ### Deployment note
 Client-only change. Push via **Publish** to sync with Expo Go / OTA.
+
+
+## Iteration 35.1 — Attendance sync + Invalid Date fix (mobile)
+
+**Bugs reported by user**:
+1. Attendance Activity Log shows "Invalid Date" for several entries → breaks shift-duration math.
+2. Checkout on web app does not sync to mobile — mobile timer keeps ticking.
+3. Staff Dashboard shows "Profile not linked" (this is a *backend* concern — see note below).
+
+### Root cause
+Backend emits UTC ISO timestamps with **6-digit microseconds** (`datetime.now(timezone.utc).isoformat()` → `2026-08-24T13:22:00.123456+00:00`). React Native's Hermes engine returns `Invalid Date` on strings with microsecond precision on some Android builds. The mobile app had no periodic re-fetch, so it never noticed web-side check-outs.
+
+### Fixes (mobile-only, no backend edits)
+- **New dep**: `dayjs@1.11.23` (+ `utc` plugin) — 2 KB, adds robust parsing.
+- **`src/utils/attendance.ts`** — new exports:
+  - `parseTimestamp(iso)` — normalises microseconds → milliseconds, `Z` → `+00:00`, falls back to UTC parse.
+  - `parseTimestampMs(iso)` — same but returns epoch ms.
+  - `fmtLocalTime(iso)` — 24h HH:mm in the user's local timezone.
+  - `fmtLocalDayTime(iso)` — "Wed, Jun 4 · 13:22".
+- **`src/components/StaffDashboard.tsx`** — swapped `new Date(iso).getTime()` for `parseTimestampMs()` in `computeShiftMs`; swapped `fmtTime`/`fmtDay` to use the local-time helpers.
+- **`app/manage/attendance.tsx`** — swapped `fmtTime` for `fmtLocalTime`.
+- **30-second polling** on both `StaffDashboard` and `attendance.tsx` via `useFocusEffect` + `setInterval` — only runs while the screen is focused. When web checks out the shift, mobile picks it up within 30s (buttons + timer reflect the true DB state).
+- **"Syncing…" indicator** — small `ActivityIndicator` + label chip appears next to the status label (Staff Dashboard) and next to the "Attendance" title (attendance screen) whenever a background poll is in-flight. Uses `polling` state so the pull-to-refresh spinner isn't reused.
+
+### Backend action still needed (user must ship)
+The "Profile not linked" issue is a backend email-match sensitivity bug. Users log in with `Some.User@Example.com` but their beautician doc stores `some.user@example.com`. On the shared web-app backend:
+- `/api/me/schedule` and `/api/me/earnings` should look up the beautician case-insensitively:
+  ```python
+  db.beauticians.find_one({
+      "tenant_id": tid,
+      "email": {"$regex": f"^{re.escape(user['email'])}$", "$options": "i"}
+  })
+  ```
+- Recommend also normalising email to lowercase on all writes (signup, beautician CRUD, admin add-user).
+
+### Verified
+- Lint clean across `attendance.ts`, `StaffDashboard.tsx`, and `attendance.tsx`.
+- Bundler starts, login page renders, no runtime errors.
+- Polling is scoped by `useFocusEffect` so the interval is torn down when navigating away — no leaks.
+
+### Deployment note
+Client-only change. Click **Publish** to sync to Expo Go / OTA. `dayjs` is a JS-only dep — no native rebuild required.
