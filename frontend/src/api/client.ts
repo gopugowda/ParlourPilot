@@ -1,7 +1,21 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+/**
+ * Resolve the API base URL with a priority order that works across:
+ *   - `expo start` (dev): env var is read from `.env` at bundle time.
+ *   - EAS / Emergent Publish (production): `app.config.ts` swaps in the
+ *     production URL and exposes it via `expo.extra.backendUrl` at runtime.
+ *
+ * Preference:
+ *   1) `Constants.expoConfig.extra.backendUrl` (baked at build time by app.config.ts)
+ *   2) `EXPO_PUBLIC_BACKEND_URL` (compile-time from .env — also our dev default)
+ *   3) '' → callers will fail loudly with a network error, which is preferable
+ *          to silently pointing at the wrong host.
+ */
+const runtimeBackend = (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl;
+const BASE_URL = runtimeBackend || process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 const TOKEN_KEY = 'parlourpilot_auth_token';
 const USER_KEY = 'parlourpilot_auth_user';

@@ -1509,3 +1509,28 @@ The mobile is authenticated as a **different `user_id`** than the web app. On th
 
 ### Deployment note
 Client-only change. Publish to sync via OTA / new Expo Go build.
+
+
+## Iteration 35.3 — Repointed mobile to shared web-app backend
+
+**Root cause of "Profile not linked" + shift-sync failure**: mobile was hitting `https://salon-invoice-app.preview.emergentagent.com` (its own preview backend + Mongo cluster) while web was hitting `https://staff-portal-331.preview.emergentagent.com` (preview) / `https://parlourpilot.com` (prod). **Different databases → no shared users / attendance / beauticians.**
+
+### Change
+- **`/app/frontend/.env`** — `EXPO_PUBLIC_BACKEND_URL` now points to the shared web-app preview: `https://staff-portal-331.preview.emergentagent.com`. `EXPO_PACKAGER_PROXY_URL` / `EXPO_PACKAGER_HOSTNAME` left untouched (protected).
+- **`/app/frontend/app.config.ts`** (new) — dynamic Expo config that resolves the backend URL at build time:
+  - `EXPO_PUBLIC_BACKEND_URL_OVERRIDE` (dev override) > `APP_ENV=production` OR `EAS_BUILD_PROFILE=production` → `https://parlourpilot.com` > `EXPO_PUBLIC_BACKEND_URL` (from .env) > preview fallback.
+  - Exposes as `Constants.expoConfig.extra.backendUrl` at runtime.
+  - Spreads existing `app.json` via the `config` param — no other app metadata affected.
+- **`src/api/client.ts`** — `BASE_URL` now prefers `Constants.expoConfig.extra.backendUrl` over `process.env.EXPO_PUBLIC_BACKEND_URL`, so production builds baked by EAS / Emergent Publish automatically get `https://parlourpilot.com` even if the `.env` still points at preview.
+
+### Verified
+- Backends respond (health probe): preview 200, production 200, `/api/me/earnings` returns 401 without auth (endpoint exists).
+- Bundler restarts cleanly, login page renders.
+- Live network capture on a login attempt confirms the mobile now calls `https://staff-portal-331.preview.emergentagent.com/api/auth/login` (backend replies with "Invalid login or password" for fake creds — proves the wire is right).
+- 401 auto-logout already in place → stale tokens from the old backend will be cleared on first API call after the switch, forcing a fresh login against the correct DB.
+
+### Deployment note
+Client-only change. When you Publish:
+- **Dev / Expo Go preview builds** → use `staff-portal-331.preview.emergentagent.com` (same as web preview).
+- **Production builds** → automatically use `https://parlourpilot.com`, because either Emergent's deploy pipeline sets `APP_ENV=production` OR EAS sets `EAS_BUILD_PROFILE=production`, and `app.config.ts` picks that up.
+- If the production Publish flow doesn't set either flag, add `APP_ENV=production` to your Emergent Publish environment.
