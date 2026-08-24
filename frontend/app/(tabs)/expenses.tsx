@@ -22,14 +22,18 @@ import {
 type Expense = {
   id: string; category: string; description: string; amount: number;
   date: string; payment_mode?: string; notes?: string;
+  beautician_id?: string; beautician_name?: string;
   created_by_name?: string; created_at: string;
 };
+
+type BeauticianOpt = { id: string; name: string; role?: string };
 
 const CATEGORY_ICON: Record<string, any> = {
   Material: 'cube-outline',
   Utilities: 'flash-outline',
   Rent: 'home-outline',
   Salary: 'wallet-outline',
+  'Salary Advance': 'arrow-down-circle-outline',
   Maintenance: 'construct-outline',
   Other: 'ellipsis-horizontal-outline',
 };
@@ -65,6 +69,13 @@ export default function ExpensesScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
+  // Salary Advance — staff attribution
+  const [beauticians, setBeauticians] = useState<BeauticianOpt[]>([]);
+  const [beauticianId, setBeauticianId] = useState<string>('');
+  const [beauticianName, setBeauticianName] = useState<string>('');
+  const [staffPickerOpen, setStaffPickerOpen] = useState(false);
+  const isAdvance = cat.trim().toLowerCase() === 'salary advance';
+
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
 
@@ -75,12 +86,14 @@ export default function ExpensesScreen() {
         if (filter === 'today') q = `?date=${today}`;
         else if (filter === 'month') q = `?month=${month}`;
       }
-      const [rows, cats] = await Promise.all([
+      const [rows, cats, staff] = await Promise.all([
         api<Expense[]>(`/expenses${q}`),
         api<string[]>('/expenses/categories').catch(() => categories),
+        api<BeauticianOpt[]>('/beauticians').catch(() => [] as BeauticianOpt[]),
       ]);
       setList(rows || []);
       if (Array.isArray(cats) && cats.length) setCategories(cats);
+      if (Array.isArray(staff)) setBeauticians(staff);
     } catch {}
   };
 
@@ -90,7 +103,9 @@ export default function ExpensesScreen() {
   const openAdd = () => {
     setEditing(null); setCat('Material'); setDesc(''); setAmt('');
     setExpDate(today); setPayMode('cash');
-    setNotes(''); setErr(null); setEditOpen(true);
+    setNotes(''); setErr(null);
+    setBeauticianId(''); setBeauticianName('');
+    setEditOpen(true);
   };
   const openEdit = (e: Expense) => {
     if (!isAdmin) return;
@@ -98,7 +113,10 @@ export default function ExpensesScreen() {
     setAmt(String(e.amount));
     setExpDate(e.date || today);
     setPayMode(toExpenseToken(e.payment_mode));
-    setNotes(e.notes || ''); setErr(null); setEditOpen(true);
+    setNotes(e.notes || ''); setErr(null);
+    setBeauticianId(e.beautician_id || '');
+    setBeauticianName(e.beautician_name || '');
+    setEditOpen(true);
   };
 
   const save = async () => {
@@ -108,9 +126,11 @@ export default function ExpensesScreen() {
     const n = Number(amt);
     if (!(n > 0)) { setErr('Amount must be > 0'); return; }
     if (!expDate) { setErr('Date required'); return; }
+    // Salary Advance MUST be attributed to a staff member so it feeds their earnings.
+    if (isAdvance && !beauticianId) { setErr('Pick the staff member receiving the advance'); return; }
     setSaving(true);
     try {
-      const body = {
+      const body: any = {
         category: cat.trim(),
         description: desc.trim(),
         amount: n,
@@ -118,6 +138,10 @@ export default function ExpensesScreen() {
         payment_mode: toExpenseToken(payMode),
         notes: notes.trim(),
       };
+      if (isAdvance && beauticianId) {
+        body.beautician_id = beauticianId;
+        body.beautician_name = beauticianName;
+      }
       if (editing) await api(`/expenses/${editing.id}`, { method: 'PUT', body });
       else await api('/expenses', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -283,6 +307,7 @@ export default function ExpensesScreen() {
                   <Text style={styles.expDesc}>{e.description}</Text>
                   <Text style={styles.expMeta}>
                     {e.category} · {e.date}
+                    {e.beautician_name ? ` · ${e.beautician_name}` : ''}
                     {e.payment_mode ? ` · ${paymentLabel(e.payment_mode)}` : ''}
                     {e.created_by_name ? ` · ${e.created_by_name}` : ''}
                   </Text>
@@ -376,6 +401,27 @@ export default function ExpensesScreen() {
                 </ScrollView>
               </View>
 
+              {/* Salary Advance → staff attribution picker */}
+              {isAdvance && (
+                <View style={styles.field}>
+                  <Text style={styles.label}>Staff receiving advance <Text style={styles.req}>*</Text></Text>
+                  <TouchableOpacity
+                    testID="exp-staff-picker"
+                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                    onPress={() => { Haptics.selectionAsync(); setStaffPickerOpen(true); }}
+                  >
+                    <Ionicons name="person-outline" size={16} color={colors.onSurfaceTertiary} />
+                    <Text style={{ fontSize: 14, color: beauticianName ? colors.onSurface : colors.onSurfaceTertiary, flex: 1 }}>
+                      {beauticianName || 'Select staff'}
+                    </Text>
+                    <Ionicons name="chevron-down" size={16} color={colors.onSurfaceTertiary} />
+                  </TouchableOpacity>
+                  <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
+                    This attributes the advance to their monthly earnings.
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.field}>
                 <Text style={styles.label}>Description <Text style={styles.req}>*</Text></Text>
                 <TextInput
@@ -449,6 +495,51 @@ export default function ExpensesScreen() {
               }}
             />
             <TouchableOpacity style={styles.datePickerClose} onPress={() => setDatePickerOpen(false)}>
+              <Text style={styles.datePickerCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Staff picker modal (for Salary Advance) */}
+      <Modal visible={staffPickerOpen} transparent animationType="fade" onRequestClose={() => setStaffPickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setStaffPickerOpen(false)}>
+          <Pressable style={styles.datePickerSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Select staff</Text>
+            <Text style={styles.shareSub}>Advance will be attributed to their monthly earnings.</Text>
+            <ScrollView style={{ maxHeight: 400 }} keyboardShouldPersistTaps="handled">
+              {beauticians.length === 0 ? (
+                <Text style={{ textAlign: 'center', color: colors.onSurfaceTertiary, paddingVertical: spacing.lg }}>
+                  No staff found. Add staff first.
+                </Text>
+              ) : beauticians.map(b => (
+                <TouchableOpacity
+                  key={b.id}
+                  testID={`staff-opt-${b.id}`}
+                  style={[
+                    styles.shareAction,
+                    beauticianId === b.id && { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
+                  ]}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setBeauticianId(b.id);
+                    setBeauticianName(b.name);
+                    setStaffPickerOpen(false);
+                  }}
+                >
+                  <View style={[styles.shareIcon, { backgroundColor: colors.brandTertiary }]}>
+                    <Ionicons name="person" size={20} color={colors.brandPrimary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.shareTitle}>{b.name}</Text>
+                    {b.role ? <Text style={styles.shareDesc}>{b.role}</Text> : null}
+                  </View>
+                  {beauticianId === b.id && <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.datePickerClose} onPress={() => setStaffPickerOpen(false)}>
               <Text style={styles.datePickerCloseText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>

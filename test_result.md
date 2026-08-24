@@ -1396,3 +1396,38 @@ Screenshots confirm punch-clock, report, and geofence UI render. Lint clean acro
 
 ### Deployment note
 Requires a **rebuild** for iOS/Android to include the new `NSLocationWhenInUseUsageDescription` and the `expo-location` native module. Expo Go works for smoke testing after Publish, but real device install needs a fresh build for the location prompt.
+
+
+## Iteration 35 — Incentive-Driven Staff Dashboard (mobile)
+
+**Ask**: build a self-scoped Staff Dashboard as the home screen for staff-role non-owner users. Owners keep their existing dashboard.
+
+### New files
+- `src/components/StaffDashboard.tsx` — new home screen for staff. Sections:
+  1) **Shift Control** — reuses `/api/attendance/*`; Check-In / Break / Check-Out big buttons + a live 1s-ticking shift-duration timer computed client-side from logs (sums (check_in|break_end) → (check_out|break_start) segments; if currently "in", adds now − last open segment).
+  2) **Daily Schedule** — pulls `/api/me/schedule`; renders Today + Upcoming. If `beautician_id` is null → shows "Profile not linked" prompt.
+  3) **My Performance & Target** — pulls `/api/me/earnings`; progress bar + target-met/remaining message + 2×2 financial cards (Basic Salary / Monthly Commission / Advances / Net Payable). Uses tenant `currency_symbol` via `fmtINR`. If `linked === false` → shows "Profile not linked" prompt.
+  4) **Quick Actions** — icon tiles gated by `user.permissions`: `new_bill`, `expenses`, `stock`, `cash_closing`, `members`. Hidden entirely if none allowed.
+
+### Wiring
+- `app/(tabs)/index.tsx` — top-level dispatcher: if `user.role === 'staff' && !user.is_owner` → `<StaffDashboard/>`, else `<OwnerDashboard/>` (existing content, unchanged behaviour).
+- `src/context/AuthContext.tsx` — `firstAccessibleRoute()` sends staff-non-owner users to `/(tabs)` (so they land on Staff Dashboard).
+- `app/(tabs)/_layout.tsx` — Dashboard tab always visible for staff-non-owner (previously hidden behind `reports` permission).
+
+### Expenses screen — Salary Advance plumbing (`app/(tabs)/expenses.tsx`)
+- Loads `/api/beauticians` alongside categories.
+- Extended `ExpenseIn` type + POST payload to send optional `beautician_id` / `beautician_name`.
+- When the category is "Salary Advance" the sheet reveals a **staff picker** (searchable modal). Save is blocked until a staff member is chosen.
+- Expense list row now surfaces the attributed staff name when present.
+- Icon map extended with `Salary Advance → arrow-down-circle-outline`.
+
+### Backend
+Per user, all Phase A backend changes (`GET /api/me/schedule`, `GET /api/me/earnings`, `Salary Advance` in `EXPENSE_CATEGORIES`, `ExpenseIn.beautician_id/name`) are already deployed on the shared production backend — **not** re-added here to avoid duplicate route/model conflicts.
+
+### Verified
+- Lint clean across all touched files.
+- Login page still renders (dispatcher only activates once a staff-role user is loaded).
+- Owner dashboard path unchanged (regression-safe).
+
+### Deployment note
+Client-only change. Push via **Publish** to sync with Expo Go / OTA.

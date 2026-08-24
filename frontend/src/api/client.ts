@@ -172,6 +172,15 @@ export const branchApi = {
   pricing: () => api('/pricing'),
 };
 
+/** Unified billing endpoint (shared prod backend) — used for Growth upgrade and future add-ons. */
+export const billingApi = {
+  createOrder: (data: { kind: 'growth' | 'extra_branch'; plan: 'monthly' | 'yearly'; display_currency?: string }) =>
+    api('/billing/checkout/order', { method: 'POST', body: data }),
+  verifyPayment: (data: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) =>
+    api('/billing/checkout/verify', { method: 'POST', body: data }),
+  history: () => api('/billing/history'),
+};
+
 export const paymentsApi = {
   config: () => api('/payments/config'),
 };

@@ -12,13 +12,15 @@ import { DesktopSidebar } from '@/src/components/DesktopSidebar';
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { brandColor } = useBrand();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const onBrand = contrastText(brandColor || colors.brandPrimary);
   const inactive = onBrand === '#FFFFFF' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.55)';
   const { isDesktop } = useResponsive();
 
-  // Compute which tabs to hide via permissions.
-  const hideDashboard = !can('reports');
+  // Staff-role non-owners always see the Dashboard tab (their Staff Dashboard).
+  // Owners/admins fall back to the `reports` permission gate.
+  const isStaffRole = user?.role === 'staff' && !user?.is_owner;
+  const hideDashboard = isStaffRole ? false : !can('reports');
   const hideNewBill = !can('new_bill');
   const hideExpenses = !can('expenses');
   const hideHistory = !can('bills');

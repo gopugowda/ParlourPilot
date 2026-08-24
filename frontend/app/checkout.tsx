@@ -9,7 +9,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
-import { branchApi, paymentsApi, tenantApi, tokenStore } from '@/src/api/client';
+import { branchApi, billingApi, paymentsApi, tenantApi, tokenStore } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
@@ -19,20 +19,39 @@ const API_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 // INR salons see local INR prices; every other salon sees flat USD prices.
 // The actual gateway charge is ALWAYS in INR (subscription is processed in India).
 const PRICES_INR: Record<string, { monthly: number; yearly: number }> = {
-  branch: { monthly: 888, yearly: 8888 },
-  tenant: { monthly: 999, yearly: 9999 },
+  starter: { monthly: 999, yearly: 9999 },
+  growth: { monthly: 2499, yearly: 24999 },
+  extra_branch: { monthly: 799, yearly: 7999 },
 };
 const PRICES_USD: Record<string, { monthly: number; yearly: number }> = {
-  branch: { monthly: 10, yearly: 100 },
-  tenant: { monthly: 12, yearly: 120 },
+  starter: { monthly: 12, yearly: 120 },
+  growth: { monthly: 30, yearly: 300 },
+  extra_branch: { monthly: 10, yearly: 100 },
+};
+
+// Back-compat map — legacy type='branch' means add-on branch, type='tenant' means starter.
+const LEGACY_TYPE_MAP: Record<string, string> = {
+  branch: 'extra_branch',
+  tenant: 'starter',
 };
 
 type Plan = 'monthly' | 'yearly';
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ type?: string }>();
-  const type = (params?.type === 'tenant' ? 'tenant' : 'branch') as 'branch' | 'tenant';
+  const params = useLocalSearchParams<{ type?: string; intent?: string; kind?: string }>();
+  const legacyType = (params?.type === 'tenant' ? 'tenant' : 'branch') as 'branch' | 'tenant';
+  // Priority: explicit `kind` > `intent=upgrade` (Growth) > legacy type mapping.
+  const kind: 'starter' | 'growth' | 'extra_branch' = (params?.kind as any)
+    || (params?.intent === 'upgrade' ? 'growth'
+      : (LEGACY_TYPE_MAP[legacyType] as any))
+    || 'starter';
+  const isBranchAddOn = kind === 'extra_branch';
+  // Back-compat alias for existing code below which references `type` for branch payload.
+  const type = isBranchAddOn ? 'branch' : 'tenant';
+  const kindLabel = kind === 'growth' ? 'Growth plan upgrade'
+    : kind === 'extra_branch' ? 'Add branch add-on'
+    : 'Salon subscription';
   const { refreshBranches, refreshTenant, user, tenant } = useAuth();
 
   const [plan, setPlan] = useState<Plan>('monthly');
@@ -44,8 +63,12 @@ export default function CheckoutScreen() {
   const displayCode = isINR ? 'INR' : 'USD';
   const displayPrices = isINR ? PRICES_INR : PRICES_USD;
   // Actual gateway amount is ALWAYS in INR (payments processed in India).
-  const priceINR = PRICES_INR[type][plan];
-  const displayAmount = displayPrices[type][plan];
+  const priceINR = PRICES_INR[kind][plan];
+  const displayAmount = displayPrices[kind][plan];
+  const monthlyDisplay = displayPrices[kind].monthly;
+  const yearlyDisplay = displayPrices[kind].yearly;
+  const annualSavings = monthlyDisplay * 12 - yearlyDisplay;
+  const yearlyPerMonth = Math.round(yearlyDisplay / 12);
 
   // Branch payload (collected after payment success)
   const [branchName, setBranchName] = useState('');
@@ -136,28 +159,32 @@ export default function CheckoutScreen() {
     }
     setProcessing(true);
     try {
-      // 1. Create order server-side (branch or tenant)
-      const order: any = type === 'branch'
-        ? await branchApi.createOrder({
-            plan,
-            branch: {
-              name: branchName.trim(),
-              address: address.trim(),
-              city: city.trim(),
-              phone: phone.replace(/\D/g, ''),
-              invoice_prefix: invoicePrefix.trim(),
-              active: true,
-            },
-            display_amount: Math.round(displayAmount * 100) / 100,
-            display_currency: displayCode,
-          })
-        : await tenantApi.createOrder({
-            plan,
-            display_amount: Math.round(displayAmount * 100) / 100,
-            display_currency: displayCode,
-          });
+      // 1. Create order server-side (Growth uses unified billing endpoint; else legacy branch/tenant).
+      const order: any = kind === 'growth'
+        ? await billingApi.createOrder({ kind: 'growth', plan, display_currency: displayCode })
+        : (type === 'branch'
+            ? await branchApi.createOrder({
+                plan,
+                branch: {
+                  name: branchName.trim(),
+                  address: address.trim(),
+                  city: city.trim(),
+                  phone: phone.replace(/\D/g, ''),
+                  invoice_prefix: invoicePrefix.trim(),
+                  active: true,
+                },
+                display_amount: Math.round(displayAmount * 100) / 100,
+                display_currency: displayCode,
+              })
+            : await tenantApi.createOrder({
+                plan,
+                display_amount: Math.round(displayAmount * 100) / 100,
+                display_currency: displayCode,
+              }));
 
-      const verifyFn = type === 'branch' ? branchApi.verifyPayment : tenantApi.verifyPayment;
+      const verifyFn = kind === 'growth'
+        ? billingApi.verifyPayment
+        : (type === 'branch' ? branchApi.verifyPayment : tenantApi.verifyPayment);
 
       if (Platform.OS === 'web') {
         // 2a. Open Razorpay Checkout inline
@@ -263,7 +290,10 @@ export default function CheckoutScreen() {
           )}
 
           {/* Plan selector */}
-          <Text style={styles.sectionLabel}>Choose Plan</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.sectionLabel}>Choose Plan</Text>
+            <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '700' }}>{kindLabel}</Text>
+          </View>
           <View style={styles.planRow}>
             <TouchableOpacity
               testID="plan-monthly"
@@ -272,7 +302,7 @@ export default function CheckoutScreen() {
             >
               <Text style={[styles.planName, plan === 'monthly' && styles.planNameActive]}>Monthly</Text>
               <Text style={[styles.planPrice, plan === 'monthly' && styles.planPriceActive]}>
-                {displaySymbol}{displayPrices[type].monthly.toLocaleString(isINR ? 'en-IN' : 'en-US')}
+                {displaySymbol}{monthlyDisplay.toLocaleString(isINR ? 'en-IN' : 'en-US')}
               </Text>
               <Text style={styles.planPer}>per month</Text>
             </TouchableOpacity>
@@ -281,12 +311,18 @@ export default function CheckoutScreen() {
               style={[styles.planCard, plan === 'yearly' && styles.planCardActive]}
               onPress={() => setPlan('yearly')}
             >
-              <View style={styles.saveTag}><Text style={styles.saveTagText}>Save ~17%</Text></View>
+              <View style={styles.saveTag}>
+                <Text style={styles.saveTagText}>
+                  Save {displaySymbol}{annualSavings.toLocaleString(isINR ? 'en-IN' : 'en-US')}
+                </Text>
+              </View>
               <Text style={[styles.planName, plan === 'yearly' && styles.planNameActive]}>Yearly</Text>
               <Text style={[styles.planPrice, plan === 'yearly' && styles.planPriceActive]}>
-                {displaySymbol}{displayPrices[type].yearly.toLocaleString(isINR ? 'en-IN' : 'en-US')}
+                {displaySymbol}{yearlyDisplay.toLocaleString(isINR ? 'en-IN' : 'en-US')}
               </Text>
-              <Text style={styles.planPer}>per year</Text>
+              <Text style={styles.planPer}>
+                {`${displaySymbol}${yearlyPerMonth.toLocaleString(isINR ? 'en-IN' : 'en-US')}/mo · billed yearly`}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -296,6 +332,9 @@ export default function CheckoutScreen() {
             <Text style={styles.amountBig}>
               {displaySymbol}{displayAmount.toLocaleString(isINR ? 'en-IN' : 'en-US', { maximumFractionDigits: 2 })}
             </Text>
+            {!isINR && (
+              <Text style={styles.amountSub}>Payments are processed in INR; the local figure is for reference only.</Text>
+            )}
             <Text style={styles.amountRenew}>Auto-renews {plan === 'yearly' ? 'yearly' : 'monthly'} — cancel anytime</Text>
           </View>
 

@@ -56,6 +56,7 @@ export default function SubscriptionScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [paymentsCfg, setPaymentsCfg] = useState<PaymentsCfg | null>(null);
+  const [billingHistory, setBillingHistory] = useState<any[]>([]);
   const toast = useToast();
 
   const status = subscription?.status || 'expired';
@@ -69,12 +70,16 @@ export default function SubscriptionScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [ent, cfg] = await Promise.all([
+      const [ent, cfg, hist] = await Promise.all([
         api<Entitlements>('/billing/entitlements').catch(() => null),
         api<PaymentsCfg>('/payments/config').catch(() => null),
+        api<any>('/billing/history').catch(() => null),
       ]);
       setEntitlements(ent);
       setPaymentsCfg(cfg);
+      // Accept either an array or { items: [...] } shape from the backend.
+      const items = Array.isArray(hist) ? hist : (hist && Array.isArray(hist.items) ? hist.items : []);
+      setBillingHistory(items);
     } catch {}
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -110,8 +115,10 @@ export default function SubscriptionScreen() {
   const tenantCurrency = ((tenant as any)?.currency || 'INR').toUpperCase();
   const isSubINR = tenantCurrency === 'INR';
   const INR_TO_USD_MAP: Record<number, number> = {
-    999: 12, 9999: 120,   // tenant plan
-    888: 10, 8888: 100,   // branch add-on
+    999: 12, 9999: 120,     // starter subscription
+    2499: 30, 24999: 300,   // growth plan
+    888: 10, 8888: 100,     // legacy branch add-on (old price)
+    799: 10, 7999: 100,     // branch add-on (new price)
   };
   const subSym = isSubINR ? '₹' : '$';
   const subLocale = isSubINR ? 'en-IN' : 'en-US';
@@ -369,6 +376,42 @@ export default function SubscriptionScreen() {
           </View>
         )}
 
+        {/* ==== Billing history ==== */}
+        {billingHistory.length > 0 && (
+          <View style={styles.usageCard} testID="billing-history-card">
+            <Text style={styles.usageTitle}>Billing history</Text>
+            {billingHistory.slice(0, 8).map((row, i) => {
+              const rowSym = ((row.currency || 'INR').toUpperCase() === 'INR') ? '₹' : '$';
+              const rowLocale = ((row.currency || 'INR').toUpperCase() === 'INR') ? 'en-IN' : 'en-US';
+              const displayAmt = (row.display_amount != null && row.currency && row.currency !== 'INR')
+                ? row.display_amount
+                : row.amount_inr;
+              const isNonINR = (row.currency || 'INR').toUpperCase() !== 'INR';
+              return (
+                <View key={row.id || i} style={styles.billRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.billRowTitle}>
+                      {row.description || row.plan || 'Subscription'}
+                    </Text>
+                    <Text style={styles.billRowDate}>
+                      {row.paid_at ? new Date(row.paid_at).toLocaleDateString() : '—'}
+                      {row.payment_id ? `  ·  ${row.payment_id.slice(0, 12)}…` : ''}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.billRowAmt}>
+                      {rowSym}{Number(displayAmt || 0).toLocaleString(rowLocale)}
+                    </Text>
+                    {isNonINR && (
+                      <Text style={styles.billRowCurrencyNote}>Charged in INR</Text>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* ==== Support / Sign out ==== */}
         <TouchableOpacity style={styles.btnSecondary} onPress={openSupport} testID="btn-contact-support">
           <Ionicons name="mail-outline" size={16} color={colors.brandPrimary} />
@@ -452,6 +495,12 @@ const styles = StyleSheet.create({
   nextPaymentText: { fontSize: 13, color: colors.onSurfaceSecondary, flexShrink: 1 },
   nextPaymentSub: { fontSize: 11, color: colors.onSurfaceTertiary },
   disclosureNote: { fontSize: 10, color: colors.onSurfaceTertiary, fontStyle: 'italic', marginLeft: 4 },
+
+  billRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  billRowTitle: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
+  billRowDate: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  billRowAmt: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
+  billRowCurrencyNote: { fontSize: 10, color: colors.onSurfaceTertiary, fontStyle: 'italic', marginTop: 2 },
 
   cancelNotice: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FDF3E4', borderColor: '#F0DCA6', borderWidth: 1, borderRadius: radius.sm, padding: spacing.sm },
   cancelNoticeText: { fontSize: 12, color: '#4B3A16', flex: 1, lineHeight: 16 },

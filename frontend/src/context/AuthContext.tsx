@@ -337,6 +337,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const firstAccessibleRoute = useCallback((): string => {
     if (!user) return '/login';
+    // Staff-role non-owners land on the Staff Dashboard (rendered inside /(tabs)/index).
+    if (user.role === 'staff' && !user.is_owner) return '/(tabs)';
     // Owner / admin (backwards-compat) → dashboard
     if (user.is_owner) return '/(tabs)';
     const perms = user.permissions || {};

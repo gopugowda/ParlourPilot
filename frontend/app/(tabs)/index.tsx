@@ -11,10 +11,22 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { api, appointmentApi } from '@/src/api/client';
 import { useAuth, useBrand, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import StaffDashboard from '@/src/components/StaffDashboard';
 
 const LOGO = require('../../assets/images/parlourpilot-logo.png');
 
+// Thin dispatcher — routes staff-role non-owners to the Staff Dashboard, everyone
+// else to the existing owner/admin management dashboard. Kept as a wrapper so that
+// each inner component owns its own hook order (React rules of hooks).
 export default function DashboardScreen() {
+  const { user } = useAuth();
+  if (user && user.role === 'staff' && !user.is_owner) {
+    return <StaffDashboard />;
+  }
+  return <OwnerDashboard />;
+}
+
+function OwnerDashboard() {
   const { user, tenant, subscription, branches, currentBranchId, selectBranch, logout, refreshTenant, refreshBranches, can, firstAccessibleRoute } = useAuth();
   const { brandColor, brandTextColor } = useBrand();
   // Compute a darker shade for the hero gradient
