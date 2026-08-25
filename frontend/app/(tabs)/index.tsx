@@ -76,6 +76,11 @@ function OwnerDashboard() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  // Owner is the ONLY role allowed to see financial summaries: month total, net,
+  // expenses breakdown and top performers. A non-owner Admin runs day-to-day
+  // ops but does not see the salon's profitability. The backend also strips
+  // these fields for non-owners, so guarding here is a UX / consistency layer.
+  const isOwner = !!user?.is_owner;
 
   // Compute effective logo: current branch's logo → tenant logo → app default
   const currentBranch = branches.find(b => b.id === currentBranchId);
@@ -182,7 +187,7 @@ function OwnerDashboard() {
                     <Text style={[styles.heroStatText, { color: brandTextColor }]}>Tips {fmtINR(summary?.today?.tips || 0)}</Text>
                   </View>
                 )}
-                {(summary?.today?.expenses || 0) > 0 && (
+                {isOwner && (summary?.today?.expenses || 0) > 0 && (
                   <View style={[styles.heroStatChip, { backgroundColor: brandTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)' }]}>
                     <Ionicons name="wallet-outline" size={14} color={brandTextColor} />
                     <Text style={[styles.heroStatText, { color: brandTextColor }]}>Exp {fmtINR(summary?.today?.expenses || 0)}</Text>
@@ -313,27 +318,29 @@ function OwnerDashboard() {
           </View>
         </View>
 
-        {/* Month summary — admin only */}
-        {isAdmin && (
+        {/* Month summary — OWNER only (financial data). Admins never see this. */}
+        {isOwner && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>This Month</Text>
           <View style={styles.monthCard}>
             <View style={{ flex: 1 }}>
               <Text style={styles.monthLabel}>Revenue</Text>
-              <Text style={styles.monthValue} testID="month-revenue">{fmtINR(summary?.month?.total || 0)}</Text>
-              <Text style={styles.monthSub}>{summary?.month?.count || 0} bills · Exp {fmtINR(summary?.month?.expenses || 0)}</Text>
+              <Text style={styles.monthValue} testID="month-revenue">{fmtINR(summary?.month?.total ?? 0)}</Text>
+              <Text style={styles.monthSub}>{summary?.month?.count ?? 0} bills · Exp {fmtINR(summary?.month?.expenses ?? 0)}</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.monthLabel}>Net Profit</Text>
-              <Text style={[styles.monthValue, { color: (summary?.month?.net || 0) >= 0 ? colors.success : colors.error, fontSize: 20 }]} testID="month-net">
-                {fmtINR(summary?.month?.net || 0)}
+              <Text style={[styles.monthValue, { color: (summary?.month?.net ?? 0) >= 0 ? colors.success : colors.error, fontSize: 20 }]} testID="month-net">
+                {fmtINR(summary?.month?.net ?? 0)}
               </Text>
             </View>
           </View>
         </View>
         )}
 
-        {/* Per beautician */}
+        {/* Per beautician — OWNER only. Backend field `per_beautician_month`
+            is absent for admins, so we never render the section. */}
+        {isOwner && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Top Performers (This Month)</Text>
           {(summary?.per_beautician_month || []).length === 0 ? (
@@ -358,6 +365,7 @@ function OwnerDashboard() {
             ))
           )}
         </View>
+        )}
       </ScrollView>
 
       {/* Branch Picker Modal */}

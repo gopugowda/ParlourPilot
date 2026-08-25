@@ -1853,3 +1853,21 @@ Client-only. Publish → mobile users with the `reports` permission see the new 
 ### Verified
 - Lint clean on payroll-report.tsx; only pre-existing exhaustive-deps warnings on expenses.tsx.
 - App bundles and login page loads on preview.
+
+---
+
+## Iteration 39 — Owner vs Admin role separation
+
+**Backend already enforces**: /reports/* owner-only, /team POST+DELETE owner-only, /team PUT strips restricted fields, /reports/summary + /reports/range omit financial fields for admins.
+
+**Mobile changes**:
+1. `app/(tabs)/index.tsx` — added `isOwner = !!user?.is_owner`. Hidden for admins: "This Month" revenue/net-profit card, "Top Performers" card, hero "Exp" chip. Uses `?? 0` guards so absent fields render safely.
+2. `app/(tabs)/manage.tsx` — added `ownerOnly` flag; marked "Reports" and "Staff Performance" tiles as owner-only so they never render for admins.
+3. `app/manage/report.tsx` — owner-only guard: useEffect bounces admins to /(tabs), load() early-returns for non-owners (no API 403 flash), and a full-screen "Owner-only screen" lock UI wraps the content.
+4. `app/manage/payroll-report.tsx` — tightened `allowed` to just `isOwner` (removed `can('reports')` fallback). Redirect + "Owner-only screen" lock UI with "Back to Dashboard" CTA.
+5. `app/manage/payroll-detail/[id].tsx` — same tightening.
+6. `app/manage/beauticians.tsx` — for non-owners: hidden `+` add header button, "Add first team member" CTA, delete buttons on every row, edit button on the owner's row. In the edit sheet: Access-level shown read-only, Permissions section replaced with note; hidden fields: Job title, Employee ID, Basic salary, Commission %, Monthly target, Address, ID type, ID number. Kept editable: Full name, Email, Phone, Password, Work start/end, Week off, Branch, Active toggle.
+
+### Verified
+- Testing agent verified: admin session on preview correctly hides Reports & Staff Performance menu items; deep-link to /manage/report shows owner-gate lock; deep-link to /manage/payroll-report shows the tightened lock UI. Team screen restricted UI validated via code review.
+- Backend endpoints handle any bypass (return 403) as a defence-in-depth.

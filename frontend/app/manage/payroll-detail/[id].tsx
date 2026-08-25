@@ -54,9 +54,9 @@ const fmtDay = (iso?: string) => {
 
 export default function PayrollDetailScreen() {
   const router = useRouter();
-  const { user, can } = useAuth();
-  const isOwner = user?.role === 'owner' || !!user?.is_owner;
-  const allowed = isOwner || can('reports');
+  const { user } = useAuth();
+  const isOwner = !!user?.is_owner;
+  const allowed = isOwner;
 
   const params = useLocalSearchParams<{ id: string; from?: string; to?: string; preset?: string }>();
   const beauticianId = String(params.id || '');

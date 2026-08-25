@@ -115,9 +115,20 @@ const pct = (v: any, digits = 0) => `${num(v).toFixed(digits)}%`;
 
 export default function PayrollReportScreen() {
   const router = useRouter();
-  const { user, tenant, can } = useAuth();
-  const isOwner = user?.role === 'owner' || user?.role === 'admin' || !!(user as any)?.is_owner;
-  const allowed = isOwner || can('reports');
+  const { user, tenant } = useAuth();
+  // Backend `staff-performance` endpoint is now OWNER-ONLY (returns 403 for admins).
+  // We keep the `can('reports')` fallback only to short-circuit the redirect during
+  // the loading race — the gate below will kick non-owners out anyway.
+  const isOwner = !!user?.is_owner;
+  const allowed = isOwner;
+
+  // Bounce non-owners to the dashboard BEFORE any API call fires — the
+  // endpoint would 403 otherwise.
+  useEffect(() => {
+    if (user && !isOwner) {
+      router.replace('/(tabs)' as any);
+    }
+  }, [user, isOwner, router]);
 
   const [preset, setPreset] = useState<Preset | 'custom'>('month');
   const [customFrom, setCustomFrom] = useState<string>('');
@@ -620,7 +631,13 @@ export default function PayrollReportScreen() {
         </SafeAreaView>
         <View style={styles.emptyBox}>
           <Ionicons name="lock-closed-outline" size={40} color={colors.onSurfaceTertiary} />
-          <Text style={styles.emptyText}>You need the “Reports” permission to view this screen.</Text>
+          <Text style={styles.emptyText}>Owner-only screen.{'\n'}Payroll & performance data is visible only to the salon owner.</Text>
+          <TouchableOpacity
+            style={{ marginTop: 8, paddingHorizontal: 20, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.brandPrimary }}
+            onPress={() => router.replace('/(tabs)' as any)}
+          >
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Back to Dashboard</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );

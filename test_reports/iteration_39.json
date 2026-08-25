@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only RBAC gating review + Playwright checks against the shared preview backend. Admin dashboard/Manage tab hides owner-only sections (Reports menu, Staff Performance menu). Admin deep-link to /manage/report renders the 'Owner-only screen' gate; /manage/payroll-report renders the 'You need Reports permission' gate — neither leaks financials or triggers a visible 403 flash. Code review of manage/beauticians.tsx confirms Add/Delete buttons, Edit-on-owner, and every restricted field (Job title, Employee ID, Basic salary, Commission %, Monthly target, Address, ID type, ID number, permissions editor) are correctly wrapped in {isOwner && ...} blocks; non-owners see Access-level read-only chip + 'Feature permissions can only be changed by the salon owner.' note. Allowed fields (Full name, Email, Phone, Password reset, Work start/end, Week off, Branch, Active) remain visible. Owner test path could not be fully exercised in Playwright (form auto-submit flow not triggered end-to-end in web preview during this session) so owner-side UI was validated via source review. Note: after `router.replace('/(tabs)')` the URL still shows /manage/report and /manage/payroll-report — the useEffect-based redirect does not actually change the route in the web build; instead the owner-gate UI is what protects data. Functionally safe (no owner data exposed, no API calls fire) but does not match spec wording 'bounced back to /(tabs)'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "manage/report.tsx & manage/payroll-report.tsx",
+        "issue": "Admin deep-link does not auto-redirect to /(tabs). URL remains /manage/report (or /manage/payroll-report) even though router.replace('/(tabs)') is called from useEffect. The owner-only gate UI is shown instead, so no financial data is leaked, but the spec says admins should be 'bounced back to dashboard'. Consider moving the guard higher (e.g. server-side route wrapper or _layout guard) or verify router.replace in Expo Router web works with this call site.",
+        "testID": "reports-owner-gate / payroll owner-gate",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_39.json"],
+  "action_items": [
+    "Optional: make the owner-only redirect actually change the URL back to /(tabs) so admins never linger on /manage/report or /manage/payroll-report (currently they see the gate but the URL stays the same). Data-safety is intact; this is only a UX polish/spec-conformance item.",
+    "Consider making the owner-gate on /manage/payroll-report use the same testID/UI treatment as /manage/report (`reports-owner-gate`) for a consistent experience — current wording 'You need the Reports permission to view this screen' is fine but no explicit 'Back to Dashboard' CTA is provided on payroll-report."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard (app/(tabs)/index.tsx): 'This Month' block (lines 322-339), 'Top Performers' (lines 343-368) and the 'Exp' hero chip (lines 190-195) are all correctly gated with `isOwner`. Backend also strips these fields for admins, so both layers align.",
+    "Manage tab (app/(tabs)/manage.tsx): 'Reports' and 'Staff Performance' items carry ownerOnly:true (lines 33-34); filtered out for admins in the items.filter() at line 39-44.",
+    "manage/beauticians.tsx: Add button (line 329), 'Add first team member' CTA (line 375), Delete button (line 424), and every owner-only field (Job title, Employee ID, Basic salary at lines 632-664; Commission/target/address/id_type/id_number at lines 733+) are wrapped in `{isOwner && ...}`. Edit button is hidden on owner row for admins (line 418: `{(!m.is_owner_locked || isOwner) && ...}`). Access-level read-only chip (lines 541-548) and permissions info note (lines 621-627) render for non-owners as required.",
+    "manage/report.tsx: Owner gate branch (lines 182-192) + useEffect redirect (lines 79-83). Gate testID `reports-owner-gate` confirmed to render.",
+    "manage/payroll-report.tsx: `allowed = isOwner` (line 123). Non-owner branch (lines 623-638) returns the lock screen. Redirect useEffect at lines 127-131 mirrors report.tsx."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only per request)", "frontend": "verified: admin manage-menu hides Reports+Staff Performance; both owner-only screens correctly gate admins with lock UI; code-level verification of team-screen field hiding for admins is complete"},
+  "seed_data_creation": "None. Used existing QA demo accounts (qa_growth_demo / qa_admin_demo).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Playwright automation on this Expo web build sometimes silently drops the session on direct `page.goto` after a login (observed 401s on /api/team when navigating fresh to /manage/beauticians). If the next agent wants to verify the admin edit-sheet field hiding at runtime, use in-app navigation (tap Manage tab → Team) rather than a direct URL push, or persist storage between goto calls. Owner deep-link fields were validated via source review because owner login didn't complete cleanly in this run — main agent can verify quickly by logging in as owner and confirming Add/Delete/Edit-owner are visible plus salary/commission/target/address/ID fields render in the sheet."
+}

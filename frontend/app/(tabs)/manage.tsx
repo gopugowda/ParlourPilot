@@ -14,7 +14,8 @@ export default function ManageScreen() {
 
   // Web sidebar order (1:1 with the web app). Each item may declare `perm` for RBAC gating.
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
-  const allItems: { icon: string; label: string; hint: string; route: string; adminOnly?: boolean; perm?: PermissionKey }[] = [
+  const isOwner = !!user?.is_owner;
+  const allItems: { icon: string; label: string; hint: string; route: string; adminOnly?: boolean; ownerOnly?: boolean; perm?: PermissionKey }[] = [
     { icon: 'grid-outline', label: 'Dashboard', hint: 'Business snapshot & KPIs', route: '/(tabs)', perm: 'reports' },
     { icon: 'add-circle-outline', label: 'New Bill', hint: 'Create a fresh invoice', route: '/(tabs)/new-bill', perm: 'new_bill' },
     { icon: 'receipt-outline', label: 'Bill History', hint: 'Browse past invoices', route: '/(tabs)/history', perm: 'bills' },
@@ -27,13 +28,16 @@ export default function ManageScreen() {
     { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock', perm: 'stock' },
     { icon: 'wallet-outline', label: 'Expenses', hint: 'Track daily expenses', route: '/(tabs)/expenses', perm: 'expenses' },
     { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing', perm: 'cash_closing' },
-    { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report', perm: 'reports' },
-    { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Payroll, commission, targets, analytics & export', route: '/manage/payroll-report', perm: 'reports' },
+    // Reports + Staff Performance are OWNER-ONLY (backend returns 403 for admins).
+    // The `reports` permission only unlocks dashboard KPIs, not these screens.
+    { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report', ownerOnly: true },
+    { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Payroll, commission, targets, analytics & export', route: '/manage/payroll-report', ownerOnly: true },
     { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', adminOnly: true },
     { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', adminOnly: true },
     { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', adminOnly: true },
   ];
   const items = allItems.filter(it => {
+    if (it.ownerOnly && !isOwner) return false;
     if (it.adminOnly && !isAdmin) return false;
     if (it.perm && !can(it.perm)) return false;
     return true;

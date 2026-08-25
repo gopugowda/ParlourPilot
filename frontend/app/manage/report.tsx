@@ -52,6 +52,10 @@ export default function ReportScreen() {
   const router = useRouter();
   const { user, tenant } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  // Reports is OWNER-ONLY (backend returns 403 for admins/staff). We still keep
+  // the isAdmin flag for the internal preset picker + export headers, but any
+  // non-owner is bounced back to the dashboard before an API call fires.
+  const isOwner = !!user?.is_owner;
   const presets = isAdmin ? ADMIN_PRESETS : STAFF_PRESETS;
 
   const [preset, setPreset] = useState<string>('month');
@@ -70,7 +74,16 @@ export default function ReportScreen() {
     if (!isAdmin) setPreset('today');
   }, [isAdmin]);
 
+  // OWNER-ONLY guard — kick non-owners to dashboard BEFORE any /reports API
+  // call fires (backend will 403 anyway, but we skip the flash of an error).
+  useEffect(() => {
+    if (user && !isOwner) {
+      router.replace('/(tabs)' as any);
+    }
+  }, [user, isOwner, router]);
+
   const load = async () => {
+    if (!isOwner) { setLoading(false); return; }
     setLoading(true);
     try {
       const params = preset === 'custom'
@@ -166,6 +179,19 @@ export default function ReportScreen() {
 
   return (
     <View style={styles.root} testID="report-screen">
+      {/* Owner-only gate — briefly rendered while the redirect fires. */}
+      {!isOwner && (
+        <View style={styles.ownerGate} testID="reports-owner-gate">
+          <Ionicons name="lock-closed-outline" size={40} color={colors.onSurfaceTertiary} />
+          <Text style={styles.ownerGateTitle}>Owner-only screen</Text>
+          <Text style={styles.ownerGateBody}>The Reports & Analytics section shows salon financials and is only visible to the salon owner.</Text>
+          <TouchableOpacity style={styles.ownerGateBtn} onPress={() => router.replace('/(tabs)' as any)}>
+            <Text style={styles.ownerGateBtnText}>Back to Dashboard</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {isOwner && (
+      <>
       <SafeAreaView edges={['top']} style={styles.header}>
         <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
@@ -488,6 +514,8 @@ export default function ReportScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      </>
+      )}
     </View>
   );
 }
@@ -665,4 +693,11 @@ const styles = StyleSheet.create({
   compareSub2: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 6, fontWeight: '600' },
   trendPill: { flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
   trendPillText: { fontSize: 11, fontWeight: '800' },
+
+  // Owner-only gate
+  ownerGate: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.sm, backgroundColor: colors.surface },
+  ownerGateTitle: { fontSize: 18, fontWeight: '800', color: colors.onSurface, marginTop: spacing.md },
+  ownerGateBody: { fontSize: 13, color: colors.onSurfaceSecondary, textAlign: 'center', lineHeight: 20, maxWidth: 320 },
+  ownerGateBtn: { marginTop: spacing.lg, paddingHorizontal: 20, paddingVertical: 12, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
+  ownerGateBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 });

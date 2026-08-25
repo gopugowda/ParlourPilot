@@ -62,6 +62,11 @@ export default function TeamScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+  // Only the OWNER can add/delete team members, edit the owner's record,
+  // and change owner-only fields (salary, commission, target, employee ID,
+  // job title, ID docs, address, access level, permissions). Admins can
+  // still edit contact & schedule fields for staff/admin (but not owner).
+  const isOwner = !!user?.is_owner;
 
   const [list, setList] = useState<TeamMember[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -321,7 +326,7 @@ export default function TeamScreen() {
           </Text>
         </View>
         <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="team-filter-btn" />
-        {isAdmin && (
+        {isOwner && (
           <TouchableOpacity
             testID="add-header"
             onPress={() => {
@@ -367,7 +372,7 @@ export default function TeamScreen() {
             <View style={styles.empty}>
               <Ionicons name="people-outline" size={48} color={colors.onSurfaceTertiary} />
               <Text style={styles.emptyTitle}>No team members yet</Text>
-              {isAdmin && (
+              {isOwner && (
                 <TouchableOpacity
                   testID="empty-add"
                   style={[styles.ctaBtn, seats && !seats.can_add && { backgroundColor: colors.borderStrong }]}
@@ -409,10 +414,14 @@ export default function TeamScreen() {
               </View>
               {isAdmin && (
                 <>
-                  <TouchableOpacity testID={`team-edit-${m.id}`} style={styles.smallBtn} onPress={() => openEdit(m)}>
-                    <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
-                  </TouchableOpacity>
-                  {!m.is_owner_locked && (
+                  {/* Non-owner admins cannot edit the owner's account (backend 403). */}
+                  {(!m.is_owner_locked || isOwner) && (
+                    <TouchableOpacity testID={`team-edit-${m.id}`} style={styles.smallBtn} onPress={() => openEdit(m)}>
+                      <Ionicons name="pencil" size={14} color={colors.brandPrimary} />
+                    </TouchableOpacity>
+                  )}
+                  {/* Delete is OWNER-ONLY. */}
+                  {isOwner && !m.is_owner_locked && (
                     <TouchableOpacity testID={`team-del-${m.id}`} style={[styles.smallBtn, { backgroundColor: '#FDE7E7' }]} onPress={() => remove(m)}>
                       <Ionicons name="trash" size={14} color={colors.error} />
                     </TouchableOpacity>
@@ -529,6 +538,15 @@ export default function TeamScreen() {
                       <Ionicons name="lock-closed" size={14} color={colors.onSurfaceSecondary} />
                       <Text style={styles.ownerLockText}>Owner (locked)</Text>
                     </View>
+                  ) : !isOwner ? (
+                    // Non-owner admins cannot change access level — backend
+                    // ignores the field silently, so we show it read-only.
+                    <View style={styles.ownerLockRow} testID="team-access-readonly">
+                      <Ionicons name="lock-closed" size={14} color={colors.onSurfaceSecondary} />
+                      <Text style={styles.ownerLockText}>
+                        {accessLabel(accessLevel)}{'  '}(read-only)
+                      </Text>
+                    </View>
                   ) : (
                     <View style={{ flexDirection: 'row', gap: 6 }}>
                       <TouchableOpacity
@@ -549,8 +567,8 @@ export default function TeamScreen() {
                   )}
                 </View>
 
-                {/* ---- Permissions (11 keys) ---- */}
-                {!editing?.is_owner_locked && (
+                {/* ---- Permissions (11 keys) — OWNER-ONLY editor ---- */}
+                {!editing?.is_owner_locked && isOwner && (
                   <View style={styles.permsBox}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <Ionicons name="shield-checkmark-outline" size={16} color={colors.brandPrimary} />
@@ -600,8 +618,20 @@ export default function TeamScreen() {
                     <Text style={styles.ownerLockText}>Owner has full access to everything</Text>
                   </View>
                 )}
+                {!editing?.is_owner_locked && !isOwner && (
+                  <View style={styles.ownerLockRow} testID="team-perms-locked-note">
+                    <Ionicons name="information-circle-outline" size={14} color={colors.onSurfaceSecondary} />
+                    <Text style={styles.ownerLockText}>
+                      Feature permissions can only be changed by the salon owner.
+                    </Text>
+                  </View>
+                )}
 
-                {/* ---- Job title (Role) ---- */}
+                {/* ---- OWNER-ONLY FIELDS (admins get 403 on the backend if they
+                       try to change these). We hide them entirely for admins. ---- */}
+                {isOwner && (
+                  <>
+                    {/* ---- Job title (Role) ---- */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Job title</Text>
                   <TextInput testID="team-role-input" value={role} onChangeText={setRole} placeholder="Type role or pick below" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
@@ -631,6 +661,10 @@ export default function TeamScreen() {
                     keyboardType="numeric" style={styles.input}
                   />
                 </View>
+                  </>
+                )}
+                {/* End of first owner-only block. Branch + Work times + Week off
+                    are admin-editable so they live outside the owner gate. */}
 
                 {/* Branch */}
                 {branches.length > 0 && (
@@ -695,6 +729,9 @@ export default function TeamScreen() {
                   </View>
                 </View>
 
+                {/* Second owner-only block: Commission + target, Address, ID type, ID number */}
+                {isOwner && (
+                  <>
                 {/* Commission + target */}
                 <View style={styles.gridRow}>
                   <View style={styles.gridField}>
@@ -744,6 +781,8 @@ export default function TeamScreen() {
                   <Text style={styles.label}>ID number</Text>
                   <TextInput testID="team-id-number" value={idNumber} onChangeText={setIdNumber} placeholder="e.g. 1234-5678-9012" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
                 </View>
+                </>)}
+                {/* End of owner-only fields */}
 
                 {!editing?.is_owner_locked && (
                   <View style={styles.switchRow}>
