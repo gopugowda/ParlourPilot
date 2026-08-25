@@ -351,48 +351,237 @@ export default function PayrollReportScreen() {
     finally { setExportBusy(false); }
   };
 
-  // ---- Payslip share (per staff, branded PDF via OS share sheet) ----
+  // ---- Payslip share (per staff, fully branded PDF) ----
   const sharePayslip = async (row: StaffRow) => {
     if (!data) return;
     try {
+      const t: any = tenant || {};
+      const brand = t.brand_color || '#C42032';
+      const businessName = escHtml(t.business_name || 'Salon');
+      const initials = businessName.slice(0, 1).toUpperCase();
+      const addressLine = escHtml(
+        [t.address, t.address_line_2, t.city, t.state, t.postal_code, t.country]
+          .filter(Boolean).join(', ')
+      );
+      const phone = escHtml(t.phone || '');
+      const email = escHtml(t.email || '');
+      const website = escHtml(t.website || '');
+      const gst = t.tax_enabled && t.tax_number ? `GST/Tax: ${escHtml(t.tax_number)}` : '';
+      const footerNote = escHtml(t.receipt_footer || 'Thank you.');
       const period = `${data.from} → ${data.to}`;
-
-      // Two-column key/value table so the PDF looks like a real payslip.
-      const kv = (label: string, value: string) => [label, value];
-      const rows: (string | number)[][] = [
-        kv('Period', period),
-        kv('Role', row.role || 'Stylist'),
-        row.employee_id ? kv('Employee ID', row.employee_id) : null,
-        kv('Days Worked', String(num(row.days_worked))),
-        kv('Absent Days', String(num(row.absent_days))),
-        kv('Total Hours', num(row.total_hours).toFixed(1) + 'h'),
-        num(row.overtime_hours) > 0 ? kv('Overtime', num(row.overtime_hours).toFixed(1) + 'h') : null,
-        kv('Services Performed', String(num(row.services))),
-        num(row.tips) > 0 ? kv('Tips Earned', fmtINR(num(row.tips))) : null,
-      ].filter(Boolean) as (string | number)[][];
-
-      const totalRow: (string | number)[] = ['NET PAYABLE', fmtINR(num(row.net_payable))];
-
-      const html = buildReportHtml({
-        title: `Payslip — ${row.beautician_name}`,
-        subtitle: period,
-        brand: {
-          name: tenant?.business_name,
-          color: (tenant as any)?.brand_color || '#C42032',
-          logo: (tenant as any)?.logo || null,
-        },
-        summary: [
-          { label: 'Basic Salary', value: fmtINR(num(row.basic_salary)) },
-          { label: `Commission${num(row.commission_pct) ? ` (${num(row.commission_pct)}%)` : ''}`, value: fmtINR(num(row.commission)) },
-          { label: 'Advances Taken', value: fmtINR(num(row.advances)) },
-          { label: 'Net Payable', value: fmtINR(num(row.net_payable)) },
-          { label: 'Status', value: row.paid ? '✅ PAID' : '⏳ Pending' },
-        ],
-        columns: ['Item', 'Value'],
-        rows,
-        totalRow,
-        footer: 'Payslip generated from mobile',
+      const generatedAt = new Date().toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
       });
+      const paidBadge = row.paid
+        ? `<span class="pill pill-paid">✓ PAID</span>`
+        : `<span class="pill pill-pending">⏳ Pending</span>`;
+
+      // Earnings table body — hide zero rows to keep the payslip tight.
+      const earningsRows: string[] = [];
+      const push = (label: string, val: string, opts?: { neg?: boolean; strong?: boolean }) =>
+        earningsRows.push(
+          `<tr${opts?.strong ? ' class="strong"' : ''}>
+            <td>${escHtml(label)}</td>
+            <td class="num${opts?.neg ? ' neg' : ''}">${escHtml(val)}</td>
+          </tr>`
+        );
+
+      push('Basic Salary', fmtINR(num(row.basic_salary)));
+      if (num(row.commission) > 0) push(`Commission${num(row.commission_pct) ? ` (${num(row.commission_pct)}%)` : ''}`, `+ ${fmtINR(num(row.commission))}`);
+      if (num(row.tips) > 0) push('Tips Earned', `+ ${fmtINR(num(row.tips))}`);
+      if (num(row.advances) > 0) push('Advances Deducted', `− ${fmtINR(num(row.advances))}`, { neg: true });
+
+      const html = `
+<!doctype html>
+<html><head><meta charset="utf-8"/><title>Payslip — ${escHtml(row.beautician_name)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 32px; color: #1a1a1a; background: #fff; }
+  .page { max-width: 780px; margin: 0 auto; }
+
+  /* Brand header */
+  .header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 20px 24px; border-radius: 12px 12px 0 0;
+    background: linear-gradient(135deg, ${brand} 0%, ${shade(brand, -12)} 100%);
+    color: #fff;
+  }
+  .logo {
+    width: 64px; height: 64px; border-radius: 12px;
+    background: rgba(255,255,255,0.18);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; font-weight: 800; letter-spacing: 1px;
+    overflow: hidden;
+  }
+  .logo img { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; }
+  .brand-name { font-size: 22px; font-weight: 800; letter-spacing: 0.3px; }
+  .brand-meta { font-size: 11px; opacity: 0.92; margin-top: 4px; line-height: 1.5; }
+  .brand-meta a { color: #fff; text-decoration: none; }
+  .badge {
+    margin-left: auto; padding: 6px 12px; border-radius: 999px;
+    background: rgba(255,255,255,0.2); font-size: 10px; font-weight: 800; letter-spacing: 1.2px;
+  }
+
+  /* Sub-header — payslip title */
+  .sub {
+    padding: 14px 24px; background: #fff; border: 1px solid #e5e5e5; border-top: none;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .sub h1 { font-size: 15px; margin: 0; letter-spacing: 3px; color: #666; font-weight: 800; }
+  .sub .period { font-size: 12px; color: #444; font-weight: 700; }
+
+  /* Employee block */
+  .emp {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    border: 1px solid #e5e5e5; border-top: none;
+  }
+  .emp .cell { padding: 12px 20px; }
+  .emp .cell + .cell { border-left: 1px solid #e5e5e5; }
+  .emp .lbl { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
+  .emp .val { font-size: 14px; color: #1a1a1a; font-weight: 700; margin-top: 3px; }
+
+  /* Attendance metrics */
+  .metrics {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border: 1px solid #e5e5e5; border-top: none;
+    background: #fafafa;
+  }
+  .metric { padding: 12px; text-align: center; }
+  .metric + .metric { border-left: 1px solid #e5e5e5; }
+  .metric .lbl { font-size: 9px; color: #888; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; }
+  .metric .val { font-size: 18px; color: #1a1a1a; font-weight: 800; margin-top: 4px; }
+  .metric .sub { font-size: 10px; color: #b8860b; font-weight: 700; margin-top: 2px; }
+
+  /* Earnings table */
+  h2 { font-size: 11px; letter-spacing: 2px; color: #666; margin: 22px 0 8px; text-transform: uppercase; font-weight: 800; }
+  table { width: 100%; border-collapse: collapse; }
+  table th, table td {
+    padding: 12px 20px; text-align: left; font-size: 13px;
+    border-bottom: 1px solid #eee;
+  }
+  table th { background: #fafafa; font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; font-weight: 800; }
+  table .num { text-align: right; font-weight: 700; }
+  table .neg { color: #C42032; }
+  table tr.strong td { background: ${brand}; color: #fff; font-size: 15px; font-weight: 800; padding: 16px 20px; }
+  table tr.strong td.num { font-size: 20px; }
+
+  /* Pills */
+  .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+  .pill-paid { background: #2E7D32; color: #fff; }
+  .pill-pending { background: #FFF6E0; color: #B8860B; }
+
+  /* Signature */
+  .sign {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 40px;
+  }
+  .sign .box { border-top: 1px dashed #999; padding-top: 8px; text-align: center; font-size: 11px; color: #666; font-weight: 700; }
+
+  /* Footer */
+  .footer {
+    margin-top: 30px; padding-top: 14px; border-top: 2px solid ${brand};
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;
+    font-size: 10px; color: #888;
+  }
+  .footer .brand-tag { color: ${brand}; font-weight: 800; letter-spacing: 0.5px; }
+
+  @media print {
+    body { padding: 0; }
+    .page { max-width: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <!-- BRAND HEADER -->
+    <div class="header">
+      <div class="logo">${t.logo ? `<img src="${escHtml(t.logo)}" alt=""/>` : initials}</div>
+      <div style="flex:1; min-width:0">
+        <div class="brand-name">${businessName}</div>
+        <div class="brand-meta">
+          ${addressLine ? escHtml(addressLine) + '<br/>' : ''}
+          ${[phone && `📞 ${phone}`, email && `✉ ${email}`, website && `🌐 ${website}`].filter(Boolean).join(' &nbsp;·&nbsp; ')}
+          ${gst ? `<br/>${gst}` : ''}
+        </div>
+      </div>
+      <div class="badge">PAYSLIP</div>
+    </div>
+
+    <!-- SUB HEADER -->
+    <div class="sub">
+      <h1>SALARY STATEMENT</h1>
+      <span class="period">${escHtml(period)}</span>
+      ${paidBadge}
+    </div>
+
+    <!-- EMPLOYEE INFO -->
+    <div class="emp">
+      <div class="cell">
+        <div class="lbl">Employee Name</div>
+        <div class="val">${escHtml(row.beautician_name)}</div>
+      </div>
+      <div class="cell">
+        <div class="lbl">Role / Designation</div>
+        <div class="val">${escHtml(row.role || 'Stylist')}</div>
+      </div>
+      <div class="cell">
+        <div class="lbl">Employee ID</div>
+        <div class="val">${escHtml(row.employee_id || '—')}</div>
+      </div>
+      <div class="cell">
+        <div class="lbl">Contact</div>
+        <div class="val">${escHtml(row.phone || '—')}</div>
+      </div>
+    </div>
+
+    <!-- ATTENDANCE METRICS -->
+    <div class="metrics">
+      <div class="metric">
+        <div class="lbl">Days Worked</div>
+        <div class="val">${num(row.days_worked)}</div>
+        ${num(row.absent_days) > 0 ? `<div class="sub">${num(row.absent_days)} absent</div>` : ''}
+      </div>
+      <div class="metric">
+        <div class="lbl">Total Hours</div>
+        <div class="val">${num(row.total_hours).toFixed(1)}</div>
+        ${num(row.overtime_hours) > 0 ? `<div class="sub">+${num(row.overtime_hours).toFixed(1)}h OT</div>` : ''}
+      </div>
+      <div class="metric">
+        <div class="lbl">Services</div>
+        <div class="val">${num(row.services)}</div>
+      </div>
+      <div class="metric">
+        <div class="lbl">Late Days</div>
+        <div class="val">${num(row.late_days)}</div>
+      </div>
+    </div>
+
+    <!-- EARNINGS BREAKDOWN -->
+    <h2>Earnings breakdown</h2>
+    <table>
+      <thead><tr><th>Component</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+        ${earningsRows.join('\n')}
+        <tr class="strong">
+          <td>NET PAYABLE</td>
+          <td class="num">${escHtml(fmtINR(num(row.net_payable)))}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- SIGNATURES -->
+    <div class="sign">
+      <div class="box">Employee Signature</div>
+      <div class="box">Authorised Signatory</div>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="footer">
+      <div>${footerNote}</div>
+      <div>Generated ${escHtml(generatedAt)} · <span class="brand-tag">${businessName}</span></div>
+    </div>
+  </div>
+</body>
+</html>`.trim();
 
       const safeName = row.beautician_name.replace(/\s+/g, '_');
       await sharePdf(html, `payslip_${safeName}_${data.from}.pdf`);
@@ -400,6 +589,24 @@ export default function PayrollReportScreen() {
       Alert.alert('Payslip', e?.message || 'Could not share the payslip.');
     }
   };
+
+  // Small helpers used only by the payslip HTML
+  function escHtml(s: any): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+  function shade(hex: string, pct: number): string {
+    // Lighten (+) or darken (−) a hex colour by pct%; falls back to same colour on parse errors.
+    try {
+      const c = hex.replace('#', '');
+      const n = parseInt(c.length === 3 ? c.split('').map(x => x + x).join('') : c, 16);
+      const r = Math.max(0, Math.min(255, ((n >> 16) & 0xff) + Math.round(255 * pct / 100)));
+      const g = Math.max(0, Math.min(255, ((n >> 8) & 0xff) + Math.round(255 * pct / 100)));
+      const b = Math.max(0, Math.min(255, (n & 0xff) + Math.round(255 * pct / 100)));
+      return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+    } catch { return hex; }
+  }
 
   // ---- Render ----
   if (!allowed) {
