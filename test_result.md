@@ -1743,3 +1743,89 @@ Client-only. User must Publish for the URL change to take effect on the deployed
 
 ### Deployment note
 Client-only. **User must Publish** to pick up the change. Escape hatch for future flexibility: set `EXPO_PUBLIC_BACKEND_URL_OVERRIDE=<url>` before building (rare).
+
+
+## Iteration 35.10 — Payroll & Performance Report (mobile, all 4 tracks)
+
+**User ask**: Ship the full Payroll & Performance suite on mobile, consuming the shared backend read-only. All 4 tracks in one iteration.
+
+### New routes
+- **`/app/frontend/app/manage/payroll-report.tsx`** — main list screen
+- **`/app/frontend/app/manage/payroll-detail/[id].tsx`** — per-staff drill-down
+
+### Manage screen
+- **`app/(tabs)/manage.tsx`** — added new tile "Payroll & Performance" (icon `cash-outline`, hint "Staff earnings, commission, mark paid & export") gated by the `reports` permission. Placed above the legacy Staff Performance tile so admins/owners see it first.
+
+### Track 1 — Main report
+- **Period selector**: pill chips for `Today`, `This Week`, `This Month`, `Last Month`, and a `Custom` chip that opens a `react-native-calendars` bottom-sheet range picker (step 1: FROM, step 2: TO). Custom range shows "YYYY-MM-DD→YYYY-MM-DD" on the chip.
+- **Endpoint**: `GET /api/reports/staff-performance?preset=…` or `?from_date=…&to_date=…`.
+- **Summary cards** (2×2 grid): Net Payable (highlight brand), Revenue, Commission, Advances — driven by `totals` from the response.
+- **Top performer** ribbon: gold "TROPHY" badge + name + revenue when `top_performer` present.
+- **Per-staff cards**: name/role/empId, "PAID" badge (bright green pill, always visible when `row.paid === true`), big Net Payable value, ▲/▼ delta chip (`revenue_delta_pct`, hidden when |Δ| < 0.5%), two-row compact stats (Days · Hours · Services / Revenue · Commission · Advances), and an action row with "Mark paid / Undo paid" + "Payslip" buttons. Card border turns success-green with mint fill when `paid`.
+- **Focus refresh + pull-to-refresh** — the report refetches whenever the screen regains focus.
+
+### Track 2 — Per-staff detail
+- `useLocalSearchParams` reads `id`, `from`, `to` passed by the parent card.
+- `GET /api/reports/staff-performance/{id}/detail` with the same period params.
+- Header shows staff name + period. Summary row: Hours · Revenue · Tips.
+- **Attendance days** section — date, In/Out times, late flag, hours + overtime.
+- **Bills** section — customer + bill_no, services list, revenue, tip badge.
+- All ISO timestamps go through the shared `parseTimestamp` helper (dayjs), so 6-digit-microsecond backend strings render as HH:mm local time on Hermes/Safari.
+
+### Track 3 — Mark payroll paid
+- **`POST /api/reports/payroll/mark-paid`** — body carries `beautician_id`, `data.from`, `data.to`, `net_payable`, and a "Paid via mobile · YYYY-MM-DD" note. Idempotent per period so the paid flag round-trips on reload.
+- **`DELETE /api/reports/payroll/mark-paid?…`** — undo path, same query keys.
+- Optimistic UI: card `paid` flag flips immediately (`setData(d => ...)`), then a silent `load(true)` reconciles with the server.
+- Per-row loading state (`payingId`) shows a spinner in the action button while in flight.
+- Success/failure haptics.
+
+### Track 4 — Exports
+- **Full CSV export** — header button in the top-right ("↥ CSV"). Column order matches spec exactly (Name, Employee ID, Phone, Role, Basic Salary, Days Worked, Total Hours, Overtime Hours, Services Performed, Revenue Generated, Tips Earned, Commission, Advances Taken, Net Payable, New Clients, Repeat Clients, Rebooking %, Revenue/Hour, Tip %, Target %, Late Days, Absent Days, Delta vs Prev %, Paid). Filename `payroll_<from>_<to>.csv`. Uses the shared `shareCsv` util → OS share sheet (WhatsApp / Email / Drive / …) on native, browser download on web.
+- **Per-staff Payslip** — "Payslip" action on each card generates a plain-text payslip (name, emp id, period, basic + commission − advances = net payable, paid/pending badge) and hands it to the OS share sheet as a `.txt` for one-tap send.
+
+### Access control
+- Screen only renders when `user.is_owner === true` OR `can('reports')`. Non-authorised users see a friendly lock icon + explanation.
+- The Manage tile is `perm: 'reports'` — hidden entirely for staff.
+
+### Verified
+- Lint clean across all three touched/new files.
+- App bundles cleanly, login page loads.
+- Backend endpoints exist on production (this project) and web-app has already verified them.
+
+### Deployment note
+Client-only. Publish → mobile users with the `reports` permission see the new tile immediately. Long-press the identity chip on Staff Dashboard to confirm the app is hitting `https://parlourpilot.com` (locked via 35.9).
+
+---
+
+## Iteration 36 — Staff Performance parity with web
+
+**User request**: Make mobile Staff Performance screen match the web `/app/staff-performance` page (Payroll & Performance layout). Confirm the Salary Advance staff picker on Expenses is on mobile too.
+
+**Verdict**:
+- Expenses "Staff member (for Salary Advance)" picker — **already implemented on mobile** (`app/(tabs)/expenses.tsx` lines 404-423). Nothing to do.
+- Staff Performance — enriched to match web (see below).
+
+### Changes
+1. **Consolidated the manage tiles**: removed the old "Payroll & Performance" tile and repointed the "Staff Performance" tile → `/manage/payroll-report` (single source of truth, same as web sidebar naming).
+2. **Legacy route**: `app/manage/staff-performance.tsx` reduced to a `<Redirect href="/manage/payroll-report" />` so old deep-links still work.
+3. **Enriched `app/manage/payroll-report.tsx`** with the missing sections from web:
+   - **Export sheet** — CSV / PDF / Print options (was only CSV). Uses `buildReportHtml` + branded logo/colour to match the tenant's PDF style already used by Expenses & Reports.
+   - **"Earnings by staff" bar chart** — horizontal micro-bars, top-8 staff, palette-cycled bars matching the web app's chart.
+   - **Rank badges** (#1 trophy, #2, #3 tinted, others plain) on each staff card.
+   - **Salary reference** in the staff meta line (`Role · ID · Salary ₹X`).
+   - **Extra stats row**: Tips + OT + Late days + Absent days ("0 · 25 abs" style) exposed on the card.
+   - **Analytics section** (horizontal scroll table): New Clients, Repeat, Rebooking %, Revenue/Hr, Services/Hr, Tip %, Target % (colored pill), Top services — mirrors the web page's Analytics section.
+4. **Backwards compatible**: every optional field guarded with `?? 0` so legacy backends still render without crashes; enriched sections auto-hide when the data doesn't include those fields.
+
+### Files touched
+- `app/(tabs)/manage.tsx` — consolidated tile
+- `app/manage/staff-performance.tsx` — turned into redirect
+- `app/manage/payroll-report.tsx` — full rewrite (enriched)
+
+### Verified
+- Lint clean.
+- App bundles cleanly (login page loads via localhost:3000).
+
+## agent_communication:
+- agent: "main"
+  message: "Consolidated 'Payroll & Performance' + old 'Staff Performance' into single richer screen at /manage/payroll-report. Added PDF/Print exports, Earnings-by-staff chart, rank badges, salary/absent-days chips, and full Analytics table (New Clients, Repeat, Rebooking %, Revenue/Hr, Services/Hr, Tip %, Target %, Top services). Please test the flow on the preview: login as owner → Manage tab → 'Staff Performance' tile → verify KPIs, chart, staff cards (mark-paid toggle + payslip share), analytics row, and export sheet (CSV/PDF/Print). Old /manage/staff-performance route redirects to the new screen."

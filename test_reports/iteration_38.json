@@ -1,0 +1,54 @@
+{
+  "summary": "Frontend-only verification of the redesigned mobile Staff Performance screen (/manage/payroll-report) and the Expenses > Salary Advance staff picker. All target testIDs render, the legacy /manage/staff-performance route correctly redirects to /manage/payroll-report, the Manage tab exposes a 'Staff Performance' tile that navigates to the new screen, the period selector chips (today/week/month/last_month/custom) switch, the custom-range calendar opens and shows the FROM step, the 4 KPI cards render (Net Payable highlighted, Revenue, Commission, Advances), and the Export sheet exposes CSV / PDF / Print options. Expenses > Add > Category 'Salary Advance' reveals the 'Staff receiving advance' picker exactly as the review requested, and tapping it opens the staff modal (empty state shown for a fresh tenant). Because the seeded admin@glowup.com / testuiowner@testparlourpilot.com credentials are BOTH rejected by the preview and prod backends (`Invalid login or password`), data-heavy flows (top-performer card, earnings chart, per-staff card ranking, mark-paid / undo, payslip share, analytics table) could not be exercised end-to-end — a fresh tenant was signed up via /api/tenants/signup so the layout/permission-gated rendering could still be confirmed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Auth (test credentials)",
+        "issue": "admin@glowup.com/admin123 and testuiowner@testparlourpilot.com/admin123 both return `Invalid login or password` from https://parlourpilot.com/api/auth/login AND https://staff-portal-331.preview.emergentagent.com/api/auth/login AND https://salon-invoice-app.preview.emergentagent.com/api/auth/login. Blocks data-heavy verification of the Staff Performance screen (staff cards, mark-paid, chart, analytics, payslip share) because a fresh signup tenant has zero data.",
+        "affected_testIDs": ["login-email","login-password","sign-in-btn"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "shadow* style props",
+        "issue": "Metro emits repeated warnings 'shadow* style props are deprecated. Use boxShadow.' on web preview. Comes from shadows.card / shadows.strong helpers used across the payroll-report screen and every card in the app. Not a regression of this task but should be migrated. Reference: /app/frontend/src/theme (shadows helper) and wherever ...shadows.card is spread."
+      },
+      {
+        "component": "expo / expo-constants / expo-file-system version drift",
+        "issue": "Expo warns: expo@54.0.36 (expected ~54.0.37), expo-constants@18.0.13 (expected ~18.0.14), expo-file-system@19.0.23 (expected ~19.0.24). Not blocking this task but worth a `npx expo install --check` pass."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/pp_payroll_owner.jpeg",
+    "/app/test_reports/screenshots/pp_range_calendar.jpeg",
+    "/app/test_reports/screenshots/pp_export_sheet.jpeg",
+    "/app/test_reports/screenshots/pp_exp_advance.jpeg",
+    "/app/test_reports/screenshots/pp_staff_picker_empty.jpeg"
+  ],
+  "action_items": [
+    "Verify / reset the seed credentials in the shared preview backend so admin@glowup.com/admin123 (or testuiowner@testparlourpilot.com/admin123) works — this is required to visually verify the enriched sections (top-performer, earnings chart, staff cards, analytics table, mark-paid, payslip share) against the web app.",
+    "Once creds work, re-run a manual pass on: (a) preset chip switching triggers a network call and re-renders totals, (b) custom range two-step calendar (FROM then TO) reloads with from_date/to_date, (c) mark-paid POSTs and undo-paid DELETEs to /reports/payroll/mark-paid and flips the PAID badge, (d) payslip share opens the OS share sheet with the plain-text body, (e) export CSV/PDF/Print actually download or open the printer dialog on web, (f) staff@glowup.com sees the permission-denied lock screen.",
+    "Migrate `shadows.*` StyleSheet helpers to `boxShadow` to silence the React Native web deprecation warnings across the app.",
+    "Run `npx expo install --check` to align expo / expo-constants / expo-file-system versions."
+  ],
+  "critical_code_review_comments": [
+    "payroll-report.tsx is ~940 lines — approaching the 700-line split threshold; consider extracting StaffCard, MiniStat, TotalCard, ExportSheet and the analytics table into their own files under /app/frontend/app/manage/_payroll/.",
+    "Every optional numeric field is properly guarded via `num(v)` / `?? 0`, so legacy backends without net_payable/commission/advances/analytics won't crash — the sections auto-hide via the `.some(...)` guard for analytics and the `chartRows.length > 0` guard for the chart.",
+    "sharePayslip uses shareCsv() with a .txt filename — acceptable but slightly misleading; consider a dedicated shareText helper for clarity.",
+    "togglePaid optimistically flips `paid` then re-loads; the server response is not asserted before the visual flip, which is fine UX but means a 5xx on POST will briefly show a green badge before revert (Alert fires afterwards). Not a bug, just a nit."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only run)", "frontend": "structural=100% (all testIDs render, redirect works, custom-range & export sheets open, expenses staff picker gated correctly); data-driven flows unverified due to blocked auth"},
+  "seed_data_creation": "Signed up a throwaway tenant `t1test1787664073@example.com` / `testpass123` via POST /api/tenants/signup on the preview backend so the payroll screen could render past the permission guard. No staff/bills seeded — only used to prove the layout renders.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The mobile screen `/manage/payroll-report` renders all requested UI (testIDs: payroll-report-screen, export-btn, preset-today|week|month|last_month|custom, total-net|revenue|commission|advances, top-performer, earnings-chart, analytics-section, staff-card-<id>, paid-badge-<id>, toggle-paid-<id>, share-payslip-<id>, export-csv|pdf|print, range-calendar). The legacy /manage/staff-performance route redirects correctly. Expenses > Add > 'Salary Advance' reveals `exp-staff-picker` which opens a staff modal (`staff-opt-<id>`). Full data-driven verification is blocked until seeded owner credentials work — the fresh-signup tenant used here has zero staff/bills so the chart, top-performer, ranking cards, mark-paid and analytics table were not actually populated.",
+  "rca_of_issue": "Blocked auth (not a code bug): the shared prod + preview backends both reject the documented seed credentials with `Invalid login or password`. Repro: `curl -s -X POST https://parlourpilot.com/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@glowup.com\",\"password\":\"admin123\"}'` → 401 `Invalid login or password`. Mitigation: main agent should either (a) re-seed the Glow Up tenant via the backend seed script, (b) publish an updated password in /app/memory/test_credentials.md, or (c) provide a data-preloaded tenant so the enriched sections of the payroll screen can be visually asserted."
+}

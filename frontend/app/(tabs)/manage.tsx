@@ -28,7 +28,7 @@ export default function ManageScreen() {
     { icon: 'wallet-outline', label: 'Expenses', hint: 'Track daily expenses', route: '/(tabs)/expenses', perm: 'expenses' },
     { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing', perm: 'cash_closing' },
     { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report', perm: 'reports' },
-    { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Revenue per staff · top performer · payroll export', route: '/manage/staff-performance', adminOnly: true },
+    { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Payroll, commission, targets, analytics & export', route: '/manage/payroll-report', perm: 'reports' },
     { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', adminOnly: true },
     { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', adminOnly: true },
     { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', adminOnly: true },
