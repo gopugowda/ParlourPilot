@@ -12,8 +12,31 @@ import { api, appointmentApi } from '@/src/api/client';
 import { useAuth, useBrand, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import StaffDashboard from '@/src/components/StaffDashboard';
+import { useUnreadCount } from '@/app/notifications';
 
 const LOGO = require('../../assets/images/parlourpilot-logo.png');
+
+/** Bell icon in the hero — shows an unread-count badge and taps to /notifications. */
+function NotifBell({ brandTextColor }: { brandTextColor: string }) {
+  const router = useRouter();
+  const count = useUnreadCount();
+  const cap = count > 9 ? '9+' : String(count);
+  return (
+    <TouchableOpacity
+      testID="notif-bell"
+      onPress={() => router.push('/notifications' as any)}
+      style={styles.logoutBtn}
+      accessibilityLabel={`Notifications${count > 0 ? `, ${count} unread` : ''}`}
+    >
+      <Ionicons name="notifications-outline" size={20} color={brandTextColor} />
+      {count > 0 && (
+        <View style={styles.notifBadge} testID="notif-badge">
+          <Text style={styles.notifBadgeText}>{cap}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
 
 // Thin dispatcher — routes staff-role non-owners to the Staff Dashboard, everyone
 // else to the existing owner/admin management dashboard. Kept as a wrapper so that
@@ -156,9 +179,12 @@ function OwnerDashboard() {
                   )}
                 </View>
               </View>
-              <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
-                <Ionicons name="log-out-outline" size={20} color={brandTextColor} />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <NotifBell brandTextColor={brandTextColor} />
+                <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
+                  <Ionicons name="log-out-outline" size={20} color={brandTextColor} />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <View style={{ marginTop: spacing.xl }}>
@@ -444,6 +470,13 @@ const styles = StyleSheet.create({
   branchStatic: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start' },
   branchSwitcherText: { color: '#fff', fontSize: 11, fontWeight: '700', flexShrink: 1 },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  notifBadge: {
+    position: 'absolute', top: -3, right: -3,
+    minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9,
+    backgroundColor: '#FF3B30', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: '#fff',
+  },
+  notifBadgeText: { fontSize: 10, fontWeight: '900', color: '#fff', lineHeight: 12 },
   heroLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 12, letterSpacing: 1, fontWeight: '700' },
   heroValue: { color: '#FFFFFF', fontSize: 44, fontWeight: '900', marginTop: spacing.xs },
   heroStatsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' },

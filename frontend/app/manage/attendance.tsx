@@ -9,6 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import GeofenceMap from '@/src/components/GeofenceMap';
 import {
   type AttendanceConfig, type MyTodayEntry, type AttendanceAction,
   getFreshLocation, postAction, loadConfig, loadMyToday, fmtLocalTime,
@@ -200,6 +201,19 @@ export default function AttendanceScreen() {
             <Text style={styles.subtleNote}>Geofence disabled for this branch — check-ins won&rsquo;t be gated.</Text>
           )}
         </View>
+
+        {/* Geofence mini-map — lets staff SEE if they're inside the fence
+            before tapping "Check In". Renders empty state when the branch
+            doesn't have coordinates configured. */}
+        {config && (
+          <GeofenceMap
+            latitude={config.latitude}
+            longitude={config.longitude}
+            radiusM={config.check_in_radius_m}
+            gatingActive={config.gating_active}
+            branchName={config.branch_name}
+          />
+        )}
 
         {/* Action buttons — 2×2 grid */}
         <View style={styles.grid}>

@@ -23,6 +23,8 @@ import * as Haptics from 'expo-haptics';
 import { api, API_BASE_URL } from '@/src/api/client';
 import { useAuth, useBrand, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+import GeofenceMap from '@/src/components/GeofenceMap';
+import { useUnreadCount } from '@/app/notifications';
 import {
   type AttendanceAction, type AttendanceConfig, type MyTodayEntry,
   getFreshLocation, postAction, loadConfig, loadMyToday,
@@ -154,6 +156,9 @@ export default function StaffDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [polling, setPolling] = useState(false);
   const [busy, setBusy] = useState<AttendanceAction | null>(null);
+  // Live unread count for the bell badge — synthesised from the same
+  // signals as the /notifications screen (low stock, cancellations, EOD, etc.)
+  const unread = useUnreadCount();
   // When the earnings response last landed. Used for the "Updated Xs ago" chip
   // under My Performance so the user can see data freshness at a glance.
   const [earningsUpdatedAt, setEarningsUpdatedAt] = useState<number | null>(null);
@@ -347,6 +352,19 @@ export default function StaffDashboard() {
                 )}
               </TouchableOpacity>
               <TouchableOpacity
+                testID="notif-bell"
+                onPress={() => router.push('/notifications' as any)}
+                style={styles.iconHeaderBtn}
+                accessibilityLabel={`Notifications${unread > 0 ? `, ${unread} unread` : ''}`}
+              >
+                <Ionicons name="notifications-outline" size={20} color={brandTextColor} />
+                {unread > 0 && (
+                  <View style={styles.notifBadge} testID="notif-badge">
+                    <Text style={styles.notifBadgeText}>{unread > 9 ? '9+' : String(unread)}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
                 testID="logout-btn"
                 onPress={onSignOut}
                 style={styles.iconHeaderBtn}
@@ -411,6 +429,21 @@ export default function StaffDashboard() {
         {/* Section 1 — Shift Control buttons */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Shift Control</Text>
+
+          {/* Geofence mini-map — lets staff see where they are relative to
+              the salon fence before punching in. */}
+          {config && (
+            <View style={{ marginBottom: spacing.md }}>
+              <GeofenceMap
+                latitude={config.latitude}
+                longitude={config.longitude}
+                radiusM={config.check_in_radius_m}
+                gatingActive={config.gating_active}
+                branchName={config.branch_name}
+              />
+            </View>
+          )}
+
           <View style={styles.controlRow}>
             <ShiftButton
               label={isIn || onBreak ? 'Check In' : 'Check In'}
@@ -701,6 +734,13 @@ const styles = StyleSheet.create({
   heroGreeting: { fontSize: 13, fontWeight: '600' },
   heroBrand: { fontSize: 20, fontWeight: '900', letterSpacing: 0.3, marginTop: 2 },
   iconHeaderBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  notifBadge: {
+    position: 'absolute', top: -3, right: -3,
+    minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9,
+    backgroundColor: '#FF3B30', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: '#fff',
+  },
+  notifBadgeText: { fontSize: 10, fontWeight: '900', color: '#fff', lineHeight: 12 },
   logoutBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
   identityChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,

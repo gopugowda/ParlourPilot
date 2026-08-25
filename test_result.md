@@ -1871,3 +1871,54 @@ Client-only. Publish → mobile users with the `reports` permission see the new 
 ### Verified
 - Testing agent verified: admin session on preview correctly hides Reports & Staff Performance menu items; deep-link to /manage/report shows owner-gate lock; deep-link to /manage/payroll-report shows the tightened lock UI. Team screen restricted UI validated via code review.
 - Backend endpoints handle any bypass (return 403) as a defence-in-depth.
+
+---
+
+## Iteration 40 — Notifications inbox + Attendance geofence map
+
+### Feature 1: In-app Notifications (client-side aggregator)
+Shared backend has no `/notifications` endpoint, so notifications are synthesised from existing endpoints and stored per-user read state in AsyncStorage.
+
+**Signals**:
+- Low stock → `/reports/summary.low_stock`
+- Expiring members → `/reports/summary.expiring_members`
+- Cancelled appointments today → `/appointments?from_date=today&to_date=today` filtered by status
+- End-of-day summary (owner-only) → `/reports/summary.today`
+- Unpaid payroll (owner-only) → `/reports/staff-performance?preset=last_month`
+
+**UI**:
+- New screen at `/notifications`
+- Bell icon added to both OwnerDashboard and StaffDashboard heros
+- Red badge with unread count (capped "9+")
+- Unread section on top, Earlier section below
+- Severity-tinted cards (info/warning/error/success)
+- Tap → deep-link to relevant screen + auto-mark-as-read
+- "Mark all" button in header
+- Pull-to-refresh
+- All API calls guarded so a single 403 doesn't blank the inbox
+
+### Feature 2: Attendance Geofence Map (`GeofenceMap.tsx`)
+Mini-map on both the Attendance screen and Staff Dashboard's Shift Control section.
+
+**Tech**: WebView + Leaflet + OpenStreetMap tiles (no API keys, works in Expo Go + Web preview via `<iframe srcDoc>` fallback). `react-native-maps` was NOT used because it needs native code + Google API keys + a full EAS rebuild.
+
+**Visual spec (verified via screenshot)**:
+- Fixed salon pin on branch coordinates
+- Fence circle drawn at `check_in_radius_m` (display-capped at 5km for readability; the real value is still used for inside/outside logic)
+- Pulsing blue dot for user's live GPS position (updates every 4s / 3m via `Location.watchPositionAsync`)
+- Fence + map-box border colour: **GREEN inside**, **RED outside**, brand-colour when no fix yet
+- Status pill: "Fence Xm" + "Inside fence" or "Outside · Xm away"
+- Outside-fence banner explains why punch-in will be rejected
+- Permission-denied hint with "Tap to try again"
+- Locate-me button re-triggers the watcher
+
+### Files touched
+- New: `/app/frontend/app/notifications.tsx`
+- New: `/app/frontend/src/components/GeofenceMap.tsx`
+- Edited: `/app/frontend/app/(tabs)/index.tsx` (bell + badge)
+- Edited: `/app/frontend/src/components/StaffDashboard.tsx` (bell + map)
+- Edited: `/app/frontend/app/manage/attendance.tsx` (map)
+
+### Verified
+- Lint clean on all touched files.
+- Screenshots on preview: dashboard shows bell icon, attendance screen shows OSM map with pulsing blue dot inside a green-bordered fence card, notifications screen renders the "All clear" empty state correctly.
