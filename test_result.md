@@ -1675,3 +1675,41 @@ Client-only. Publish → new build syncs via OTA. To see the timer flip instantl
 
 ### Deployment note
 Client-only change. Publish to Expo Go / OTA. Once the user redeploys the web-app to production (`parlourpilot.com`), the migration `backfill_attendance_fields` will run on boot and every historical row will carry both `ts+timestamp` and `staff_name+name`. Mobile already handles either shape.
+
+
+## Iteration 35.8 — My Performance ₹0 fix (production URL default + robust refresh)
+
+**Bug**: Mobile Staff Dashboard showed ₹0 across all Performance cards even when web app showed Monali with ₹10,000 salary + ₹10,000 target.
+
+**Root cause**: `app.config.ts` fell back to `EXPO_PUBLIC_BACKEND_URL` from `.env` (staff-portal-331 preview) whenever `APP_ENV=production` wasn't explicitly set — and Emergent Publish doesn't guarantee that env var. So production builds baked the *wrong* backend URL, giving mobile a different Mongo tenant that had Monali with all zeros.
+
+### Fixes (all client-side)
+
+1. **`app.config.ts` — production is now the default**  
+   New resolution order: `EXPO_PUBLIC_BACKEND_URL_OVERRIDE` > `NODE_ENV==='development'` (or `APP_ENV==='development'`) → preview URL (respecting `.env`) > **fallback: `https://parlourpilot.com`**. Since Metro/Expo sets `NODE_ENV=development` automatically during `expo start` but leaves it `production` for any published build, this guarantees every deployed build hits the shared production backend regardless of what Emergent's publish pipeline exports.
+   Verified locally: `dev → staff-portal-331.preview…`, `prod → parlourpilot.com`.
+
+2. **`StaffDashboard.load()` — no more null-out on network error**  
+   Changed `/me/schedule` and `/me/earnings` fallbacks from `.catch(() => null)` to `.catch(() => undefined)`, then guarded the setState calls: `if (s !== undefined) setSchedule(s); if (e !== undefined) setEarnings(e)`. A transient poll failure now keeps the previously-good values on-screen instead of flashing back to ₹0.
+
+3. **Long-press diagnostic on the identity chip** (testID `identity-chip`, activeOpacity 0.85, `delayLongPress={500}`)  
+   Opens an `Alert.alert('Connection diagnostics', …)` showing:
+   - Resolved backend URL (from `Constants.expoConfig.extra.backendUrl` / env fallback)
+   - Signed-in email + phone
+   - `earnings.linked` boolean with human-readable interpretation
+   - Last `/me/earnings` fetch time (absolute + relative)
+   - Current `basic_salary` + `monthly_target` from the last response
+   Perfect for verifying at a glance which backend a deployed build is actually hitting.
+
+4. **"Updated Xs ago" chip** (testID `earnings-updated`)  
+   Rendered next to the "My Performance" section header. New state `earningsUpdatedAt: number|null` gets set to `Date.now()` every time a `/me/earnings` response lands. Formatter picks `Xs ago` / `Xm ago` / `Xh ago`. Gives at-a-glance freshness feedback.
+
+5. **Force refresh on focus** — already in place via `useFocusEffect(load(true))` (verified). The existing Refresh (↻) button in the hero already acts as a Force Reload — kept as-is.
+
+### Verified
+- Lint clean.
+- Direct curl on production `/api/me/earnings` for Monali confirms backend returns `linked:true, basic_salary:10000, monthly_target:10000, net_payable:10000` — so once mobile hits the right backend, the existing card mapping (already correct since 35.5) will render them.
+- `app.config.ts` returns preview URL in dev and prod URL otherwise.
+
+### Deployment note
+Client-only. User must Publish for the URL change to take effect on the deployed build. After publish, long-press the identity chip and confirm `Backend URL: https://parlourpilot.com`.

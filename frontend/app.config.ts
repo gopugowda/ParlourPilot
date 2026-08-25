@@ -1,20 +1,21 @@
 /**
  * Dynamic Expo config — extends `app.json` so we can vary the backend URL
- * between preview and production builds.
+ * between dev / preview / production builds.
  *
- * Resolution order for the API base URL (highest wins):
+ * Resolution order (highest wins):
  *   1. `EXPO_PUBLIC_BACKEND_URL_OVERRIDE`  — one-off dev override
- *   2. `APP_ENV === 'production'`          — Emergent Publish / any EAS prod build
- *      → `https://parlourpilot.com`
- *   3. `EAS_BUILD_PROFILE === 'production'` (auto-set by EAS on prod builds)
- *      → `https://parlourpilot.com`
- *   4. `EXPO_PUBLIC_BACKEND_URL`           — from .env (preview default)
- *   5. Hardcoded preview fallback
+ *   2. `NODE_ENV === 'development'`        — set automatically by `expo start`
+ *      → whatever `EXPO_PUBLIC_BACKEND_URL` says in .env (staff-portal preview)
+ *      → falls back to PREVIEW_URL if that's empty
+ *   3. Anything else (Emergent Publish / EAS production build)
+ *      → PRODUCTION_URL (`https://parlourpilot.com`)
  *
- * The resolved URL is exposed to the app at runtime as
- *   `Constants.expoConfig.extra.backendUrl`
- * and is read by `src/api/client.ts` (`process.env.EXPO_PUBLIC_BACKEND_URL`
- * remains the primary path so dev-time `expo start` still works exactly as before).
+ * Rationale: Emergent Publish doesn't guarantee `APP_ENV=production` gets set,
+ * so we can't rely on it. Instead we default to PRODUCTION and only opt into
+ * PREVIEW during local dev, when Metro sets `NODE_ENV=development` for us.
+ *
+ * The resolved URL is exposed at runtime as `Constants.expoConfig.extra.backendUrl`
+ * and read by `src/api/client.ts`.
  */
 import type { ExpoConfig, ConfigContext } from '@expo/config';
 
@@ -25,14 +26,19 @@ function resolveBackendUrl(): string {
   const override = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE;
   if (override && override.trim()) return override.trim();
 
+  const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
   const appEnv = (process.env.APP_ENV || '').toLowerCase();
-  const easProfile = (process.env.EAS_BUILD_PROFILE || '').toLowerCase();
-  if (appEnv === 'production' || easProfile === 'production') return PRODUCTION_URL;
 
-  const fromEnv = process.env.EXPO_PUBLIC_BACKEND_URL;
-  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+  // Explicit dev signals → use preview URL (respecting .env if provided).
+  if (nodeEnv === 'development' || appEnv === 'development') {
+    const fromEnv = process.env.EXPO_PUBLIC_BACKEND_URL;
+    if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+    return PREVIEW_URL;
+  }
 
-  return PREVIEW_URL;
+  // Any other case (Emergent Publish, EAS prod, no env at all) → PRODUCTION.
+  // This is the safe default for the deployed app.
+  return PRODUCTION_URL;
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {

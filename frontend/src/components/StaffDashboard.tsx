@@ -19,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 
 import { api } from '@/src/api/client';
 import { useAuth, useBrand, PermissionKey } from '@/src/context/AuthContext';
@@ -126,6 +127,16 @@ const formatDuration = (ms: number) => {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 };
 
+// "5s ago" / "2m ago" / "1h ago" — used by the "Last updated" chip.
+function formatAgo(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
+}
+
 // ---------- Main component ----------
 export default function StaffDashboard() {
   const router = useRouter();
@@ -144,6 +155,9 @@ export default function StaffDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [polling, setPolling] = useState(false);
   const [busy, setBusy] = useState<AttendanceAction | null>(null);
+  // When the earnings response last landed. Used for the "Updated Xs ago" chip
+  // under My Performance so the user can see data freshness at a glance.
+  const [earningsUpdatedAt, setEarningsUpdatedAt] = useState<number | null>(null);
 
   // ---- Live ticker (only when checked in) ----
   const [nowMs, setNowMs] = useState(Date.now());
@@ -167,18 +181,26 @@ export default function StaffDashboard() {
   // ---- Loaders ----
   // `silent = true` → background refresh (poll or focus refetch) — shows a small
   // spinner in the header instead of the pull-to-refresh indicator.
+  //
+  // Failure handling: for `/me/*` calls we return `undefined` (not `null`) on
+  // network error and *skip* the setState, so a transient blip never resets a
+  // previously-good UI to ₹0. Attendance is source-of-truth though — if the
+  // status call fails we fall back to `{status:'out', logs:[]}` (safer default).
   const load = useCallback(async (silent = false) => {
     if (silent) setPolling(true);
     const [c, t, s, e] = await Promise.all([
       loadConfig(),
       loadMyToday(),
-      api<MySchedule>('/me/schedule').catch(() => null),
-      api<MyEarnings>('/me/earnings').catch(() => null),
+      api<MySchedule>('/me/schedule').catch(() => undefined),
+      api<MyEarnings>('/me/earnings').catch(() => undefined),
     ]);
     setConfig(c || {});
     setToday(t || { status: 'out', logs: [] });
-    setSchedule(s);
-    setEarnings(e);
+    if (s !== undefined) setSchedule(s);
+    if (e !== undefined) {
+      setEarnings(e);
+      setEarningsUpdatedAt(Date.now());
+    }
     if (silent) setPolling(false);
   }, []);
 
@@ -212,6 +234,36 @@ export default function StaffDashboard() {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Sign out', style: 'destructive', onPress: () => logout() },
       ],
+    );
+  };
+
+  // Diagnostic — long-press the identity chip to inspect which backend the
+  // deployed build is hitting, when earnings last refreshed, and the linked
+  // status. Invaluable for troubleshooting stale ₹0 without shipping a rebuild.
+  const onDiagnostic = () => {
+    Haptics.selectionAsync();
+    const runtimeUrl =
+      (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl
+      || (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined)
+      || '(unresolved)';
+    const lastFetch = earningsUpdatedAt
+      ? `${new Date(earningsUpdatedAt).toLocaleTimeString()} (${Math.round((Date.now() - earningsUpdatedAt) / 1000)}s ago)`
+      : 'never';
+    const linkedText = earnings == null ? 'no response yet'
+      : earnings.linked ? 'true — profile linked ✓'
+      : 'false — profile not linked ✗';
+    Alert.alert(
+      'Connection diagnostics',
+      [
+        `Backend URL:\n${runtimeUrl}`,
+        '',
+        `Signed in as:\n${user?.email || '—'}${user?.phone ? '\nPhone: ' + user.phone : ''}`,
+        '',
+        `Earnings linked: ${linkedText}`,
+        `Last /me/earnings fetch: ${lastFetch}`,
+        earnings ? `Basic ₹${earnings.basic_salary} · Target ₹${earnings.monthly_target}` : '',
+      ].filter(Boolean).join('\n'),
+      [{ text: 'Close' }],
     );
   };
 
@@ -307,14 +359,22 @@ export default function StaffDashboard() {
             </View>
 
             {/* Identity chip — mirrors exactly what the backend sees for this session.
-                Lets the user compare with what the web app shows and spot a stale/other-user login. */}
-            <View style={styles.identityChip} testID="identity-chip">
+                Lets the user compare with what the web app shows and spot a stale/other-user login.
+                Long-press to open a diagnostic alert (backend URL, last fetch, linked status). */}
+            <TouchableOpacity
+              testID="identity-chip"
+              activeOpacity={0.85}
+              onLongPress={onDiagnostic}
+              delayLongPress={500}
+              style={styles.identityChip}
+              accessibilityLabel="Signed in identity; long-press for connection diagnostics"
+            >
               <Ionicons name="person-circle-outline" size={14} color={brandTextColor} />
               <Text style={[styles.identityText, { color: brandTextColor }]} numberOfLines={1}>
                 Signed in as {user?.email || user?.phone || '—'}
                 {user?.email && user?.phone ? ` · ${user.phone}` : ''}
               </Text>
-            </View>
+            </TouchableOpacity>
 
             <View style={{ marginTop: spacing.xl }}>
               <View style={styles.statusRow}>
@@ -441,7 +501,14 @@ export default function StaffDashboard() {
 
         {/* Section 3 — Performance & Target */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>My Performance</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>My Performance</Text>
+            {earningsUpdatedAt != null && (
+              <Text style={styles.updatedChip} testID="earnings-updated">
+                Updated {formatAgo(Date.now() - earningsUpdatedAt)}
+              </Text>
+            )}
+          </View>
 
           {/* Always render — even without a beautician link, we show ₹0/₹0 with a
               neutral "no target set" note. Matches the web app's behavior. */}
@@ -675,6 +742,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 16, fontWeight: '800', color: colors.onSurface, marginBottom: spacing.md },
   subSectionTitle: { fontSize: 14, fontWeight: '700', color: colors.onSurfaceSecondary },
   sectionCount: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  updatedChip: { fontSize: 10, fontWeight: '700', color: colors.onSurfaceTertiary, backgroundColor: colors.surfaceSecondary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, letterSpacing: 0.3, textTransform: 'uppercase' },
   subtleNote: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: spacing.sm },
 
   // Shift buttons
