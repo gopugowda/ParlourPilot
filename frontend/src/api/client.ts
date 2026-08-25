@@ -3,19 +3,58 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
 /**
- * Resolve the API base URL with a priority order that works across:
- *   - `expo start` (dev): env var is read from `.env` at bundle time.
- *   - EAS / Emergent Publish (production): `app.config.ts` swaps in the
- *     production URL and exposes it via `expo.extra.backendUrl` at runtime.
+ * =============================================================================
+ * BACKEND URL RESOLUTION — READ THIS BEFORE TOUCHING
+ * =============================================================================
+ * Every deployed build MUST hit the shared production backend at
+ *   https://parlourpilot.com
+ * because that is where the web app and its MongoDB tenant live. If mobile hits
+ * a different backend, it sees a *different* database (empty / stale data,
+ * "Profile not linked", etc.).
  *
- * Preference:
- *   1) `Constants.expoConfig.extra.backendUrl` (baked at build time by app.config.ts)
- *   2) `EXPO_PUBLIC_BACKEND_URL` (compile-time from .env — also our dev default)
- *   3) '' → callers will fail loudly with a network error, which is preferable
- *          to silently pointing at the wrong host.
+ * We use React Native's compile-time `__DEV__` global as the switch:
+ *   • `__DEV__ === true`  → local dev via `expo start` (Metro sets this)
+ *                            → use `.env` value (or the preview URL fallback)
+ *   • `__DEV__ === false` → any published / release build (Emergent Publish,
+ *                            EAS release, standalone) → **always** production URL
+ *
+ * Why not env vars? Emergent's Publish pipeline force-injects
+ * `EXPO_PUBLIC_BACKEND_URL=https://salon-invoice-app.emergent.host` (this
+ * project's K8s host), which is the *wrong* backend for our use-case. Any
+ * env-var-based resolver would be silently overridden every publish. `__DEV__`
+ * is baked in by Metro during bundle-time and cannot be flipped by an env var,
+ * so it's tamper-proof.
+ *
+ * If you ever *want* a release build to hit preview instead, use the escape
+ * hatch `EXPO_PUBLIC_BACKEND_URL_OVERRIDE=<url>` before building — it takes
+ * precedence over everything else.
+ * =============================================================================
  */
-const runtimeBackend = (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl;
-const BASE_URL = runtimeBackend || process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const PRODUCTION_BACKEND_URL = 'https://parlourpilot.com';
+const PREVIEW_BACKEND_URL = 'https://staff-portal-331.preview.emergentagent.com';
+
+function resolveBaseUrl(): string {
+  // Escape hatch for anyone who genuinely needs a different backend in a build.
+  const explicitOverride = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE;
+  if (explicitOverride && explicitOverride.trim()) return explicitOverride.trim();
+
+  // Production / released bundle — LOCK to parlourpilot.com. No fallback.
+  if (typeof __DEV__ !== 'undefined' && !__DEV__) {
+    return PRODUCTION_BACKEND_URL;
+  }
+
+  // Dev-only (Metro / expo start) — honour .env, then app.config.ts, then default.
+  const runtimeBackend = (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl;
+  const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+  return runtimeBackend || envUrl || PREVIEW_BACKEND_URL;
+}
+
+const BASE_URL = resolveBaseUrl();
+
+// Exported so the Staff Dashboard "Connection diagnostics" alert can show the
+// *actual* URL that HTTP requests are using — not a re-derivation that might
+// drift from this file's rules.
+export const API_BASE_URL = BASE_URL;
 
 const TOKEN_KEY = 'parlourpilot_auth_token';
 const USER_KEY = 'parlourpilot_auth_user';

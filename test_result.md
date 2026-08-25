@@ -1713,3 +1713,33 @@ Client-only change. Publish to Expo Go / OTA. Once the user redeploys the web-ap
 
 ### Deployment note
 Client-only. User must Publish for the URL change to take effect on the deployed build. After publish, long-press the identity chip and confirm `Backend URL: https://parlourpilot.com`.
+
+
+## Iteration 35.9 — Backend URL LOCKED for production builds (bulletproof)
+
+**Bug**: Every Publish, Emergent's deploy pipeline was force-setting `EXPO_PUBLIC_BACKEND_URL=https://salon-invoice-app.emergent.host` (this project's K8s host), overriding the `.env` value the user manually set. Diagnostic alert on the deployed app confirmed the wrong URL. My previous `app.config.ts` resolver read the env var → cascaded the wrong URL into every build.
+
+**Root cause verified live**: I checked `/app/frontend/.env` right after supervisor restarted Expo — Emergent had rewritten it to `salon-invoice-app.preview.emergentagent.com` again. So no `.env` or `app.config.ts` env-reading approach can be trusted for production URL resolution.
+
+### Fix — `src/api/client.ts`
+- Introduced `resolveBaseUrl()` that uses React Native's compile-time `__DEV__` global instead of any env var:
+  - `EXPO_PUBLIC_BACKEND_URL_OVERRIDE` set → honor it (escape hatch for anyone who needs a different backend in a specific build).
+  - `__DEV__ === false` → **unconditionally** `https://parlourpilot.com`. No fallback, no env peek, no config lookup. Metro bakes `__DEV__` as a literal `false` in released bundles — Emergent cannot flip it via env vars.
+  - Only when `__DEV__ === true` (Metro dev) do we honor `app.config.ts` extra + `EXPO_PUBLIC_BACKEND_URL` for local development.
+- Exported new `API_BASE_URL` constant so the Staff Dashboard diagnostic reads the exact URL HTTP requests are using — no drift from re-derivation.
+
+### `src/components/StaffDashboard.tsx`
+- Removed the `Constants.expoConfig?.extra?.backendUrl` re-derivation in the diagnostic; now reads `API_BASE_URL` directly from the api client.
+
+### Verified
+- Lint clean.
+- Dev-mode preview correctly resolves to `.env` (Emergent-rewritten `salon-invoice-app.preview…`) — expected in `__DEV__=true`.
+- Simulated production behavior: with `__DEV__=false` the resolver returns `https://parlourpilot.com` regardless of env vars.
+
+### After user Publishes
+1. Long-press "Signed in as monali…" → diagnostic MUST show **`Backend URL: https://parlourpilot.com`**.
+2. Basic Salary ₹10,000, Target ₹10,000, Net ₹10,000 will render — matching web exactly.
+3. Even if Emergent overwrites `.env` again on redeploy, `__DEV__=false` in the bundle guarantees the URL stays locked to parlourpilot.com.
+
+### Deployment note
+Client-only. **User must Publish** to pick up the change. Escape hatch for future flexibility: set `EXPO_PUBLIC_BACKEND_URL_OVERRIDE=<url>` before building (rare).

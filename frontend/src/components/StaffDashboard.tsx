@@ -19,9 +19,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import Constants from 'expo-constants';
 
-import { api } from '@/src/api/client';
+import { api, API_BASE_URL } from '@/src/api/client';
 import { useAuth, useBrand, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import {
@@ -242,10 +241,9 @@ export default function StaffDashboard() {
   // status. Invaluable for troubleshooting stale ₹0 without shipping a rebuild.
   const onDiagnostic = () => {
     Haptics.selectionAsync();
-    const runtimeUrl =
-      (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl
-      || (process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined)
-      || '(unresolved)';
+    // Read the URL directly from the api client so this can never drift from
+    // the actual URL that HTTP requests are using.
+    const runtimeUrl = API_BASE_URL || '(unresolved)';
     const lastFetch = earningsUpdatedAt
       ? `${new Date(earningsUpdatedAt).toLocaleTimeString()} (${Math.round((Date.now() - earningsUpdatedAt) / 1000)}s ago)`
       : 'never';
