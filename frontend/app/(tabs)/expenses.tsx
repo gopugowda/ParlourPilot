@@ -50,7 +50,7 @@ export default function ExpensesScreen() {
   const { user, tenant } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<string[]>(['Material', 'Utilities', 'Rent', 'Salary', 'Maintenance', 'Other']);
+  const [categories, setCategories] = useState<string[]>(['Material', 'Utilities', 'Rent', 'Salary', 'Salary Advance', 'Maintenance', 'Other']);
   const [filter, setFilter] = useState<'today' | 'month' | 'all'>('today');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
