@@ -69,12 +69,15 @@ export default function ExpensesScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
-  // Salary Advance — staff attribution
+  // Salary Advance & Salary — staff attribution
   const [beauticians, setBeauticians] = useState<BeauticianOpt[]>([]);
   const [beauticianId, setBeauticianId] = useState<string>('');
   const [beauticianName, setBeauticianName] = useState<string>('');
   const [staffPickerOpen, setStaffPickerOpen] = useState(false);
-  const isAdvance = cat.trim().toLowerCase() === 'salary advance';
+  const catLc = cat.trim().toLowerCase();
+  const isAdvance = catLc === 'salary advance';
+  const isSalary = catLc === 'salary';
+  const requiresStaff = isAdvance || isSalary;
 
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
@@ -126,8 +129,9 @@ export default function ExpensesScreen() {
     const n = Number(amt);
     if (!(n > 0)) { setErr('Amount must be > 0'); return; }
     if (!expDate) { setErr('Date required'); return; }
-    // Salary Advance MUST be attributed to a staff member so it feeds their earnings.
-    if (isAdvance && !beauticianId) { setErr('Pick the staff member receiving the advance'); return; }
+    // Salary Advance & Salary MUST be attributed to a staff member so it
+    // feeds their earnings / payroll.
+    if (requiresStaff && !beauticianId) { setErr(`Pick the staff member for this ${isAdvance ? 'advance' : 'salary payout'}`); return; }
     setSaving(true);
     try {
       const body: any = {
@@ -138,7 +142,8 @@ export default function ExpensesScreen() {
         payment_mode: toExpenseToken(payMode),
         notes: notes.trim(),
       };
-      if (isAdvance && beauticianId) {
+      if (beauticianId) {
+        // Attribute whenever a staff is picked (backend links payroll for Salary / Advance).
         body.beautician_id = beauticianId;
         body.beautician_name = beauticianName;
       }
@@ -356,6 +361,42 @@ export default function ExpensesScreen() {
                 </ScrollView>
               </View>
 
+              {/* Staff attribution — always visible (mirrors web). Enforced for
+                  both "Salary Advance" and "Salary" so the payout links to
+                  a staff member's payroll / earnings. Optional otherwise. */}
+              <View style={styles.field}>
+                <Text style={styles.label}>
+                  Staff member (for Salary / Salary Advance){requiresStaff ? <Text style={styles.req}> *</Text> : null}
+                </Text>
+                <TouchableOpacity
+                  testID="exp-staff-picker"
+                  style={[styles.input, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                  onPress={() => { Haptics.selectionAsync(); setStaffPickerOpen(true); }}
+                >
+                  <Ionicons name="person-outline" size={16} color={colors.onSurfaceTertiary} />
+                  <Text style={{ fontSize: 14, color: beauticianName ? colors.onSurface : colors.onSurfaceTertiary, flex: 1 }}>
+                    {beauticianName || 'Select staff (only for Salary / Salary Advance)'}
+                  </Text>
+                  {beauticianId ? (
+                    <TouchableOpacity
+                      hitSlop={8}
+                      onPress={(e) => { e.stopPropagation?.(); Haptics.selectionAsync(); setBeauticianId(''); setBeauticianName(''); }}
+                    >
+                      <Ionicons name="close-circle" size={18} color={colors.onSurfaceTertiary} />
+                    </TouchableOpacity>
+                  ) : (
+                    <Ionicons name="chevron-down" size={16} color={colors.onSurfaceTertiary} />
+                  )}
+                </TouchableOpacity>
+                {requiresStaff ? (
+                  <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
+                    {isAdvance
+                      ? 'This attributes the advance to their monthly earnings. Cash advances also feed cash closing.'
+                      : 'This links the salary payout to the staff’s payroll record.'}
+                  </Text>
+                ) : null}
+              </View>
+
               <View style={{ flexDirection: 'row', gap: spacing.md }}>
                 <View style={[styles.field, { flex: 1 }]}>
                   <Text style={styles.label}>Amount ({getCurrencySymbol()}) <Text style={styles.req}>*</Text></Text>
@@ -401,27 +442,8 @@ export default function ExpensesScreen() {
                 </ScrollView>
               </View>
 
-              {/* Salary Advance → staff attribution picker */}
-              {isAdvance && (
-                <View style={styles.field}>
-                  <Text style={styles.label}>Staff receiving advance <Text style={styles.req}>*</Text></Text>
-                  <TouchableOpacity
-                    testID="exp-staff-picker"
-                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}
-                    onPress={() => { Haptics.selectionAsync(); setStaffPickerOpen(true); }}
-                  >
-                    <Ionicons name="person-outline" size={16} color={colors.onSurfaceTertiary} />
-                    <Text style={{ fontSize: 14, color: beauticianName ? colors.onSurface : colors.onSurfaceTertiary, flex: 1 }}>
-                      {beauticianName || 'Select staff'}
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color={colors.onSurfaceTertiary} />
-                  </TouchableOpacity>
-                  <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
-                    This attributes the advance to their monthly earnings.
-                  </Text>
-                </View>
-              )}
-
+              {/* Staff attribution — always visible (mirrors web). Only ENFORCED
+                  when category = Salary Advance; otherwise it's an optional field. */}
               <View style={styles.field}>
                 <Text style={styles.label}>Description <Text style={styles.req}>*</Text></Text>
                 <TextInput

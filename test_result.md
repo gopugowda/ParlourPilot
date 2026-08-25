@@ -1829,3 +1829,27 @@ Client-only. Publish → mobile users with the `reports` permission see the new 
 ## agent_communication:
 - agent: "main"
   message: "Consolidated 'Payroll & Performance' + old 'Staff Performance' into single richer screen at /manage/payroll-report. Added PDF/Print exports, Earnings-by-staff chart, rank badges, salary/absent-days chips, and full Analytics table (New Clients, Repeat, Rebooking %, Revenue/Hr, Services/Hr, Tip %, Target %, Top services). Please test the flow on the preview: login as owner → Manage tab → 'Staff Performance' tile → verify KPIs, chart, staff cards (mark-paid toggle + payslip share), analytics row, and export sheet (CSV/PDF/Print). Old /manage/staff-performance route redirects to the new screen."
+
+---
+
+## Iteration 37 — Payslip PDF, staff picker parity, Salary logic
+
+1. **Payslip as branded PDF**: `sharePayslip` in `app/manage/payroll-report.tsx` now builds an HTML payslip via `buildReportHtml` (tenant logo + brand colour) and hands it to `sharePdf` → OS share sheet (WhatsApp / Drive / Email) on native, browser download on web. Filename `payslip_<staff>_<from>.pdf`.
+2. **Revenue line removed** from the payslip body (per user request).
+3. **Expenses Add Expense — mirror of web**:
+   - Staff picker is now **always visible** (not hidden behind category), matching the web modal layout.
+   - Position: right after Category, before Amount/Date (same order as web).
+   - Label: "Staff member (for Salary / Salary Advance)".
+   - Placeholder: "Select staff (only for Salary / Salary Advance)".
+   - Small "clear" (x) icon appears when a staff is picked.
+   - Required (with `*` and validation) when category = **Salary Advance** OR **Salary**. Optional otherwise.
+   - Contextual helper text switches between advance/salary wording.
+   - Whenever a staff is picked, `beautician_id` + `beautician_name` are sent to the backend regardless of category — the backend (shared with web) handles payroll linking and cash-closing propagation.
+
+### Files touched
+- `/app/frontend/app/(tabs)/expenses.tsx`
+- `/app/frontend/app/manage/payroll-report.tsx`
+
+### Verified
+- Lint clean on payroll-report.tsx; only pre-existing exhaustive-deps warnings on expenses.tsx.
+- App bundles and login page loads on preview.

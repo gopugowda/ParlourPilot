@@ -351,33 +351,51 @@ export default function PayrollReportScreen() {
     finally { setExportBusy(false); }
   };
 
-  // ---- Payslip share (per staff, plain-text via OS share sheet) ----
+  // ---- Payslip share (per staff, branded PDF via OS share sheet) ----
   const sharePayslip = async (row: StaffRow) => {
     if (!data) return;
     try {
-      const period = `${data.from} to ${data.to}`;
-      const body = [
-        `Payslip — ${row.beautician_name}`,
-        row.employee_id ? `Emp ID: ${row.employee_id}` : null,
-        row.role ? `Role: ${row.role}` : null,
-        `Period: ${period}`,
-        '',
-        `Days Worked: ${num(row.days_worked)}`,
-        `Absent Days: ${num(row.absent_days)}`,
-        `Total Hours: ${num(row.total_hours).toFixed(1)}`,
-        num(row.overtime_hours) > 0 ? `Overtime: ${num(row.overtime_hours).toFixed(1)}h` : null,
-        `Services: ${num(row.services)}`,
-        `Revenue: ${fmtINR(num(row.revenue))}`,
-        num(row.tips) > 0 ? `Tips: ${fmtINR(num(row.tips))}` : null,
-        '',
-        `Basic Salary: ${fmtINR(num(row.basic_salary))}`,
-        num(row.commission) > 0 ? `+ Commission (${num(row.commission_pct)}%): ${fmtINR(num(row.commission))}` : null,
-        num(row.advances) > 0 ? `− Advances: ${fmtINR(num(row.advances))}` : null,
-        `= Net Payable: ${fmtINR(num(row.net_payable))}`,
-        '',
-        row.paid ? '✅ PAID' : '⏳ Pending payment',
-      ].filter(Boolean).join('\n');
-      await shareCsv(body, `payslip_${row.beautician_name.replace(/\s+/g, '_')}_${data.from}.txt`);
+      const period = `${data.from} → ${data.to}`;
+
+      // Two-column key/value table so the PDF looks like a real payslip.
+      const kv = (label: string, value: string) => [label, value];
+      const rows: (string | number)[][] = [
+        kv('Period', period),
+        kv('Role', row.role || 'Stylist'),
+        row.employee_id ? kv('Employee ID', row.employee_id) : null,
+        kv('Days Worked', String(num(row.days_worked))),
+        kv('Absent Days', String(num(row.absent_days))),
+        kv('Total Hours', num(row.total_hours).toFixed(1) + 'h'),
+        num(row.overtime_hours) > 0 ? kv('Overtime', num(row.overtime_hours).toFixed(1) + 'h') : null,
+        kv('Services Performed', String(num(row.services))),
+        num(row.tips) > 0 ? kv('Tips Earned', fmtINR(num(row.tips))) : null,
+      ].filter(Boolean) as (string | number)[][];
+
+      const totalRow: (string | number)[] = ['NET PAYABLE', fmtINR(num(row.net_payable))];
+
+      const html = buildReportHtml({
+        title: `Payslip — ${row.beautician_name}`,
+        subtitle: period,
+        brand: {
+          name: tenant?.business_name,
+          color: (tenant as any)?.brand_color || '#C42032',
+          logo: (tenant as any)?.logo || null,
+        },
+        summary: [
+          { label: 'Basic Salary', value: fmtINR(num(row.basic_salary)) },
+          { label: `Commission${num(row.commission_pct) ? ` (${num(row.commission_pct)}%)` : ''}`, value: fmtINR(num(row.commission)) },
+          { label: 'Advances Taken', value: fmtINR(num(row.advances)) },
+          { label: 'Net Payable', value: fmtINR(num(row.net_payable)) },
+          { label: 'Status', value: row.paid ? '✅ PAID' : '⏳ Pending' },
+        ],
+        columns: ['Item', 'Value'],
+        rows,
+        totalRow,
+        footer: 'Payslip generated from mobile',
+      });
+
+      const safeName = row.beautician_name.replace(/\s+/g, '_');
+      await sharePdf(html, `payslip_${safeName}_${data.from}.pdf`);
     } catch (e: any) {
       Alert.alert('Payslip', e?.message || 'Could not share the payslip.');
     }
