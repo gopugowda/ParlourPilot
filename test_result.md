@@ -1937,3 +1937,84 @@ Mini-map on both the Attendance screen and Staff Dashboard's Shift Control secti
 - Reports + Payroll-report screens: owner-only lock UI + auto-redirect
 
 **Verified via testing_agent iteration_40**: both owner and admin sessions match the expected tile lists and edit-sheet field visibility exactly. Screenshots stored at `/app/test_reports/screenshots/rbac_*.jpeg`.
+
+---
+
+## Iteration 42 — Dashboard/Schedule fixes (admin landing + phantom count)
+
+### Fix 1: Landing route for Admins → Dashboard
+- `firstAccessibleRoute()` in `AuthContext.tsx` now returns `/(tabs)` for owner AND admin roles unconditionally (was falling through to `new-bill` when the admin didn't have the `reports` perm, since we made Reports owner-only in iter 39).
+- `(tabs)/_layout.tsx` — `hideDashboard` is now `false` for both staff-role and owner/admin roles; the perm gate only applies to unusual platform roles.
+- Verified via screenshot: admin session lands on Dashboard and the Dashboard tab is visible in the bottom bar.
+
+### Fix 2: Phantom "Today" appointment count
+`/api/appointments/stats` in `routes/appointments.py`:
+- Uses the salon's **local timezone** (`tenant.timezone`, default `Asia/Kolkata`) via `zoneinfo.ZoneInfo`. Today's window is computed in local tz then converted to UTC for the mongo query. Fixes the case where a "today 6pm local" appt was spilling into the next UTC day.
+- Filters `status IN ("booked","confirmed","in_progress")` — excludes `cancelled`, `deleted`, `completed`, `no_show` from BOTH today and week counts.
+- Same filter applied to the `upcoming` preview.
+- Verified via screenshot: fresh tenant with no bookings now shows `Today: 0 · Next 7d: 0` (was previously showing phantom `1`).
+
+### Fix 3: Admin Data Visibility (already correct)
+Confirmed via code review: `/reports/summary` uses `scope.filter()` which scopes to `tenant_id + branch_id` only — no user-narrowing. Admins see BRANCH-wide totals. The ₹0 the user saw was because there are no bills on the fresh test tenant, not a scope bug.
+
+### Files touched
+- `/app/frontend/app/(tabs)/_layout.tsx`
+- `/app/frontend/src/context/AuthContext.tsx`
+- `/app/backend/routes/appointments.py`
+
+### Verified
+- Lint clean (only pre-existing exhaustive-deps warnings).
+- Backend restart clean; `/api/appointments/stats` returns 401 without token (correct).
+- Screenshot: admin session on preview shows Dashboard tab + lands on Dashboard + phantom count gone.
+
+---
+
+## Iteration 43 — Admin Data Visibility (branch scoping fix)
+
+**Root cause**: Admin was auto-locked to their assigned `branch_id` on both frontend (AuthContext at login) AND backend (resolve_branch_id when no header sent). Web app showed ₹3,770 for the same tenant because it happened to send `X-Branch-Id: __all__`. Mobile sent the admin's default branch, so it saw only that branch's bills — usually ₹0.
+
+**Fixes**:
+
+1. **Frontend** (`AuthContext.tsx`) — new default-branch rule at login:
+   - Staff (or single-branch users) → locked to their assigned branch.
+   - Owner + Admin (multi-branch capable) → **no branch header** sent (backend returns tenant-wide aggregate).
+   - Preserves any prior explicit branch selection stored in AsyncStorage.
+
+2. **Backend** (`core.py` `resolve_branch_id`) — role-aware default:
+   - Owner / Admin, no header, read-only endpoints → returns `None` ⇒ tenant-wide aggregate.
+   - Owner / Admin, no header, write endpoints (`required=True`) → falls back to their assigned branch (else head, else 400).
+   - Staff → still locked to their assigned branch.
+   - Any explicit `X-Branch-Id: <uuid>` is still honoured.
+
+### Files touched
+- `/app/frontend/src/context/AuthContext.tsx`
+- `/app/backend/core.py`
+
+### Verified
+- Lint clean (only pre-existing exhaustive-deps warnings).
+- Backend + expo restarts clean (`/api/health` returns 200).
+- Combined with iter 42 (dashboard tab + phantom count) — admin now lands on Dashboard, sees the tab, and gets full-tenant revenue (matches web).
+
+---
+
+## Iteration 44 — Multi-branch permission-aware defaults
+
+Refined iter 43 per user clarification: "Admin sees aggregate only when they have `multi_branch` permission, otherwise assigned branch only." Also — single-branch tenants naturally show that one branch's data either way.
+
+### Contract (mirrored on frontend + backend)
+| Role | multi_branch | Default (no X-Branch-Id) |
+| --- | --- | --- |
+| Owner / owner-role | (n/a) | tenant-wide aggregate |
+| Admin | ✅ | tenant-wide aggregate |
+| Admin | ❌ | assigned branch |
+| Staff | (n/a) | assigned branch |
+
+`resolve_branch_id(required=True)` (write endpoints) always falls back to a concrete branch id — user's assigned branch → head branch → first branch → 400.
+
+### Files touched
+- `/app/frontend/src/context/AuthContext.tsx` — login-time default computed via `hasMultiBranch` + `seesAggregate` flags.
+- `/app/backend/core.py` — `resolve_branch_id` now inspects `perms.multi_branch` and treats missing `permissions` object as "legacy → allow multi".
+
+### Verified
+- Lint clean; backend + expo reboot clean.
+- For the user's live tenant with one branch: Admin (whether or not they have multi_branch) will now see the ONE branch's ₹3,770 revenue — matching web.

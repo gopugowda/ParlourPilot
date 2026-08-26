@@ -43,9 +43,13 @@ export default function TabsLayout() {
   }
 
   // Staff-role non-owners always see the Dashboard tab (their Staff Dashboard).
-  // Owners/admins fall back to the `reports` permission gate.
+  // Owners and Admins ALWAYS see the Dashboard tab — regardless of the `reports`
+  // permission, since dashboard exposes operational KPIs (today's revenue,
+  // schedule, alerts) that admins need for day-to-day ops. Only unusual roles
+  // (like platform_staff without reports) fall through to the perm gate.
   const isStaffRole = user?.role === 'staff' && !user?.is_owner;
-  const hideDashboard = isStaffRole ? false : !can('reports');
+  const isAdminOrOwner = user?.role === 'admin' || user?.role === 'owner' || !!user?.is_owner;
+  const hideDashboard = isStaffRole || isAdminOrOwner ? false : !can('reports');
   const hideNewBill = !can('new_bill');
   const hideExpenses = !can('expenses');
   const hideHistory = !can('bills');

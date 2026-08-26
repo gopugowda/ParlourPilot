@@ -141,19 +141,55 @@ async def delete_appointment(apt_id: str, scope: BranchScope = Depends(branch_sc
 
 @router.get("/appointments/stats")
 async def appointment_stats(scope: BranchScope = Depends(branch_scope)):
-    """Today & week counts + upcoming preview for dashboard."""
-    now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
-    week_end = today_start + timedelta(days=7)
+    """Today & week counts + upcoming preview for dashboard.
 
-    q_today = scope.filter({"scheduled_start": {"$gte": today_start.isoformat(), "$lt": today_end.isoformat()}})
-    q_week = scope.filter({"scheduled_start": {"$gte": today_start.isoformat(), "$lt": week_end.isoformat()}})
+    - Uses the salon's local timezone (tenant.timezone, defaults Asia/Kolkata)
+      so an appointment scheduled for "today 6pm local" isn't spilled into the
+      next UTC day.
+    - Excludes cancelled / deleted / completed appointments — those aren't
+      "upcoming activity" the salon needs to prepare for.
+    """
+    # 1) Resolve the salon's local timezone.
+    try:
+        from zoneinfo import ZoneInfo  # type: ignore
+        tenant = await load_tenant(scope.tenant_id)
+        tz_name = (tenant or {}).get("timezone") or "Asia/Kolkata"
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        # Fallback: fixed +05:30 (IST) — matches the app's primary market.
+        tz = timezone(timedelta(hours=5, minutes=30))
+
+    # 2) Compute today's window in the salon's local tz, then convert to UTC
+    #    since scheduled_start is stored as an ISO-8601 UTC-ish string.
+    now_local = datetime.now(tz)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_local = today_start_local + timedelta(days=1)
+    week_end_local = today_start_local + timedelta(days=7)
+
+    today_start_utc = today_start_local.astimezone(timezone.utc)
+    today_end_utc = today_end_local.astimezone(timezone.utc)
+    week_end_utc = week_end_local.astimezone(timezone.utc)
+
+    # 3) Status filter — exclude cancelled / deleted / completed / no_show.
+    ACTIVE_STATUSES = ["booked", "confirmed", "in_progress"]
+
+    q_today = scope.filter({
+        "scheduled_start": {"$gte": today_start_utc.isoformat(), "$lt": today_end_utc.isoformat()},
+        "status": {"$in": ACTIVE_STATUSES},
+    })
+    q_week = scope.filter({
+        "scheduled_start": {"$gte": today_start_utc.isoformat(), "$lt": week_end_utc.isoformat()},
+        "status": {"$in": ACTIVE_STATUSES},
+    })
     today_count = await db.appointments.count_documents(q_today)
     week_count = await db.appointments.count_documents(q_week)
+
     upcoming = await db.appointments.find(
-        scope.filter({"scheduled_start": {"$gte": now.isoformat()}, "status": {"$in": ["booked", "in_progress"]}}),
-        {"_id": 0}
+        scope.filter({
+            "scheduled_start": {"$gte": datetime.now(timezone.utc).isoformat()},
+            "status": {"$in": ACTIVE_STATUSES},
+        }),
+        {"_id": 0},
     ).sort("scheduled_start", 1).to_list(5)
     return {"today": today_count, "week": week_count, "upcoming": upcoming}
 

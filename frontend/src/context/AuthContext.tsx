@@ -202,17 +202,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const brs: Branch[] = res.branches || [];
     setBranches(brs);
-    // Determine default branch: user.branch_id if set, else head, else first.
-    // If multi_branch is disabled (and not owner), lock to user's own branch.
+    // Default branch selection at login (mirrors the shared backend rule):
+    //   • Owner OR (Admin WITH multi_branch permission) → NO branch header
+    //     ⇒ backend returns tenant-wide aggregate ("Total Branch Revenue").
+    //   • Admin WITHOUT multi_branch OR any staff role → LOCKED to their
+    //     assigned branch (single-branch tenants naturally land here).
+    //   • Any explicit branch previously picked by the user is preserved.
     const perms = (u?.permissions || {}) as Partial<Record<PermissionKey, boolean>>;
-    const canMulti = !!u?.is_owner || perms.multi_branch !== false && (perms.multi_branch === true || !u?.permissions);
-    let bid: string | null = u?.branch_id || null;
-    if (!canMulti && u?.branch_id) {
-      bid = u.branch_id;
-    } else if (!bid && brs.length > 0) {
-      const head = brs.find(b => b.is_head) || brs[0];
-      bid = head?.id || null;
+    const isOwnerRoleForBranch = !!u?.is_owner || u?.role === 'owner';
+    // A user has multi_branch access when the flag is explicitly true; if the
+    // permissions object is missing entirely (legacy accounts) we treat multi
+    // as ON so we don't over-restrict.
+    const hasMultiBranch = isOwnerRoleForBranch || perms.multi_branch === true || !u?.permissions;
+    const seesAggregate = isOwnerRoleForBranch || (u?.role === 'admin' && hasMultiBranch);
+
+    const previouslyPicked = await currentBranchStore.get();
+    let bid: string | null = null;
+    if (previouslyPicked && previouslyPicked !== '__all__') {
+      // Reuse a valid prior selection (e.g. user picked a branch last session).
+      const stillExists = brs.some(b => b.id === previouslyPicked);
+      bid = stillExists ? previouslyPicked : null;
     }
+    if (bid === null && !seesAggregate) {
+      // Locked users (staff or single-branch admin) → their assigned branch,
+      // falling back to head/first branch if none is set.
+      bid = u?.branch_id || brs.find(b => b.is_head)?.id || brs[0]?.id || null;
+    }
+    // Otherwise leave bid = null → the backend defaults to tenant-wide aggregate.
     if (bid) {
       setCurrentBranchIdState(bid);
       await currentBranchStore.set(bid);
@@ -377,10 +393,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return '/login';
     // Staff-role non-owners land on the Staff Dashboard (rendered inside /(tabs)/index).
     if (user.role === 'staff' && !user.is_owner) return '/(tabs)';
-    // Owner / admin (backwards-compat) → dashboard
-    if (user.is_owner) return '/(tabs)';
+    // Owner / Admin — ALWAYS land on Dashboard regardless of the `reports`
+    // permission (which now only unlocks financial KPIs, not the tab).
+    if (user.is_owner || user.role === 'owner' || user.role === 'admin') return '/(tabs)';
     const perms = user.permissions || {};
-    // Landing preference order
+    // Landing preference order for any remaining edge roles.
     if (perms.reports) return '/(tabs)';
     if (perms.new_bill) return '/(tabs)/new-bill';
     if (perms.bills) return '/(tabs)/history';

@@ -245,6 +245,33 @@ async def resolve_branch_id(user: dict, x_branch_id: Optional[str] = None, requi
         if not br:
             raise HTTPException(status_code=400, detail="Invalid branch")
         return raw
+    # No X-Branch-Id header — determine default per role:
+    #   • Owner → tenant-wide aggregate (None) for reads.
+    #   • Admin WITH multi_branch permission → tenant-wide aggregate.
+    #   • Admin WITHOUT multi_branch OR any staff role → their assigned branch
+    #     (or the head branch, else 400 on required-branch endpoints).
+    role = user.get("role")
+    is_owner_flag = bool(user.get("is_owner")) or role == "owner"
+    perms = user.get("permissions") or {}
+    # multi_branch: honour the explicit flag; when the permissions object is
+    # missing entirely (legacy accounts) treat it as ON so we don't over-restrict.
+    has_multi_branch = is_owner_flag or perms.get("multi_branch") is True or (not user.get("permissions"))
+    can_see_aggregate = is_owner_flag or (role == "admin" and has_multi_branch)
+
+    if can_see_aggregate:
+        if required:
+            # Write endpoints still need a concrete branch. Fall back to the
+            # user's assigned branch, else the head branch, else 400.
+            default_bid = user.get("branch_id")
+            if default_bid:
+                return default_bid
+            first_br = await db.branches.find_one({"tenant_id": tenant_id_of(user)}, sort=[("created_at", 1)])
+            if first_br:
+                return first_br["id"]
+            raise HTTPException(status_code=400, detail="No branch available. Please create a branch first.")
+        return None
+
+    # Locked users (staff / single-branch admin) → their assigned branch.
     default_bid = user.get("branch_id")
     if default_bid:
         return default_bid
@@ -253,7 +280,10 @@ async def resolve_branch_id(user: dict, x_branch_id: Optional[str] = None, requi
         if first_br:
             return first_br["id"]
         raise HTTPException(status_code=400, detail="No branch available. Please create a branch first.")
-    return None
+    # Legacy user with no branch assigned → fall through to aggregate rather
+    # than returning None which would let them see nothing.
+    first_br = await db.branches.find_one({"tenant_id": tenant_id_of(user)}, sort=[("created_at", 1)])
+    return first_br["id"] if first_br else None
 
 
 def bq_from(tid: str, branch_id: Optional[str], extra: Optional[dict] = None) -> dict:
