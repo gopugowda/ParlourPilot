@@ -1922,3 +1922,18 @@ Mini-map on both the Attendance screen and Staff Dashboard's Shift Control secti
 ### Verified
 - Lint clean on all touched files.
 - Screenshots on preview: dashboard shows bell icon, attendance screen shows OSM map with pulsing blue dot inside a green-bordered fence card, notifications screen renders the "All clear" empty state correctly.
+
+---
+
+## Iteration 41 — Complete Admin/Owner tile visibility fix
+
+**Root cause**: Branches, Salon Settings and Subscription tiles were flagged `adminOnly: true` — this meant admins (isAdmin=true, is_owner=false) COULD still see them. The user's spec is that these three, plus Reports and Staff Performance, must be OWNER-only.
+
+**Fix**: `app/(tabs)/manage.tsx` — changed `adminOnly: true` → `ownerOnly: true` on Branches, Salon Settings, Subscription. Reports + Staff Performance were already `ownerOnly`.
+
+**All previously-shipped role guards remain intact**:
+- Dashboard: Month card, Top Performers, Exp chip → owner-only
+- Team: Add / Delete / edit-owner-row / permissions section / salary+commission+target+empid+address+id-type+id-number all `isOwner`-gated
+- Reports + Payroll-report screens: owner-only lock UI + auto-redirect
+
+**Verified via testing_agent iteration_40**: both owner and admin sessions match the expected tile lists and edit-sheet field visibility exactly. Screenshots stored at `/app/test_reports/screenshots/rbac_*.jpeg`.

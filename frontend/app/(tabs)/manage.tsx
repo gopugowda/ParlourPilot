@@ -32,9 +32,11 @@ export default function ManageScreen() {
     // The `reports` permission only unlocks dashboard KPIs, not these screens.
     { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report', ownerOnly: true },
     { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Payroll, commission, targets, analytics & export', route: '/manage/payroll-report', ownerOnly: true },
-    { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', adminOnly: true },
-    { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', adminOnly: true },
-    { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', adminOnly: true },
+    // Branches / Salon Settings / Subscription are OWNER-ONLY — Admins can run
+    // day-to-day ops but must not restructure the business or see billing.
+    { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', ownerOnly: true },
+    { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', ownerOnly: true },
+    { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', ownerOnly: true },
   ];
   const items = allItems.filter(it => {
     if (it.ownerOnly && !isOwner) return false;

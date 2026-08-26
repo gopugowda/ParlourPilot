@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend RBAC contract fully verified on the preview build for the qa_admin_demo (admin) and qa_growth_demo (owner) demo accounts. All acceptance criteria PASS. Admin: Manage tab shows only the 10 allowed tiles (Dashboard, New Bill, Bill History, Appointments, Members, Services, Team, Attendance, Stock, Expenses, Cash Closing) — Reports, Staff Performance, Branches, Salon Settings, Subscription are NOT rendered. Admin deep-links to /manage/report and /manage/payroll-report now correctly router.replace to '/' (dashboard) — the URL DOES change back to root and the dashboard renders. This is an improvement over iteration 39 where the URL was reported to stay on the guarded route. Admin dashboard has NO 'This Month' card, NO 'Top Performers' card, and no 'Exp' chip token in the hero. Admin Team screen: add-header hidden, empty-add hidden, zero team-del-* controls, and the owner row (id=d98ba9c5…) has NO team-edit-* control while all non-owner rows do. Admin edit sheet for a non-owner staff shows only: Full name, Email, Phone, Password reset, Access level (read-only chip), permissions info note, Branch, Work start/end, Week off, Active — and HIDES Job title (team-role-input), Employee ID (team-empid-input), Basic salary, Commission %, Monthly target, Address, ID type, ID number, per-key permission switches (team-perm-*), and the staff/admin access toggles. Owner: Manage tab shows ALL 5 owner-only tiles; dashboard shows This Month + Top Performers; Team screen exposes add-header, team-edit and team-del on every non-owner row (owner row shows team-edit but no team-del as expected — no self-delete); owner edit sheet exposes Job title, Employee ID, Basic salary (20000), Commission % (10), Monthly target (50000), Address, ID type, ID number and the full permissions grid.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props", "issue": "Metro still emits 'shadow* style props are deprecated. Use boxShadow.' warnings on web. Pre-existing, not a regression of this iteration."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/rbac_admin_manage.jpeg",
+    "/app/test_reports/screenshots/rbac_admin_dash.jpeg",
+    "/app/test_reports/screenshots/rbac_admin_report.jpeg",
+    "/app/test_reports/screenshots/rbac_admin_payroll.jpeg",
+    "/app/test_reports/screenshots/rbac_admin_edit_sheet.jpeg",
+    "/app/test_reports/screenshots/rbac_owner_manage.jpeg",
+    "/app/test_reports/screenshots/rbac_owner_edit_sheet.jpeg"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "manage.tsx correctly filters owner-only tiles (Reports, Staff Performance, Branches, Salon Settings, Subscription) via `it.ownerOnly && !isOwner` at line 42.",
+    "beauticians.tsx correctly wraps every owner-only field (Job title, Employee ID, Basic salary, Commission, Monthly target, Address, ID type, ID number, per-user permissions editor) inside `{isOwner && ...}` blocks at lines 632-664 and 733-784. Add/Delete buttons and edit-on-owner are also gated as expected.",
+    "The owner-only redirect on /manage/report and /manage/payroll-report is now effective — page.goto verifies the final URL is `/` (dashboard) after mount, so admins are truly bounced away rather than lingering on the gate."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% — every acceptance criterion in the review request passes end-to-end on the live preview build"},
+  "seed_data_creation": "None — used the QA demo accounts (qa_admin_demo / qa_growth_demo) supplied in the review request.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login testIDs on this build are `login-email-input` / `login-password-input` / `login-submit-button` (not `login-email` / `sign-in-btn`). Team API is `/api/team` returning members with `is_owner_locked` flag — safest way to identify the owner row is that flag, not the name. Playwright script that uses `window.localStorage.getItem('pp.token')` to authenticate a raw fetch fails because the token is stored under a different key; use in-app UI interactions or the app's own fetch layer instead. The RBAC gating for /manage/report and /manage/payroll-report now redirects the URL to `/` — confirmed by inspecting page.url after `await page.goto(...)` + a 3.5s settle."
+}
