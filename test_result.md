@@ -2018,3 +2018,55 @@ Refined iter 43 per user clarification: "Admin sees aggregate only when they hav
 ### Verified
 - Lint clean; backend + expo reboot clean.
 - For the user's live tenant with one branch: Admin (whether or not they have multi_branch) will now see the ONE branch's ₹3,770 revenue — matching web.
+
+---
+
+## Iteration 45 — HR Phase 1C Mobile (Staff "My Leave")
+
+### Scope
+Mobile-only client for the already-live backend HR Phase 1C. Backend is not modified.
+
+### Files added
+- `/app/frontend/src/api/hr.ts` — typed API client for `/api/hr/self-service/*` endpoints. Exposes `hrSelfServiceApi` with 11 methods matching the exact endpoint contract. Never sends beautician_id / employee_id / branch_id / tenant_id — identity is derived by the backend from the JWT.
+- `/app/frontend/app/my-leave.tsx` — the primary screen with 4 tabs:
+  - **Balances** — cards per leave type with entitled/used/pending/available + Paid/Unpaid pill + primary "Request time off" CTA.
+  - **Requests** — active requests (pending / approved) with an inline Cancel button (native Alert confirmation).
+  - **History** — read-only view of all requests for the current year, most-recent-first.
+  - **Calendar** — `react-native-calendars` monthly view coloured by /calendar day statuses (present · paid · unpaid · half-day · public / restricted holiday · weekly off · pending marker), plus a legend and a scrollable "days of interest" list.
+- **Request-leave form** (modal): leave-type chips → From/To pickers (existing calendar sheet) → Day-part chips (auto-disable when invalid) → reason + note → live "0.5 day" / "N days" preview → submit. Auto-approval shows a distinct "Leave approved" toast; approval-required shows "submitted for approval".
+
+### Navigation
+- New tile added to `app/(tabs)/manage.tsx`: **My Leave** (sunny icon, no perm gating — access is enforced by the backend via the JWT).
+- New quick-action tile in `src/components/StaffDashboard.tsx` (**My Leave**) so staff can jump straight from their landing screen.
+
+### Reused (nothing new added to package.json)
+- Auth / JWT / API client / `X-Branch-Id` header logic — `src/api/client.ts` untouched.
+- Date picker — `react-native-calendars` (already a dep, used across appointments/reports/etc.).
+- Theme, spacing, radius, shadows, icons (Ionicons), haptics.
+- Modal + bottom-sheet pattern (matches expenses/cash-closing/reports/payroll-report modals).
+- Existing pill / badge / card / empty-box styles.
+
+### Business rules honoured by the UI (backend still enforces)
+- Half-day chips auto-disabled unless (from === to) AND the type allows half-day.
+- Live day preview: 0.5 for half-day, else inclusive calendar-day count.
+- Cancel button only shown for Pending / Approved statuses (Rejected & Cancelled are read-only).
+- 400 → we show `response.detail` verbatim inside the form's error banner.
+- 404 on `/me` → dedicated empty state: "Your login isn't linked to a staff record yet — please ask your salon owner."
+- 401 → existing `unauthorizedListener` in client.ts kicks the user to /login.
+
+### Security posture
+- The screen only calls the 11 self-service endpoints listed in the brief. No management endpoints touched.
+- Body payloads for `createLeaveRequest` and `rh-selection` are limited to `leave_type_id / from_date / to_date / day_part / reason / note` and `holiday_id` respectively — no identity fields.
+- Cancel uses only the request id in the URL — the backend enforces ownership.
+- No new permission introduced; `hr` remains admin/manager-only.
+
+### Testing
+Preview verification:
+- Endpoints on `staff-portal-331.preview.emergentagent.com` confirmed live (returned staff profile + leave types + balances + calendar via curl).
+- Mobile UI verified via screenshots: My Leave route mounts, tabs render, empty state shown when the backend account isn't linked to a beautician (both staff and owner tested).
+- The mobile's active backend at `salon-invoice-app.preview.emergentagent.com` does NOT yet have `/api/hr/self-service/*` — those endpoints only exist on the newer preview backend. When the user redeploys with the HR routes attached, all data will flow through unchanged.
+
+### Regression
+- Existing screens (login, dashboard, attendance, expenses, notifications, staff-performance, geofence map) unchanged.
+- No new packages added.
+- Lint clean on all touched files.

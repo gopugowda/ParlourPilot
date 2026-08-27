@@ -25,6 +25,11 @@ export default function ManageScreen() {
     { icon: 'people-outline', label: 'Team', hint: 'Manage logins & staff profiles', route: '/manage/beauticians', adminOnly: true },
     // Attendance = own punch (open) + admin logs (gated). Own screen always visible.
     { icon: 'finger-print-outline', label: 'Attendance', hint: 'GPS-gated punch clock', route: '/manage/attendance' },
+    // My Leave — self-service HR (Phase 1C). Backend derives identity from
+    // JWT; owners/admins get an "owner already sees HR" experience via the
+    // web app, so on mobile we surface this tile for everyone (staff & admins
+    // benefit from a personal view of their own leave).
+    { icon: 'sunny-outline', label: 'My Leave', hint: 'Balance, request time off, calendar', route: '/my-leave' },
     { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock', perm: 'stock' },
     { icon: 'wallet-outline', label: 'Expenses', hint: 'Track daily expenses', route: '/(tabs)/expenses', perm: 'expenses' },
     { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing', perm: 'cash_closing' },

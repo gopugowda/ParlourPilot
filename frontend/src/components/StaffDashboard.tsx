@@ -296,15 +296,18 @@ export default function StaffDashboard() {
   const isOut = status === 'out';
 
   // ---- Quick Action tiles (permission-gated) ----
-  type QuickAction = { key: string; label: string; icon: any; route: string; color: string; perm: PermissionKey };
+  type QuickAction = { key: string; label: string; icon: any; route: string; color: string; perm?: PermissionKey };
   const ALL_ACTIONS: QuickAction[] = [
     { key: 'new_bill',   label: 'New Bill',     icon: 'add-circle',   route: '/(tabs)/new-bill',   color: colors.brandPrimary, perm: 'new_bill' },
+    { key: 'my_leave',   label: 'My Leave',     icon: 'sunny',        route: '/my-leave',          color: '#B8860B' },
     { key: 'expenses',   label: 'Expenses',     icon: 'wallet',       route: '/(tabs)/expenses',   color: colors.warning,       perm: 'expenses' },
     { key: 'stock',      label: 'Stock',        icon: 'cube',         route: '/manage/stock',      color: colors.info,          perm: 'stock' },
     { key: 'cash',       label: 'Cash Closing', icon: 'cash',         route: '/manage/cash-closing', color: colors.success,     perm: 'cash_closing' },
     { key: 'members',    label: 'Members',      icon: 'people',       route: '/manage/members',    color: '#8B5CF6',            perm: 'members' },
   ];
-  const actions = ALL_ACTIONS.filter(a => can(a.perm));
+  // My Leave has no permission requirement — HR self-service is identity-based
+  // via the JWT (a 404 from /me handles "no linked staff record" gracefully).
+  const actions = ALL_ACTIONS.filter(a => !a.perm || can(a.perm));
 
   // ---- Render ----
   if (loading) {
