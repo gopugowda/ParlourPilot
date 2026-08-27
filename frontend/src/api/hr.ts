@@ -167,6 +167,161 @@ export const hrSelfServiceApi = {
     api(P('/rh-selection'), { method: 'POST', body: { holiday_id } }),
 };
 
+// ---- Admin / Manager HR API (mirrors web app surface) -------------------
+
+export type Holiday_ = Holiday & {
+  holiday_type?: 'public' | 'restricted' | string;
+  paid?: boolean;
+  active?: boolean;
+  branch_ids?: string[];
+};
+
+export type AttendanceRow = {
+  beautician_id: string;
+  beautician_name: string;
+  branch_id: string;
+  date: string;
+  status: 'present' | 'absent' | 'half_day' | 'week_off' | 'holiday' | 'on_leave' | null;
+  remarks?: string;
+  suggested?: boolean;
+};
+
+export type LeavePolicy = {
+  id: string;
+  tenant_id: string;
+  leave_type_id: string;
+  annual_entitlement: number;
+  leave_year: 'calendar' | 'financial' | string;
+  carry_forward: boolean;
+  carry_forward_cap?: number | null;
+  max_consecutive_days?: number | null;
+  updated_at: string;
+};
+
+export type LeaveAuditRow = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  beautician_id?: string;
+  branch_id?: string;
+  actor_id?: string;
+  actor_name?: string;
+  before?: any;
+  after?: any;
+  at: string;
+};
+
+export type LeaveTypePayload = {
+  name: string;
+  code: string;
+  description?: string;
+  paid?: boolean;
+  requires_approval?: boolean;
+  allow_half_day?: boolean;
+  requires_attachment?: boolean;
+  active?: boolean;
+  branch_ids?: string[];
+};
+
+export type HolidayPayload = {
+  name: string;
+  date: string;
+  holiday_type: 'public' | 'restricted';
+  paid?: boolean;
+  branch_ids?: string[];
+  active?: boolean;
+};
+
+/**
+ * Full HR admin API (for managers/owners). All endpoints below live under
+ * /api/hr/* on the shared production backend. The mobile app is a UI mirror
+ * of the web app — no business logic is duplicated locally.
+ */
+export const hrApi = {
+  // ---- Attendance ------------------------------------------------------
+  attendance: (date: string, beautician_id?: string): Promise<{ date: string; rows: AttendanceRow[] }> =>
+    api(`/hr/attendance?date=${date}${beautician_id ? `&beautician_id=${beautician_id}` : ''}`),
+  markAttendance: (body: {
+    beautician_id: string;
+    date: string;
+    status: 'present' | 'absent' | 'half_day' | 'week_off';
+    remarks?: string;
+  }): Promise<AttendanceRow> =>
+    api('/hr/attendance', { method: 'POST', body }),
+  calendar: (beautician_id: string, month: string): Promise<CalendarResponse> =>
+    api(`/hr/calendar?beautician_id=${beautician_id}&month=${month}`),
+  attendanceReport: (from_date: string, to_date: string, beautician_id?: string): Promise<any> =>
+    api(`/hr/reports/attendance?from_date=${from_date}&to_date=${to_date}${beautician_id ? `&beautician_id=${beautician_id}` : ''}`),
+
+  // ---- Leave Types -----------------------------------------------------
+  listLeaveTypes: (): Promise<any[]> => api('/hr/leave-types'),
+  createLeaveType: (body: LeaveTypePayload): Promise<any> => api('/hr/leave-types', { method: 'POST', body }),
+  updateLeaveType: (id: string, body: Partial<LeaveTypePayload>): Promise<any> =>
+    api(`/hr/leave-types/${id}`, { method: 'PUT', body }),
+  deactivateLeaveType: (id: string): Promise<any> =>
+    api(`/hr/leave-types/${id}`, { method: 'DELETE' }),
+
+  // ---- Leave Policies --------------------------------------------------
+  listLeavePolicies: (): Promise<LeavePolicy[]> => api('/hr/leave-policies'),
+  saveLeavePolicy: (id: string, body: Partial<LeavePolicy>): Promise<LeavePolicy> =>
+    api(`/hr/leave-policies/${id}`, { method: 'PUT', body }),
+
+  // ---- Leave Balances & Requests --------------------------------------
+  leaveBalances: (beautician_id: string, year?: number): Promise<LeaveBalancesResponse> =>
+    api(`/hr/leave-balances?beautician_id=${beautician_id}${year ? `&year=${year}` : ''}`),
+  listLeaveRequests: (status?: LeaveStatus, year?: number): Promise<LeaveRequest[]> => {
+    const p = new URLSearchParams();
+    if (status) p.set('status', status);
+    if (year) p.set('year', String(year));
+    const q = p.toString();
+    return api(`/hr/leave-requests${q ? `?${q}` : ''}`);
+  },
+  createLeaveRequest: (body: {
+    beautician_id: string;
+    leave_type_id: string;
+    from_date: string;
+    to_date: string;
+    day_part: LeaveDayPart;
+    reason?: string;
+    note?: string;
+  }): Promise<LeaveRequest> =>
+    api('/hr/leave-requests', { method: 'POST', body }),
+  approveLeave: (id: string, note?: string): Promise<LeaveRequest> =>
+    api(`/hr/leave-requests/${id}/approve`, { method: 'POST', body: { note: note || '' } }),
+  rejectLeave: (id: string, note?: string): Promise<LeaveRequest> =>
+    api(`/hr/leave-requests/${id}/reject`, { method: 'POST', body: { note: note || '' } }),
+  cancelLeave: (id: string, note?: string): Promise<LeaveRequest> =>
+    api(`/hr/leave-requests/${id}/cancel`, { method: 'POST', body: { note: note || '' } }),
+  leaveHistory: (params?: { beautician_id?: string; year?: number; status?: LeaveStatus }): Promise<LeaveRequest[]> => {
+    const p = new URLSearchParams();
+    if (params?.beautician_id) p.set('beautician_id', params.beautician_id);
+    if (params?.year) p.set('year', String(params.year));
+    if (params?.status) p.set('status', params.status);
+    const q = p.toString();
+    return api(`/hr/leave-history${q ? `?${q}` : ''}`);
+  },
+  leaveAudit: (limit = 50): Promise<{ rows: LeaveAuditRow[] }> =>
+    api(`/hr/leave-audit?limit=${limit}`),
+
+  // ---- Holidays --------------------------------------------------------
+  listHolidays: (year?: number): Promise<Holiday_[]> =>
+    api(`/hr/holidays${year ? `?year=${year}` : ''}`),
+  createHoliday: (body: HolidayPayload): Promise<Holiday_> =>
+    api('/hr/holidays', { method: 'POST', body }),
+  updateHoliday: (id: string, body: Partial<HolidayPayload>): Promise<Holiday_> =>
+    api(`/hr/holidays/${id}`, { method: 'PUT', body }),
+  deleteHoliday: (id: string): Promise<any> =>
+    api(`/hr/holidays/${id}`, { method: 'DELETE' }),
+
+  // ---- Restricted-Holiday config --------------------------------------
+  rhConfig: (): Promise<{ rh_entitlement: number }> => api('/hr/rh-config'),
+  setRhConfig: (rh_entitlement: number): Promise<any> =>
+    api('/hr/rh-config', { method: 'PUT', body: { rh_entitlement } }),
+  rhUsage: (year: number): Promise<any> =>
+    api(`/hr/rh-usage?year=${year}`),
+};
+
 // ---- Helpers -------------------------------------------------------------
 
 /** Inclusive calendar-day count between two YYYY-MM-DD strings. */

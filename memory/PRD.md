@@ -1,25 +1,45 @@
-# GLOW UP UNISEX Salon Billing — PRD
+# ParlourPilot Mobile — PRD
 
 ## Overview
-Mobile-first billing app for GLOW UP UNISEX Salon (Sullia). Expo + FastAPI + MongoDB.
+Mobile-first multi-tenant SaaS salon/parlour management app built with Expo (React Native). Functional mirror of the ParlourPilot web app. Consumes the shared FastAPI + MongoDB backend at `parlourpilot.com` (production) / `staff-portal-331.preview.emergentagent.com` (preview). No parallel mobile-only business logic.
 
-## Roles
-- **Admin**: full access (users, services, staff, bills, reports)
-- **Staff**: billing + view services/staff/history
+## Roles (mirror web)
+- **Owner** — full access; only role that can access Payroll & Salary, Reports, Branches, Business Settings, Subscription.
+- **Admin / Manager** — day-to-day ops + full HR / Leave. Cannot see owner financials or payroll.
+- **Staff** — billing + attendance punch + `My Leave` self-service.
 
-## Core Features
-1. **Auth**: JWT-based login (bcrypt), roles admin/staff. Seeded on first run.
-2. **Dashboard**: today revenue, month revenue, top beauticians, quick actions.
-3. **New Bill**: multi-service invoice; each item has service, price, discount %, beautician; payment modes: Cash / QR / Split (cash+QR must total).
-4. **Bill Detail**: full breakdown, share as PDF via expo-print + expo-sharing.
-5. **History**: search + chip filters (All / Today / Cash / QR / Split).
-6. **Manage → Services**: CRUD (name, price, category, active).
-7. **Manage → Beauticians**: CRUD (name, role, phone, active). 8 pre-seeded.
-8. **Manage → Users** (admin): add admin/staff.
-9. **Reports**: daily revenue (30 days) with mini bar chart.
+## Core Modules
+1. **Auth**: JWT + tenant + branch, currency & brand color loaded on login. Owner-vs-Admin gate via `is_owner` + `permissions`.
+2. **Dashboard**: today revenue, month revenue, top performers, appointments, quick actions.
+3. **New Bill**: multi-service invoice; discounts; member auto-price; tax; multi-tender.
+4. **History**: search + chip filters; export/share PDF.
+5. **Appointments**: booking calendar + slot picker.
+6. **Members**: yearly membership tier + auto-discount.
+7. **Services**: CRUD price list.
+8. **Team Management**: staff profiles + logins + branch + role + commission + target.
+9. **Attendance**: GPS geofence-gated punch (Leaflet WebView map) + admin logs + report.
+10. **HR / Leave** (Admin+): Daily Attendance, Leave Requests (approve/reject/cancel), Balances & History (per employee), Holidays (public + restricted), Employee Calendar, Leave Types + Policies, Audit Trail.
+11. **Payroll & Salary** (Owner-only): Team Basic Salary, Salary Structure (recurring components), Variable Earnings (month-specific bonuses/incentives), Payroll Runs (create → calculate → approve → finalize), Payslip viewer, Monthly Export (CSV + PDF + email-to-me).
+12. **My Leave** (Staff self-service): balances, request time off, calendar, RH selection.
+13. **Stock / Expenses / Cash Closing**: standard ops.
+14. **Reports** (Owner): sales, gender split, staff performance.
+15. **Payroll Report** (Owner): branded PDF payslip export.
+16. **Notifications**: in-app inbox with bell icon.
+17. **Branches / Business Settings / Subscription** (Owner): tenant config, currency (51 ISO options), number & date format.
 
-## Seeded Data
-- 2 users (admin/staff), 8 beauticians, 17 services covering hair/skin/spa/nails/waxing/bridal.
+## Design Rules
+- Mobile is a UI mirror; all business logic (calculations, permissions, tenant/branch isolation) lives on the shared backend.
+- No new schema, no parallel HR/Payroll/Commission engines.
+- Currency and number formatting via `theme/index.ts` (`fmtMoney`, `_localeHint`).
 
-## Non-Goals (v1)
-- Push notifications, appointments, inventory, customer loyalty program.
+## Tech Stack
+- Expo Router (file-based routing)
+- react-native-calendars (date/month pickers)
+- react-native-webview + Leaflet (geofence map, avoids Google Maps SDK)
+- expo-print + expo-sharing (PDF & CSV export)
+- AsyncStorage / SecureStore (tokens)
+
+## Non-Goals (present iteration)
+- Push notifications (only on user request).
+- Native Google Maps.
+- Client-side payroll calculations.

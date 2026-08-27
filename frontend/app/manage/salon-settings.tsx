@@ -228,7 +228,7 @@ export default function SalonSettingsScreen() {
           <Ionicons name="home-outline" size={20} color={colors.onSurface} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Salon Settings</Text>
+          <Text style={styles.headerTitle}>Business Settings</Text>
           <Text style={styles.headerSub}>Business identity, tax and member pricing.</Text>
         </View>
         <TouchableOpacity onPress={save} disabled={saving} style={styles.headerSaveBtn} testID="save-settings-btn">
@@ -262,7 +262,9 @@ export default function SalonSettingsScreen() {
                 <Text style={styles.label}>Currency</Text>
                 <TouchableOpacity style={styles.selectBtn} onPress={() => setCurrencyPickerOpen(true)} testID="currency-picker">
                   <Text style={styles.selectSymbol}>{(CURRENCY_CHOICES.find(c => c.code === currencyCode)?.symbol) || '₹'}</Text>
-                  <Text style={styles.selectLabel}>{(CURRENCY_CHOICES.find(c => c.code === currencyCode)?.label) || 'Indian Rupee'}</Text>
+                  <Text style={styles.selectLabel} numberOfLines={1}>
+                    {currencyCode} — {(CURRENCY_CHOICES.find(c => c.code === currencyCode)?.label) || 'Indian Rupee'}
+                  </Text>
                   <Ionicons name="chevron-down" size={16} color={colors.onSurfaceTertiary} />
                 </TouchableOpacity>
               </View>
@@ -327,7 +329,7 @@ export default function SalonSettingsScreen() {
           {/* ============ 3. Branding ============ */}
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Branding</Text>
-            <Text style={styles.label}>Salon logo</Text>
+            <Text style={styles.label}>Business logo</Text>
             <View style={styles.logoRow}>
               {companyLogo ? (
                 <RNImage source={{ uri: companyLogo }} style={styles.logoImg} resizeMode="contain" />

@@ -25,6 +25,11 @@ export default function ManageScreen() {
     { icon: 'people-outline', label: 'Team', hint: 'Manage logins & staff profiles', route: '/manage/beauticians', adminOnly: true },
     // Attendance = own punch (open) + admin logs (gated). Own screen always visible.
     { icon: 'finger-print-outline', label: 'Attendance', hint: 'GPS-gated punch clock', route: '/manage/attendance' },
+    // HR / Leave — full HR hub (mirrors web: Daily Attendance, Leave Requests, Holidays, Calendar, Types, Audit).
+    // Available to Admin/Owner. Staff still get their self-service via "My Leave" below.
+    { icon: 'briefcase-outline', label: 'HR / Leave', hint: 'Attendance, holidays, requests, calendar', route: '/manage/hr', adminOnly: true },
+    // Payroll & Salary — Owner-only. Structure, variable earnings, runs, payslips, exports.
+    { icon: 'card-outline', label: 'Payroll & Salary', hint: 'Structure, runs, payslips, exports', route: '/manage/payroll', ownerOnly: true },
     // My Leave — self-service HR (Phase 1C). Backend derives identity from
     // JWT; owners/admins get an "owner already sees HR" experience via the
     // web app, so on mobile we surface this tile for everyone (staff & admins
@@ -37,10 +42,10 @@ export default function ManageScreen() {
     // The `reports` permission only unlocks dashboard KPIs, not these screens.
     { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report', ownerOnly: true },
     { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Payroll, commission, targets, analytics & export', route: '/manage/payroll-report', ownerOnly: true },
-    // Branches / Salon Settings / Subscription are OWNER-ONLY — Admins can run
+    // Branches / Business Settings / Subscription are OWNER-ONLY — Admins can run
     // day-to-day ops but must not restructure the business or see billing.
     { icon: 'business-outline', label: 'Branches', hint: 'Manage multiple locations', route: '/manage/branches', ownerOnly: true },
-    { icon: 'construct-outline', label: 'Salon Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', ownerOnly: true },
+    { icon: 'construct-outline', label: 'Business Settings', hint: 'Profile, logo, address, tax, invoice format', route: '/manage/salon-settings', ownerOnly: true },
     { icon: 'card-outline', label: 'Subscription', hint: 'Plan & billing info', route: '/subscription', ownerOnly: true },
   ];
   const items = allItems.filter(it => {

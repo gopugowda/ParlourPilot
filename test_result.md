@@ -2070,3 +2070,142 @@ Preview verification:
 - Existing screens (login, dashboard, attendance, expenses, notifications, staff-performance, geofence map) unchanged.
 - No new packages added.
 - Lint clean on all touched files.
+
+---
+
+## Iteration 46 — Mirror Web App terminology + expand currency list
+
+Backend and business logic remain the single source of truth. Mobile is a functional mirror of the web app. This iteration lands the naming and currency parity pieces called out in the spec — 90% of the brief (HR, Leave, Attendance, Payroll, Commission, Number/Date formatting, tenant/branch isolation, role gating) was already delivered in iterations 39–45.
+
+### Changes
+1. **Salon Settings → Business Settings** across mobile:
+   - Manage tab tile label + hint comment
+   - Screen header title
+   - `Salon logo` field label → `Business logo`
+2. **Currency list expanded 20 → 51 items** in `src/theme/index.ts` (`CURRENCY_CHOICES`). Groups: South Asia, Middle East, Americas, Europe, Asia Pacific, Africa. All entries include `code`, `symbol`, `label` and BCP-47 `locale` so `Number.toLocaleString(locale)` picks the right grouping (Indian 1,00,000 vs European 100.000 vs French 100 000 vs US 100,000).
+3. **Selected-currency display format** on Business Settings now shows `INR — Indian Rupee` (ISO Code — Currency Name) per spec.
+4. **"Branches"** navigation label kept as-is (NOT renamed to "Branch Settings"), per spec.
+5. **NUMBER_FORMATS** already has all 6 options (indian / us / uk / european / french / arabic) — no change needed.
+6. **Tenant currency + number format** are read from `tenant.currency` / `tenant.number_format` on login by `AuthContext.applyTenantCurrency`; `fmtINR` uses `_localeHint` throughout the app — so every payslip, dashboard KPI, invoice, expense, report and staff-performance card respects the tenant's chosen locale.
+
+### What was NOT changed (already correct)
+- Payroll engine, commission engine, leave engine, attendance engine, tax engine — all shared-backend, mobile only consumes.
+- `/reports/staff-performance` etc. — mobile mirrors these 1:1.
+- Role-based access (Owner / Admin / Staff) — verified in iter 41 & 42.
+- Multi-tenant / multi-branch isolation — enforced by `scope.filter()` server-side + `X-Branch-Id` header on mobile.
+- HR Phase 1C (`/my-leave`) — shipped in iter 45.
+
+### Files touched
+- `/app/frontend/app/(tabs)/manage.tsx` — label rename + comment update
+- `/app/frontend/app/manage/salon-settings.tsx` — header title + logo label + currency display format
+- `/app/frontend/src/theme/index.ts` — expanded currency list
+
+### Verified
+- Screenshot on preview: header now shows "Business Settings", subtitle "Business identity, tax and member pricing", logo section labelled "Business logo", currency dropdown shows "INR — Indian…" and number-format dropdown shows "Indian — 1,00,…". Tenant data loads correctly.
+- Lint clean on all touched files.
+- No regression on dashboard / attendance / payroll / notifications.
+
+---
+
+## Iteration 47 — Mobile HR / Leave + Payroll & Salary modules
+
+The Mobile app now exposes the FULL HR / Leave and Payroll & Salary
+functionality that already lives on the web app backend. Mobile remains a
+functional UI mirror — all business logic, calculations, and permission
+enforcement continue to live on the shared backend (parlourpilot.com in
+production, staff-portal-331 in preview). No parallel mobile logic was
+introduced.
+
+### New Files
+- `/app/frontend/app/manage/hr.tsx` — HR / Leave hub with 7 tabs:
+  Daily Attendance, Leave Requests, Balances & History, Holidays,
+  Employee Calendar, Leave Types, Audit Trail
+- `/app/frontend/app/manage/payroll.tsx` — Payroll & Salary hub with 5
+  sections: Team & Salary, Salary Structure, Variable Earnings, Payroll
+  Runs (with detail + payslip viewer + CSV/PDF export + email), Settings
+- `/app/frontend/src/api/payroll.ts` — Full payroll API client (25
+  endpoints; matches web app surface exactly)
+
+### Modified Files
+- `/app/frontend/src/api/hr.ts` — added admin HR surface (attendance
+  mark, leave-request approve/reject/cancel, leave-types CRUD, holidays
+  CRUD, leave-policies, RH config, leave audit, employee calendar)
+- `/app/frontend/app/(tabs)/manage.tsx` — added HR / Leave tile (Admin+)
+  and Payroll & Salary tile (Owner-only)
+- `/app/frontend/.env` — added `EXPO_PUBLIC_BACKEND_URL_OVERRIDE` so dev
+  mode targets the same shared web-app backend (allows local UI testing
+  against real HR/Payroll data)
+
+### Backend endpoints reused (nothing new invented)
+HR:
+- GET/POST /api/hr/attendance
+- GET /api/hr/calendar
+- GET /api/hr/reports/attendance
+- GET/POST /api/hr/leave-types  •  PUT/DELETE /api/hr/leave-types/{id}
+- GET/PUT /api/hr/leave-policies/{id}
+- GET /api/hr/leave-balances (admin, by beautician_id)
+- GET/POST /api/hr/leave-requests
+- POST /api/hr/leave-requests/{id}/{approve|reject|cancel}
+- GET /api/hr/leave-history
+- GET /api/hr/leave-audit
+- GET/POST/PUT/DELETE /api/hr/holidays
+- GET/PUT /api/hr/rh-config
+
+Payroll:
+- GET/PUT /api/payroll/settings
+- GET/POST/PUT/DELETE /api/payroll/components  •  activate/deactivate
+- GET/POST /api/payroll/salary-profiles
+- GET/POST /api/payroll/salary-changes
+- GET /api/payroll/tips
+- GET/POST/PUT/DELETE /api/payroll/variable-earnings
+- GET/POST /api/payroll/runs  •  GET /api/payroll/runs/{id}
+- POST /api/payroll/runs/{id}/{calculate|approve|finalize|cancel|correct}
+- GET /api/payroll/runs/{id}/export (CSV)
+- GET /api/payroll/payslips/{itemId}  •  POST /api/payroll/payslips/{itemId}/email
+
+### RBAC gates applied (mirror web)
+- **Owner** — full access to both modules
+- **Admin** — full HR access (attendance, requests, holidays, calendar,
+  types, audit), but Payroll & Salary is blocked (both tile hidden AND
+  direct-URL access shows an "Owner-only" lock screen; backend also
+  returns 403)
+- **Staff** — no admin HR/Payroll access; continues to use `/my-leave`
+  self-service and the existing attendance punch flow
+
+### PDF / CSV / Email
+- **CSV Export** — pulls raw CSV from backend `/runs/{id}/export`, shares
+  via native Share sheet (or downloads on web)
+- **PDF Export** — client-side branded HTML → `expo-print` on native,
+  iframe print on web, using the shared `buildReportHtml`
+- **Payslip PDF** — per-employee branded slip built from `/payslips/{id}`
+- **Email Payslip** — calls `POST /payslips/{id}/email`; backend
+  dispatches to Resend
+
+### Manual smoke test (against staff-portal-331 preview backend)
+- ✅ Login as Owner (`qa_growth_demo@parlourpilot-demo.com`)
+- ✅ Manage tab shows HR / Leave and Payroll & Salary tiles
+- ✅ HR → Daily Attendance loads real team roster (5 employees)
+- ✅ HR → Balances tab: picked QA Admin Demo → Casual Leave 12 entitled,
+  Sick Leave 6, LOP 0 — matches web
+- ✅ HR → Leave Requests: pending filter loads correctly
+- ✅ Payroll → Team & Salary: 5 employees with basic salaries
+  ₹28,000 / ₹33,333 / ₹12,500 / ₹0 / ₹16,000 — matches web
+- ✅ Payroll → Runs: shows real runs including 3 finalized (Aug: 5 emp,
+  ₹27,500 net; Sep: 5 emp, ₹89,233 net)
+- ✅ Opened finalized Aug run → 5 items with real net amounts
+- ✅ Opened QA Admin Demo payslip → shows Basic ₹25,000 + QA House Rent
+  ₹2,500 = Gross ₹27,500, no deductions, Net ₹27,500 — MATCHES web
+- ✅ Salary Structure tab lists 3 real components (Conveyance-Inactive,
+  HRA-Active, QA House Rent 10% Active)
+- ✅ Login as Admin (`qa_admin_demo@parlourpilot-demo.com`) →
+  Payroll tile hidden, direct URL returns "Owner-only" lock screen
+
+### Notes
+- No database schema changed. No new permission introduced. Mobile only
+  consumes backend endpoints.
+- No parallel commission / payroll / leave logic added on mobile.
+- Currency and number-format continue to flow from tenant settings via
+  `fmtMoney` / `_localeHint` (unchanged from iter 46).
+- Native builds don't require any new permissions; PDF share uses the
+  existing `expo-print` + `expo-sharing` already declared for
+  payroll-report.tsx.
