@@ -275,8 +275,8 @@ export default function ReportScreen() {
               <MetricCard color="#F5B85D" bg="#FDF3E1" label="Total Sales" value={fmtINR(analytics.total_sales)} testID="mc-total-sales" active />
               <MetricCard label="Net Sales" value={fmtINR(analytics.net_sales)} testID="mc-net-sales" />
               <MetricCard label="Net Profit" value={fmtINR(analytics.net_profit)} hint="Net − expenses − commission" testID="mc-net-profit" />
-              <MetricCard label="Invoices" value={String(analytics.invoices)} hint={`Avg ${fmtINR(analytics.avg_ticket)}`} testID="mc-invoices" />
-              <MetricCard label="Total Customers" value={String(analytics.total_customers)} hint={`${analytics.new_customers} new · ${analytics.returning_customers} returning`} testID="mc-customers" />
+              <MetricCard label="Invoices" value={String(analytics.invoices ?? 0)} hint={`Avg ${fmtINR(analytics.avg_ticket || 0)}`} testID="mc-invoices" />
+              <MetricCard label="Total Customers" value={String(analytics.total_customers ?? 0)} hint={`${analytics.new_customers ?? 0} new · ${analytics.returning_customers ?? 0} returning`} testID="mc-customers" />
               <MetricCard label="Total Discount" value={fmtINR(analytics.total_discount)} testID="mc-discount" />
               <MetricCard label="Total Tax" value={fmtINR(analytics.total_tax)} testID="mc-tax" />
               <MetricCard label="Total Expenses" value={fmtINR(analytics.total_expenses)} testID="mc-expenses" />
@@ -288,23 +288,23 @@ export default function ReportScreen() {
           )}
 
           {/* Revenue trend chart */}
-          {isAdmin && analytics && analytics.trend.length > 0 && (
+          {isAdmin && analytics && (analytics.trend?.length || 0) > 0 && (
             <View style={styles.chartCard} testID="revenue-trend-card">
               <Text style={styles.chartTitle}>Revenue trend</Text>
-              <MiniLineChart data={analytics.trend} height={190} color={colors.brandPrimary} testID="revenue-trend-chart" />
+              <MiniLineChart data={analytics.trend || []} height={190} color={colors.brandPrimary} testID="revenue-trend-chart" />
             </View>
           )}
 
           {/* Payment methods donut */}
-          {isAdmin && analytics && (analytics.cash + analytics.upi + analytics.card + analytics.tips) > 0 && (
+          {isAdmin && analytics && ((analytics.cash || 0) + (analytics.upi || 0) + (analytics.card || 0) + (analytics.tips || 0)) > 0 && (
             <View style={styles.chartCard} testID="payment-methods-card">
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm }}>
                 <Ionicons name="pie-chart-outline" size={16} color={colors.brandPrimary} />
                 <Text style={styles.chartTitle}>Payment methods</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <DonutChart data={analytics.payment_methods} testID="payment-donut" />
-                <DonutLegend data={analytics.payment_methods} testID="payment-legend" />
+                <DonutChart data={analytics.payment_methods || []} testID="payment-donut" />
+                <DonutLegend data={analytics.payment_methods || []} testID="payment-legend" />
               </View>
             </View>
           )}
@@ -318,7 +318,7 @@ export default function ReportScreen() {
           )}
 
           {/* Type Revenue Split — Ladies / Men / Unisex */}
-          {isAdmin && genderData && (genderData.total_revenue > 0 ? (
+          {isAdmin && genderData && ((genderData.total_revenue || 0) > 0 ? (
             <View style={styles.genderCard} testID="revenue-by-gender-card">
               <View style={styles.genderHeader}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -329,12 +329,12 @@ export default function ReportScreen() {
                   <View style={styles.topBadge}>
                     <Ionicons name="trophy" size={11} color="#B77400" />
                     <Text style={styles.topBadgeText}>
-                      Top: {genderData.segments.find(s => s.key === genderData.top_segment)?.label}
+                      Top: {(genderData.segments || []).find(s => s.key === genderData.top_segment)?.label}
                     </Text>
                   </View>
                 )}
               </View>
-              {genderData.segments.map(s => {
+              {(genderData.segments || []).map(s => {
                 const isTop = s.key === genderData.top_segment;
                 const color = s.key === 'ladies' ? '#D9337B' : s.key === 'men' ? '#2E6BE6' : colors.brandPrimary;
                 return (
@@ -347,11 +347,11 @@ export default function ReportScreen() {
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
                         <Text style={[styles.genderAmt, isTop && { color, fontWeight: '800' }]}>{fmtINR(s.revenue)}</Text>
-                        <Text style={styles.genderShare}>{s.share_pct.toFixed(1)}%</Text>
+                        <Text style={styles.genderShare}>{(s.share_pct || 0).toFixed(1)}%</Text>
                       </View>
                     </View>
                     <View style={styles.gTrack}>
-                      <View style={[styles.gFill, { width: `${Math.min(100, s.share_pct)}%`, backgroundColor: color }]} />
+                      <View style={[styles.gFill, { width: `${Math.min(100, s.share_pct || 0)}%`, backgroundColor: color }]} />
                     </View>
                   </View>
                 );
@@ -544,29 +544,34 @@ function MetricCard({
 function CompareCard({
   title, cur, prev, change, labelCur, labelPrev, testID,
 }: {
-  title: string; cur: { revenue: number; invoices: number }; prev: { revenue: number; invoices: number };
+  title: string;
+  cur?: { revenue: number; invoices: number } | null;
+  prev?: { revenue: number; invoices: number } | null;
   change: number | null; labelCur: string; labelPrev: string; testID?: string;
 }) {
   const up = (change ?? 0) >= 0;
+  const curRev = cur?.revenue || 0;
+  const curInv = cur?.invoices || 0;
+  const prevRev = prev?.revenue || 0;
   return (
     <View style={styles.compareCard} testID={testID}>
       <Text style={styles.compareTitle}>{title}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 4 }}>
         <View>
           <Text style={styles.compareLabel}>{labelCur}</Text>
-          <Text style={styles.compareValue}>{`${getCurrencySymbol()}${Math.round(cur.revenue).toLocaleString('en-IN')}`}</Text>
-          <Text style={styles.compareSub}>{cur.invoices} invoices</Text>
+          <Text style={styles.compareValue}>{`${getCurrencySymbol()}${Math.round(curRev).toLocaleString('en-IN')}`}</Text>
+          <Text style={styles.compareSub}>{curInv} invoices</Text>
         </View>
         {change !== null && (
           <View style={[styles.trendPill, { backgroundColor: up ? '#DFF5DE' : '#FDE7E7', borderColor: up ? '#8ED18B' : '#F2B5B5' }]}>
             <Ionicons name={up ? 'trending-up' : 'trending-down'} size={11} color={up ? '#207447' : '#C42032'} />
             <Text style={[styles.trendPillText, { color: up ? '#207447' : '#C42032' }]}>
-              {`${up ? '+' : ''}${change.toFixed(1)}%`}
+              {`${up ? '+' : ''}${(change || 0).toFixed(1)}%`}
             </Text>
           </View>
         )}
       </View>
-      <Text style={styles.compareSub2}>{labelPrev}  ₹{Math.round(prev.revenue).toLocaleString('en-IN')}</Text>
+      <Text style={styles.compareSub2}>{labelPrev}  ₹{Math.round(prevRev).toLocaleString('en-IN')}</Text>
     </View>
   );
 }

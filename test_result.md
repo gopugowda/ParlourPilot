@@ -2280,3 +2280,54 @@ Re-publish the mobile app from Emergent (top-right → Publish) so the
 patched bundle reaches Expo Go on their phone. No backend redeploy is
 needed — the web-app backend already exposes every route the mobile app
 consumes.
+
+---
+
+## Iteration 49 — Fix: production crash on notification tap ("Reports screen")
+
+### Symptom
+User reported: "when I click on notification, app getting crash" on the
+LIVE Expo Go build.
+
+### Root Cause (found via web preview + pageerror capture)
+The bell → Notifications screen itself was fine, but the "Today's summary"
+notification's tap deep-links to `/manage/report`. On that screen two
+places assumed the backend always returns fully-populated shapes:
+
+- `analytics.trend.length` — crashes if `trend` is `undefined`
+- `CompareCard` accessed `cur.revenue` / `prev.revenue` without null checks
+- `genderData.segments.map(...)` — no fallback if `segments` is absent
+- `s.share_pct.toFixed(1)` — no fallback if `share_pct` is `undefined`
+- Bare `String(analytics.invoices)` / `String(analytics.total_customers)`
+  rendered the literal word "undefined" on screens with sparse data
+- `Haptics.selectionAsync()` in `notifications.tsx` was unhandled → some
+  Android devices without a haptic engine throw synchronously
+
+### Fixes
+1. `app/manage/report.tsx`
+   - `analytics.trend.length` → `(analytics.trend?.length || 0)`
+   - Wrap `analytics.trend` / `analytics.payment_methods` with `|| []`
+   - `analytics.cash + upi + card + tips` → nullish-safe additions
+   - `genderData.segments.map(...)` → `(genderData.segments || []).map(...)`
+   - `s.share_pct.toFixed(1)` → `(s.share_pct || 0).toFixed(1)`
+   - `CompareCard` prop signature now `cur?/prev?` with `|| 0` fallbacks
+   - `String(analytics.invoices)` → `String(analytics.invoices ?? 0)` etc.
+
+2. `app/notifications.tsx`
+   - New `safeHaptic()` helper wraps every `Haptics.selectionAsync()` in
+     try/catch + `.catch()`
+   - Whole `fetchAllSignals` body wrapped in outer try/catch so a single
+     malformed payload can never bubble a render-time crash
+   - Every `.forEach` guards against `null` array elements
+   - Notif router.push now uses `{ pathname, params }` shape (Expo Router
+     preferred) with try/catch, so an invalid route can't crash
+
+### Verified on preview
+- Bell → Notifications → "Today's summary" → `/manage/report` now renders
+  correctly. Empty analytics fields show `0` instead of `undefined`.
+- No page errors captured in Playwright pageerror listener across the
+  entire flow.
+
+### User action required
+Re-publish the mobile app so Expo Go on the phone gets the patched
+bundle.

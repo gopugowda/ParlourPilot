@@ -20,7 +20,7 @@
  * re-runs on every focus.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -30,6 +30,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
+
+/** Safe wrapper — some Android devices without a haptic engine throw synchronously. */
+function safeHaptic() {
+  try {
+    if (Platform.OS === 'web') return;
+    Haptics.selectionAsync().catch(() => {});
+  } catch {}
+}
 
 type NotifSeverity = 'info' | 'warning' | 'error' | 'success';
 type Notif = {
@@ -58,40 +66,46 @@ async function saveReadSet(userId: string | undefined, set: Set<string>) {
 }
 
 /** Fan out to all supported endpoints and consolidate into the Notif shape.
- *  Every call is guarded so a single failing endpoint doesn't blank the inbox. */
+ *  Every call is guarded so a single failing endpoint doesn't blank the inbox.
+ *  Wrapped in an outer try so absolutely nothing bubbles up to the caller. */
 export async function fetchAllSignals(isOwner: boolean): Promise<Notif[]> {
   const now = Date.now();
   const out: Notif[] = [];
-
-  // Reports summary (low_stock, expiring_members, today).
-  const summary: any = await api('/reports/summary').catch(() => null);
-  if (summary) {
-    (summary.low_stock || []).forEach((s: any) => {
-      out.push({
-        id: `low_stock:${s.id || s.name}`,
-        title: 'Low stock',
-        body: `${s.name} is low${typeof s.qty === 'number' ? ` (${s.qty} left)` : ''}.`,
-        icon: 'cube-outline',
-        severity: 'warning',
-        route: '/manage/stock',
-        ts: now,
+  try {
+    // Reports summary (low_stock, expiring_members, today).
+    const summary: any = await api('/reports/summary').catch(() => null);
+    if (summary && typeof summary === 'object') {
+      const lowStock = Array.isArray(summary.low_stock) ? summary.low_stock : [];
+      lowStock.forEach((s: any) => {
+        if (!s || typeof s !== 'object') return;
+        out.push({
+          id: `low_stock:${s.id || s.name || 'unknown'}`,
+          title: 'Low stock',
+          body: `${s.name || 'Item'} is low${typeof s.qty === 'number' ? ` (${s.qty} left)` : ''}.`,
+          icon: 'cube-outline',
+          severity: 'warning',
+          route: '/manage/stock',
+          ts: now,
+        });
       });
-    });
-    (summary.expiring_members || []).forEach((m: any) => {
-      const daysLeft = m.days_left;
-      const isExpired = typeof daysLeft === 'number' && daysLeft < 0;
-      out.push({
-        id: `exp_member:${m.id}:${m.days_left ?? 'na'}`,
-        title: isExpired ? 'Member expired' : 'Membership expiring',
-        body: isExpired
-          ? `${m.name}'s membership has expired. Renew to keep them on the discount tier.`
-          : `${m.name}'s membership expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`,
-        icon: 'star-outline',
-        severity: isExpired ? 'error' : 'warning',
-        route: '/manage/members?filter=expiring',
-        ts: now,
+      const expMembers = Array.isArray(summary.expiring_members) ? summary.expiring_members : [];
+      expMembers.forEach((m: any) => {
+        if (!m || typeof m !== 'object') return;
+        const daysLeft = m.days_left;
+        const isExpired = typeof daysLeft === 'number' && daysLeft < 0;
+        out.push({
+          id: `exp_member:${m.id || 'unknown'}:${m.days_left ?? 'na'}`,
+          title: isExpired ? 'Member expired' : 'Membership expiring',
+          body: isExpired
+            ? `${m.name || 'Member'}${m.name ? "'s" : ''} membership has expired. Renew to keep them on the discount tier.`
+            : `${m.name || 'Member'}${m.name ? "'s" : ''} membership expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`,
+          icon: 'star-outline',
+          severity: isExpired ? 'error' : 'warning',
+          route: '/manage/members',
+          routeParams: { filter: 'expiring' },
+          ts: now,
+        });
       });
-    });
 
     // End-of-day summary — OWNER only (financials).
     if (isOwner && summary.today && typeof summary.today.total === 'number') {
@@ -111,42 +125,51 @@ export async function fetchAllSignals(isOwner: boolean): Promise<Notif[]> {
     }
   }
 
-  // Cancelled appointments today — quick filter on the list endpoint.
-  const today = new Date().toISOString().slice(0, 10);
-  const apts: any = await api(`/appointments?from_date=${today}&to_date=${today}`).catch(() => null);
-  const cancelled = Array.isArray(apts)
-    ? apts.filter((a: any) => (a.status || '').toLowerCase() === 'cancelled')
-    : Array.isArray(apts?.items) ? apts.items.filter((a: any) => (a.status || '').toLowerCase() === 'cancelled') : [];
-  cancelled.forEach((a: any) => {
-    out.push({
-      id: `apt_cancel:${a.id}`,
-      title: 'Appointment cancelled',
-      body: `${a.customer_name || 'A customer'} cancelled${a.beautician_name ? ` with ${a.beautician_name}` : ''}${
-        a.scheduled_start ? ` (${new Date(a.scheduled_start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })})` : ''
-      }.`,
-      icon: 'close-circle-outline',
-      severity: 'warning',
-      route: '/manage/appointments',
-      ts: (() => { try { return new Date(a.updated_at || a.scheduled_start || now).getTime(); } catch { return now; } })(),
-    });
-  });
-
-  // Unpaid payroll — owner only, month-end nudge.
-  if (isOwner) {
-    const perf: any = await api('/reports/staff-performance?preset=last_month').catch(() => null);
-    const unpaid = Array.isArray(perf?.rows) ? perf.rows.filter((r: any) => (r.net_payable || 0) > 0 && !r.paid) : [];
-    if (unpaid.length > 0) {
-      const total = unpaid.reduce((s: number, r: any) => s + (r.net_payable || 0), 0);
+    // Cancelled appointments today — quick filter on the list endpoint.
+    const today = new Date().toISOString().slice(0, 10);
+    const apts: any = await api(`/appointments?from_date=${today}&to_date=${today}`).catch(() => null);
+    const cancelled = Array.isArray(apts)
+      ? apts.filter((a: any) => a && (a.status || '').toLowerCase() === 'cancelled')
+      : Array.isArray(apts?.items) ? apts.items.filter((a: any) => a && (a.status || '').toLowerCase() === 'cancelled') : [];
+    cancelled.forEach((a: any) => {
+      if (!a || typeof a !== 'object') return;
+      let ts = now;
+      try { ts = new Date(a.updated_at || a.scheduled_start || now).getTime() || now; } catch { ts = now; }
+      let timeStr = '';
+      if (a.scheduled_start) {
+        try { timeStr = ` (${new Date(a.scheduled_start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })})`; } catch {}
+      }
       out.push({
-        id: `unpaid_payroll:${perf.from}:${perf.to}`,
-        title: `${unpaid.length} unpaid payslip${unpaid.length > 1 ? 's' : ''}`,
-        body: `${fmtINR(total)} owed to team for ${perf.from} → ${perf.to}. Tap to review and mark paid.`,
-        icon: 'wallet-outline',
+        id: `apt_cancel:${a.id || Math.random()}`,
+        title: 'Appointment cancelled',
+        body: `${a.customer_name || 'A customer'} cancelled${a.beautician_name ? ` with ${a.beautician_name}` : ''}${timeStr}.`,
+        icon: 'close-circle-outline',
         severity: 'warning',
-        route: '/manage/payroll-report',
-        ts: now,
+        route: '/manage/appointments',
+        ts,
       });
+    });
+
+    // Unpaid payroll — owner only, month-end nudge.
+    if (isOwner) {
+      const perf: any = await api('/reports/staff-performance?preset=last_month').catch(() => null);
+      const rows = Array.isArray(perf?.rows) ? perf.rows : [];
+      const unpaid = rows.filter((r: any) => r && (r.net_payable || 0) > 0 && !r.paid);
+      if (unpaid.length > 0) {
+        const total = unpaid.reduce((s: number, r: any) => s + (r.net_payable || 0), 0);
+        out.push({
+          id: `unpaid_payroll:${perf?.from || 'x'}:${perf?.to || 'y'}`,
+          title: `${unpaid.length} unpaid payslip${unpaid.length > 1 ? 's' : ''}`,
+          body: `${fmtINR(total)} owed to team${perf?.from && perf?.to ? ` for ${perf.from} → ${perf.to}` : ''}. Tap to review and mark paid.`,
+          icon: 'wallet-outline',
+          severity: 'warning',
+          route: '/manage/payroll-report',
+          ts: now,
+        });
+      }
     }
+  } catch {
+    // Never let the notifications aggregator throw — the screen always renders.
   }
 
   // Sort newest first.
@@ -217,15 +240,25 @@ export default function NotificationsScreen() {
     await saveReadSet(user?.id, next);
   };
   const markAllRead = async () => {
-    Haptics.selectionAsync();
+    safeHaptic();
     const next = new Set(items.map(n => n.id));
     setReadSet(next);
     await saveReadSet(user?.id, next);
   };
   const tap = async (n: Notif) => {
-    Haptics.selectionAsync();
+    safeHaptic();
     await markAsRead(n.id);
-    if (n.route) router.push(n.route as any);
+    if (n.route) {
+      try {
+        if (n.routeParams) {
+          router.push({ pathname: n.route as any, params: n.routeParams });
+        } else {
+          router.push(n.route as any);
+        }
+      } catch {
+        // Route may be invalid on the current bundle — swallow to avoid crash.
+      }
+    }
   };
 
   return (
