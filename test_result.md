@@ -2331,3 +2331,65 @@ places assumed the backend always returns fully-populated shapes:
 ### User action required
 Re-publish the mobile app so Expo Go on the phone gets the patched
 bundle.
+
+---
+
+## Iteration 50 — Fix: SubscriptionScreen crash on `.toLocaleString(...)`
+
+### Symptom
+Preview crashed with:
+`Uncaught Error: Cannot read properties of undefined (reading 'toLocaleString')`
+at `app/subscription.tsx:303:75` (`nextPaymentAmount.pricePerBranchDisplay.toLocaleString(subLocale)`).
+
+### Root Cause
+`entitlements.yearly_price_per_branch` / `monthly_price_per_branch` are
+returned by the backend only for tenants on a priced plan. On starter /
+free / grandfathered / trialing tenants the field is absent. The old
+`nextPaymentAmount` computation:
+
+```
+const pricePerBranch = ...yearly_price_per_branch or monthly_price_per_branch;
+const perBranchDisplay = toDisplay(pricePerBranch);   // undefined → NaN or undefined
+const totalDisplay = perBranchDisplay * branches;      // NaN
+return { pricePerBranchDisplay: undefined, totalDisplay: NaN, ... }
+```
+
+produced an object whose `.pricePerBranchDisplay` was `undefined`. The
+render then tried to call `.toLocaleString()` on that undefined and
+crashed the whole authenticated shell.
+
+Also two adjacent UI strings were rendering `"undefined pool"` /
+`"undefined allowed"` for the same reason — the `staff_pool` and
+`branches_allowed` fields are optional on some tenants.
+
+### Fixes (`app/subscription.tsx`)
+1. `nextPaymentAmount` — early-return `null` when the price field is
+   missing / not a positive finite number. This hides the "Next payment:
+   …" strip for tenants who don't have that data instead of rendering
+   `NaN`.
+2. Wrapped the two `.toLocaleString(...)` sites with
+   `Number(x || 0).toLocaleString(locale)` as belt-and-braces.
+3. Usage hub renders `staff_pool` / `branches_allowed` only when they're
+   actually numbers, otherwise just shows the count without a suffix.
+4. `Entitlements` type now marks `branches_allowed`, `staff_pool`,
+   `monthly_price_per_branch`, `yearly_price_per_branch`, `currency` as
+   optional to reflect the real backend contract.
+
+### Not changed
+- Auth architecture (single JWT login, no role/branch selection screen)
+- `AuthContext.refreshTenant()` / login sequence — unchanged
+- Subscription business logic (plan, trial, cancellation flow, upgrade
+  / downgrade buttons, entitlements source) — unchanged
+- Backend contract — unchanged (only client-side null-safety)
+
+### Verified on preview
+- Fresh login as QA Growth Owner → `/subscription` opens cleanly
+- Card renders "Starter · Trial · Sep 08, 2026 · 10 days remaining"
+- Usage hub: `Staff 0 / 30 pool` and `Branches 4` (no "undefined"
+  anywhere on screen)
+- Playwright `pageerror` listener captured **0 errors** during the flow
+- Lint clean
+
+### User action required
+Re-publish so the Expo Go bundle on the phone picks up the patched
+subscription screen.

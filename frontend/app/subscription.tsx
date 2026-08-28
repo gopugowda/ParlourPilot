@@ -17,12 +17,12 @@ const SUPPORT_EMAIL = 'support@parlourpilot.com';
 type Entitlements = {
   plan_tier: 'starter' | 'growth' | 'legacy' | string;
   plan_tier_label: string;
-  branch_count: number; branches_allowed: number;
-  staff_count: number; staff_pool: number;
+  branch_count: number; branches_allowed?: number;
+  staff_count: number; staff_pool?: number;
   can_upgrade: boolean; grandfathered: boolean;
-  monthly_price_per_branch: number;
-  yearly_price_per_branch: number;
-  currency: string;
+  monthly_price_per_branch?: number;
+  yearly_price_per_branch?: number;
+  currency?: string;
 };
 
 type PaymentsCfg = { enabled: boolean; key_id: string; provider: string; currency: string };
@@ -126,17 +126,21 @@ export default function SubscriptionScreen() {
 
   const nextPaymentAmount = (() => {
     if (!entitlements) return null;
-    const pricePerBranch = (subscription?.subscription_plan === 'yearly')
+    const rawPrice = (subscription?.subscription_plan === 'yearly')
       ? entitlements.yearly_price_per_branch
       : entitlements.monthly_price_per_branch;
+    // Backend may omit these fields for free/legacy tenants — skip the
+    // "Next payment" strip rather than render NaN or crash on toLocaleString.
+    if (typeof rawPrice !== 'number' || !isFinite(rawPrice) || rawPrice <= 0) return null;
     const branches = Math.max(1, entitlements.branch_count || 1);
-    const perBranchDisplay = toDisplay(pricePerBranch);
+    const perBranchDisplay = toDisplay(rawPrice);
+    if (typeof perBranchDisplay !== 'number' || !isFinite(perBranchDisplay)) return null;
     const totalDisplay = perBranchDisplay * branches;
     return {
-      pricePerBranch,
+      pricePerBranch: rawPrice,
       pricePerBranchDisplay: perBranchDisplay,
       branches,
-      total: pricePerBranch * branches,
+      total: rawPrice * branches,
       totalDisplay,
     };
   })();
@@ -298,9 +302,9 @@ export default function SubscriptionScreen() {
             <View style={styles.nextPayment} testID="next-payment-line">
               <Ionicons name="card-outline" size={16} color={colors.onSurfaceSecondary} />
               <Text style={styles.nextPaymentText}>
-                Next payment: <Text style={styles.bold}>{`${subSym}${nextPaymentAmount.totalDisplay.toLocaleString(subLocale)}`}</Text>
+                Next payment: <Text style={styles.bold}>{`${subSym}${Number(nextPaymentAmount.totalDisplay || 0).toLocaleString(subLocale)}`}</Text>
                 <Text style={styles.nextPaymentSub}>
-                  {`  (${subSym}${nextPaymentAmount.pricePerBranchDisplay.toLocaleString(subLocale)} × ${nextPaymentAmount.branches} branch${nextPaymentAmount.branches === 1 ? '' : 'es'})`}
+                  {`  (${subSym}${Number(nextPaymentAmount.pricePerBranchDisplay || 0).toLocaleString(subLocale)} × ${nextPaymentAmount.branches} branch${nextPaymentAmount.branches === 1 ? '' : 'es'})`}
                 </Text>
               </Text>
               {!isSubINR && (
@@ -361,15 +365,19 @@ export default function SubscriptionScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.usageLabel}>Staff</Text>
                 <Text style={styles.usageValue}>
-                  <Text style={styles.usageBig}>{entitlements.staff_count}</Text>
-                  <Text style={styles.usageMuted}>{`  / ${entitlements.staff_pool} pool`}</Text>
+                  <Text style={styles.usageBig}>{entitlements.staff_count ?? 0}</Text>
+                  {typeof entitlements.staff_pool === 'number' && (
+                    <Text style={styles.usageMuted}>{`  / ${entitlements.staff_pool} pool`}</Text>
+                  )}
                 </Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.usageLabel}>Branches</Text>
                 <Text style={styles.usageValue}>
-                  <Text style={styles.usageBig}>{entitlements.branch_count}</Text>
-                  <Text style={styles.usageMuted}>{`  / ${entitlements.branches_allowed} allowed`}</Text>
+                  <Text style={styles.usageBig}>{entitlements.branch_count ?? 0}</Text>
+                  {typeof entitlements.branches_allowed === 'number' && (
+                    <Text style={styles.usageMuted}>{`  / ${entitlements.branches_allowed} allowed`}</Text>
+                  )}
                 </Text>
               </View>
             </View>
