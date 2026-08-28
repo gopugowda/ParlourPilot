@@ -2209,3 +2209,74 @@ Payroll:
 - Native builds don't require any new permissions; PDF share uses the
   existing `expo-print` + `expo-sharing` already declared for
   payroll-report.tsx.
+
+---
+
+## Iteration 48 — Production HR / Payroll 404 fix (root cause + resolver rewrite)
+
+### Symptom
+User published Iteration-47 to the live Emergent Expo Go build. When
+opening HR / Leave → Daily Attendance on their real phone, the app popped
+an alert: **"Attendance load failed — Not Found"**. Every HR and Payroll
+screen was broken the same way. Preview worked; production did not.
+
+### Root Cause (verified by curl, not guessed)
+The published mobile bundle was calling
+`https://salon-invoice-app.emergent.host/api/hr/attendance` — the K8s
+FastAPI on THIS project's pod, which never had HR/Payroll routes.
+
+Confirmed:
+- `GET https://salon-invoice-app.emergent.host/api/hr/attendance` → **404**
+- `GET https://parlourpilot.com/api/hr/attendance`                 → 401
+  (route exists, needs auth)
+- `GET https://staff-portal-331.preview.emergentagent.com/api/hr/attendance` → 401
+
+Why? The resolver in `src/api/client.ts` gated production selection on
+the compile-time `__DEV__` flag. In Emergent Publish → Expo Go, `__DEV__`
+is TRUE even for the "released" bundle, so the resolver fell through to
+`process.env.EXPO_PUBLIC_BACKEND_URL`, which Emergent's Publish pipeline
+force-injects to `https://salon-invoice-app.emergent.host` (this pod).
+
+The web app remained on parlourpilot.com, but mobile silently drifted to
+the pod's stripped-down FastAPI without HR/Payroll → every HR call 404'd.
+
+### Fix (`src/api/client.ts`)
+Rewrote `resolveBaseUrl()`:
+1. Explicit `EXPO_PUBLIC_BACKEND_URL_OVERRIDE` still wins (developer
+   escape hatch).
+2. Local Metro dev is now detected via `Constants.expoConfig.hostUri`
+   matching LAN/loopback ranges (`192.*`, `10.*`, `172.16-31.*`,
+   `127.*`, `localhost`). Only in that case do we honour
+   `EXPO_PUBLIC_BACKEND_URL`.
+3. Every other execution context — Emergent Publish, EAS release,
+   standalone, hosted web preview — LOCKS to
+   `PRODUCTION_BACKEND_URL = https://parlourpilot.com`.
+4. Added a `FORBIDDEN_HOST_PATTERNS` blocklist that hard-rejects any env
+   value pointing at `salon-invoice-app.*` (both K8s host and preview
+   hostname). Even if a future deploy pipeline injects that URL again,
+   the mobile app cannot silently drift to a pod backend without HR
+   routes.
+
+### What changed
+| File | Change |
+|------|--------|
+| `/app/frontend/src/api/client.ts` | Resolver rewrite + host blocklist |
+
+Nothing else touched — no HR/Payroll/Commission/Leave logic modified, no
+new endpoints introduced, no permission or tenant/branch handling
+changed, no database schema changed.
+
+### Verified
+- Local Metro dev (this preview pod) — hits `staff-portal-331` via the
+  developer `.env` override; HR + Payroll screens load real data
+  (verified via screenshot + network trace).
+- Production behaviour simulated by unsetting override — resolver
+  returns `parlourpilot.com` for every non-LAN hostUri.
+- Existing login / dashboard / bills / members / services / branches
+  screens unchanged (same base URL for all).
+
+### User action required
+Re-publish the mobile app from Emergent (top-right → Publish) so the
+patched bundle reaches Expo Go on their phone. No backend redeploy is
+needed — the web-app backend already exposes every route the mobile app
+consumes.

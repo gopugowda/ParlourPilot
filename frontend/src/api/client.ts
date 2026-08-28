@@ -6,47 +6,74 @@ import Constants from 'expo-constants';
  * =============================================================================
  * BACKEND URL RESOLUTION — READ THIS BEFORE TOUCHING
  * =============================================================================
- * Every deployed build MUST hit the shared production backend at
- *   https://parlourpilot.com
- * because that is where the web app and its MongoDB tenant live. If mobile hits
- * a different backend, it sees a *different* database (empty / stale data,
- * "Profile not linked", etc.).
+ * The mobile app is a UI mirror of the ParlourPilot web app and MUST consume
+ * the shared web-app backend at parlourpilot.com — that is where the HR,
+ * Leave, Payroll, Commission, tenant, and MongoDB actually live.
  *
- * We use React Native's compile-time `__DEV__` global as the switch:
- *   • `__DEV__ === true`  → local dev via `expo start` (Metro sets this)
- *                            → use `.env` value (or the preview URL fallback)
- *   • `__DEV__ === false` → any published / release build (Emergent Publish,
- *                            EAS release, standalone) → **always** production URL
+ * The Emergent-hosted pod that serves THIS mobile project
+ * (salon-invoice-app.emergent.host) is only a build/serve host for the Expo
+ * bundle. Its FastAPI does NOT contain HR / Payroll / Leave routes. If mobile
+ * calls it, every HR/Payroll screen returns 404 "Not Found".
  *
- * Why not env vars? Emergent's Publish pipeline force-injects
- * `EXPO_PUBLIC_BACKEND_URL=https://salon-invoice-app.emergent.host` (this
- * project's K8s host), which is the *wrong* backend for our use-case. Any
- * env-var-based resolver would be silently overridden every publish. `__DEV__`
- * is baked in by Metro during bundle-time and cannot be flipped by an env var,
- * so it's tamper-proof.
+ * WHY WE CAN'T RELY ON `__DEV__` ALONE:
+ *   Emergent's Publish pipeline runs Expo Go on the phone with a "released"
+ *   bundle, but Expo Go itself always sets __DEV__ = true when hosting *any*
+ *   remote bundle. That means the previous "if !__DEV__ → parlourpilot.com"
+ *   check was silently skipped for the Emergent-published build and the
+ *   pipeline-injected `EXPO_PUBLIC_BACKEND_URL=salon-invoice-app.emergent.host`
+ *   became the base URL → 404 everywhere.
  *
- * If you ever *want* a release build to hit preview instead, use the escape
- * hatch `EXPO_PUBLIC_BACKEND_URL_OVERRIDE=<url>` before building — it takes
- * precedence over everything else.
+ * WHY WE CAN'T RELY ON `EXPO_PUBLIC_BACKEND_URL` EITHER:
+ *   Emergent Publish force-injects it to the wrong host. That override cannot
+ *   be trusted for base-URL resolution.
+ *
+ * NEW RESOLVER RULE:
+ *   1. If `EXPO_PUBLIC_BACKEND_URL_OVERRIDE` is explicitly set → use it.
+ *      (Escape hatch used by the developer's local .env for QA against a
+ *      specific backend.)
+ *   2. If we are inside local-Metro dev (Constants.expoConfig.hostUri is a
+ *      LAN / loopback address) → use PREVIEW_BACKEND_URL so QA screenshots
+ *      see live data.
+ *   3. Everything else (Emergent Publish → Expo Go, EAS release, standalone,
+ *      web preview served from the pod) → LOCK to PRODUCTION_BACKEND_URL.
+ *
+ * This is deterministic, does not depend on __DEV__, and cannot be flipped
+ * by any env var that the deploy pipeline might inject downstream.
  * =============================================================================
  */
 const PRODUCTION_BACKEND_URL = 'https://parlourpilot.com';
 const PREVIEW_BACKEND_URL = 'https://staff-portal-331.preview.emergentagent.com';
 
-function resolveBaseUrl(): string {
-  // Escape hatch for anyone who genuinely needs a different backend in a build.
-  const explicitOverride = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE;
-  if (explicitOverride && explicitOverride.trim()) return explicitOverride.trim();
+/** URL host regexes that are NEVER the ParlourPilot web-app backend and thus
+ *  MUST be ignored if injected into any env var. */
+const FORBIDDEN_HOST_PATTERNS: RegExp[] = [
+  /salon-invoice-app\.emergent\.host/i,
+  /salon-invoice-app\.[^/]*emergentagent\.com/i,
+];
 
-  // Production / released bundle — LOCK to parlourpilot.com. No fallback.
-  if (typeof __DEV__ !== 'undefined' && !__DEV__) {
-    return PRODUCTION_BACKEND_URL;
+function isForbidden(u: string): boolean {
+  return FORBIDDEN_HOST_PATTERNS.some(re => re.test(u));
+}
+
+function resolveBaseUrl(): string {
+  // 1) Explicit override in developer .env — always wins.
+  const explicitOverride = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE?.trim();
+  if (explicitOverride && !isForbidden(explicitOverride)) return explicitOverride;
+
+  // 2) Local Metro dev? Detect via hostUri = LAN / loopback address.
+  const hostUri = String(Constants.expoConfig?.hostUri || '');
+  const isLocalMetro = /^(192\.|10\.|172\.(1[6-9]|2\d|3[01])\.|127\.|localhost)/.test(hostUri);
+  if (isLocalMetro) {
+    // Honour env only if it's not the forbidden pod URL.
+    const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+    if (envUrl && !isForbidden(envUrl)) return envUrl;
+    return PREVIEW_BACKEND_URL;
   }
 
-  // Dev-only (Metro / expo start) — honour .env, then app.config.ts, then default.
-  const runtimeBackend = (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl;
-  const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-  return runtimeBackend || envUrl || PREVIEW_BACKEND_URL;
+  // 3) Anything else — Emergent Publish, EAS release, standalone, hosted web
+  //    preview — MUST hit the shared production web-app backend. Ignore any
+  //    EXPO_PUBLIC_BACKEND_URL that the deploy pipeline may have injected.
+  return PRODUCTION_BACKEND_URL;
 }
 
 const BASE_URL = resolveBaseUrl();
