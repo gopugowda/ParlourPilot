@@ -1,556 +1,770 @@
-import React, { useCallback, useEffect, useState } from 'react';
+/**
+ * Subscription & Billing screen — INR-only, entitlement-driven.
+ *
+ * Consumes GET /api/billing/entitlements (authoritative renewal breakdown,
+ * usage counters, feature flags). Never computes prices client-side.
+ *
+ * Uses Razorpay checkout via billing/checkout/order + verify for growth
+ * upgrade and additional-branch add-on, and tenants/checkout for renewal.
+ *
+ * All amounts are in Indian Rupees. Server returns:
+ *   - *_price fields in paise (divide by 100)
+ *   - renewal.*_inr fields already in rupees
+ *
+ * Crash-safety: EVERY numeric render uses Number(x ?? 0).toLocaleString('en-IN').
+ * Nothing derefs a possibly-undefined field.
+ */
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, Linking,
-  Modal, Pressable, ActivityIndicator, RefreshControl,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
+  RefreshControl, Alert, Platform, Linking, Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
+
+import { billingApi, tenantApi, paymentsApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { api } from '@/src/api/client';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 
 const SUPPORT_EMAIL = 'support@parlourpilot.com';
 
-type Entitlements = {
-  plan_tier: 'starter' | 'growth' | 'legacy' | string;
-  plan_tier_label: string;
-  branch_count: number; branches_allowed?: number;
-  staff_count: number; staff_pool?: number;
-  can_upgrade: boolean; grandfathered: boolean;
-  monthly_price_per_branch?: number;
-  yearly_price_per_branch?: number;
+// ------------- Types (all fields optional-friendly by design) --------------
+type Renewal = {
+  tier?: 'starter' | 'growth' | string;
+  interval?: 'monthly' | 'yearly' | string;
   currency?: string;
+  base_inr?: number;
+  addon_qty?: number;
+  addon_unit_inr?: number;
+  addon_total_inr?: number;
+  total_inr?: number;
 };
 
-type PaymentsCfg = { enabled: boolean; key_id: string; provider: string; currency: string };
+type Ent = {
+  plan?: 'starter' | 'growth' | 'legacy' | string;
+  plan_tier?: string;
+  status?: string;
+  grandfathered?: boolean;
+  billing_currency?: string;
+  billing_interval?: 'monthly' | 'yearly' | string;
 
-function formatEndDate(iso?: string | null): string {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      day: '2-digit', month: 'short', year: 'numeric',
-    });
-  } catch { return String(iso).slice(0, 10); }
-}
+  base_branch_limit?: number;
+  base_user_limit?: number;
+  additional_branch_addons?: number;
+  extra_branch_slots?: number;
+  effective_branch_limit?: number;
+  effective_user_limit?: number;
 
-// Small snackbar-style toast used for payment-config / gateway errors.
-function useToast() {
-  const [msg, setMsg] = useState<string | null>(null);
-  const show = (m: string, ttlMs = 3800) => {
-    setMsg(m);
-    setTimeout(() => setMsg(null), ttlMs);
+  staff_used?: number;
+  branch_count?: number;
+  can_add_staff?: boolean;
+  can_add_branch?: boolean;
+
+  all_features?: boolean;
+  web_access?: boolean;
+  mobile_access?: boolean;
+  addon_eligible?: boolean;
+
+  growth_price?: { monthly?: number; yearly?: number };
+  extra_branch_price?: { monthly?: number; yearly?: number };
+  renewal?: Renewal;
+
+  subscription?: {
+    status?: string;
+    days_left?: number;
+    trial_end_date?: string | null;
+    subscription_end_date?: string | null;
+    subscription_plan?: string;
+    cancellation_pending?: boolean;
+    cancellation_requested_at?: string | null;
   };
-  return { msg, show, hide: () => setMsg(null) };
+  scheduled_plan_change?: { tier?: string; effective_at?: string } | null;
+};
+
+type HistoryRow = {
+  id: string; type?: string; kind?: string; plan?: string;
+  amount_inr?: number; created_at?: string; status?: string;
+  reference?: string; label?: string;
+};
+
+// ------------- Helpers -----------------------------------------------------
+const fmtINR = (n?: number | null) => `₹${Number(n ?? 0).toLocaleString('en-IN')}`;
+
+const fmtDate = (iso?: string | null): string => {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
+  catch { return String(iso).slice(0, 10); }
+};
+
+const titlecase = (s?: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+
+// Loads Razorpay checkout on web. On native, we fall back to a hosted link.
+async function openRazorpay(order: any, onSuccess: (r: any) => void, onDismiss: () => void) {
+  if (Platform.OS === 'web') {
+    const w: any = typeof window !== 'undefined' ? window : null;
+    if (!w) return onDismiss();
+    if (!w.Razorpay) {
+      await new Promise<void>((res) => {
+        const s = w.document.createElement('script');
+        s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        s.onload = () => res();
+        w.document.body.appendChild(s);
+      });
+    }
+    const rzp = new w.Razorpay({
+      key: order.key_id,
+      amount: order.amount,
+      currency: order.currency || 'INR',
+      order_id: order.order_id,
+      name: order.name || 'ParlourPilot',
+      description: order.description || 'Subscription payment',
+      handler: onSuccess,
+      modal: { ondismiss: onDismiss },
+      theme: { color: colors.brandPrimary },
+    });
+    rzp.open();
+    return;
+  }
+  // Native fallback: open a hosted checkout URL if backend provides one, else email support.
+  if (order.hosted_url) {
+    Linking.openURL(order.hosted_url).catch(() => onDismiss());
+    return;
+  }
+  Alert.alert(
+    'Payment in mobile',
+    'Complete payment on our secure web page. Open now?',
+    [
+      { text: 'Cancel', style: 'cancel', onPress: onDismiss },
+      { text: 'Open', onPress: () => Linking.openURL('https://parlourpilot.com/app/subscription').catch(() => onDismiss()) },
+    ]
+  );
 }
 
+// ------------- Component ---------------------------------------------------
 export default function SubscriptionScreen() {
-  const { subscription, tenant, user, logout, refreshTenant } = useAuth();
   const router = useRouter();
-  const isOwner = user?.role === 'admin' || user?.role === 'owner';
+  const { user, refreshTenant } = useAuth();
+  const isOwner = !!(user?.is_owner || user?.role === 'owner');
 
-  const [cancelOpen, setCancelOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [ent, setEnt] = useState<Ent | null>(null);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [businessName, setBusinessName] = useState('ParlourPilot');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
-  const [paymentsCfg, setPaymentsCfg] = useState<PaymentsCfg | null>(null);
-  const [billingHistory, setBillingHistory] = useState<any[]>([]);
-  const toast = useToast();
 
-  const status = subscription?.status || 'expired';
-  const cancellationPending: boolean = !!(subscription as any)?.cancellation_pending;
-  const endIso = subscription?.subscription_end_date || subscription?.trial_end_date || null;
-  const endDateFmt = formatEndDate(endIso);
-  const isActiveOrTrial = status === 'active' || status === 'trialing';
-  const isExpired = status === 'expired' || status === 'suspended' || status === 'cancelled';
-
-  const uiStatus = cancellationPending ? 'cancelled_pending' : status;
-
-  const load = useCallback(async () => {
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const [ent, cfg, hist] = await Promise.all([
-        api<Entitlements>('/billing/entitlements').catch(() => null),
-        api<PaymentsCfg>('/payments/config').catch(() => null),
-        api<any>('/billing/history').catch(() => null),
+      const [e, h] = await Promise.all([
+        billingApi.entitlements().catch(() => null),
+        billingApi.history().catch(() => ({ items: [] })),
       ]);
-      setEntitlements(ent);
-      setPaymentsCfg(cfg);
-      // Accept either an array or { items: [...] } shape from the backend.
-      const items = Array.isArray(hist) ? hist : (hist && Array.isArray(hist.items) ? hist.items : []);
-      setBillingHistory(items);
-    } catch {}
+      setEnt(e as any);
+      setHistory(Array.isArray((h as any)?.items) ? (h as any).items : []);
+      setBusinessName((h as any)?.business_name || 'ParlourPilot');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
   useEffect(() => { load(); }, [load]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await Promise.all([refreshTenant(), load()]);
-    setRefreshing(false);
-  };
-
-  // --- Derived plan-card values ---
-  const planTierLabel = entitlements?.plan_tier_label || 'Starter';
-  const billingCycleLabel = (() => {
-    if (status === 'trialing') return 'Free trial';
-    const p = (subscription?.subscription_plan || '').toLowerCase();
-    if (p === 'monthly') return 'Monthly';
-    if (p === 'yearly') return 'Yearly';
-    return p ? p.charAt(0).toUpperCase() + p.slice(1) : '—';
-  })();
-  const expiryLabel = cancellationPending
-    ? 'Access until'
-    : (status === 'trialing' ? 'Trial ends' : 'Renews on');
-  const daysLeft = subscription?.days_left ?? null;
-  const daysColor = daysLeft === null
-    ? colors.onSurface
-    : daysLeft <= 3 ? colors.error
-    : daysLeft <= 7 ? colors.warning
-    : colors.onSurface;
-
-  // Subscription display: INR salons see ₹, everyone else sees flat USD.
-  // Maps the INR base price to the corresponding USD flat amount so the
-  // "Next payment" line matches the /checkout page and honours the disclosure.
-  const tenantCurrency = ((tenant as any)?.currency || 'INR').toUpperCase();
-  const isSubINR = tenantCurrency === 'INR';
-  const INR_TO_USD_MAP: Record<number, number> = {
-    999: 12, 9999: 120,     // starter subscription
-    2499: 30, 24999: 300,   // growth plan
-    888: 10, 8888: 100,     // legacy branch add-on (old price)
-    799: 10, 7999: 100,     // branch add-on (new price)
-  };
-  const subSym = isSubINR ? '₹' : '$';
-  const subLocale = isSubINR ? 'en-IN' : 'en-US';
-  const toDisplay = (inr: number) => isSubINR ? inr : (INR_TO_USD_MAP[inr] ?? Math.round(inr * 0.012));
-
-  const nextPaymentAmount = (() => {
-    if (!entitlements) return null;
-    const rawPrice = (subscription?.subscription_plan === 'yearly')
-      ? entitlements.yearly_price_per_branch
-      : entitlements.monthly_price_per_branch;
-    // Backend may omit these fields for free/legacy tenants — skip the
-    // "Next payment" strip rather than render NaN or crash on toLocaleString.
-    if (typeof rawPrice !== 'number' || !isFinite(rawPrice) || rawPrice <= 0) return null;
-    const branches = Math.max(1, entitlements.branch_count || 1);
-    const perBranchDisplay = toDisplay(rawPrice);
-    if (typeof perBranchDisplay !== 'number' || !isFinite(perBranchDisplay)) return null;
-    const totalDisplay = perBranchDisplay * branches;
-    return {
-      pricePerBranch: rawPrice,
-      pricePerBranchDisplay: perBranchDisplay,
-      branches,
-      total: rawPrice * branches,
-      totalDisplay,
-    };
-  })();
-
-  const statusColorFor = (s: string) =>
-    s === 'active' ? colors.success :
-    s === 'trialing' ? colors.warning :
-    s === 'cancelled_pending' ? colors.warning :
-    colors.error;
-  const uiStatusColor = statusColorFor(uiStatus);
-  const uiStatusText = ({
-    cancelled_pending: 'CANCEL PENDING',
-    trialing: 'TRIALING',
-    active: 'ACTIVE',
-    expired: 'EXPIRED',
-    cancelled: 'CANCELLED',
-    suspended: 'SUSPENDED',
-  } as Record<string, string>)[uiStatus] || String(uiStatus).toUpperCase();
-
-  // --- Actions ---
-  const openRenew = async () => {
-    if (!isOwner) {
-      Alert.alert('Owner action required', 'Only the salon owner/admin can renew the subscription.');
-      return;
-    }
-    if (paymentsCfg && paymentsCfg.enabled === false) {
-      toast.show("Online payments aren't configured yet.");
-      return;
-    }
-    Haptics.selectionAsync();
-    router.push('/checkout?type=tenant');
-  };
-
-  const openUpgrade = async () => {
+  // ============ ACTIONS ============
+  const doRenew = useCallback(async () => {
     if (!isOwner) return;
-    if (paymentsCfg && paymentsCfg.enabled === false) {
-      toast.show("Online payments aren't configured yet.");
+    setBusy('renew');
+    try {
+      const cfg: any = await paymentsApi.config().catch(() => null);
+      if (!cfg?.enabled) throw new Error('Payments not configured. Contact support.');
+      const interval = (ent?.subscription?.subscription_plan === 'yearly') ? 'yearly' : 'monthly';
+      const order: any = await tenantApi.createOrder({ plan: interval as any });
+      await openRazorpay(order,
+        async (r: any) => {
+          try {
+            await tenantApi.verifyPayment({
+              razorpay_payment_id: r.razorpay_payment_id,
+              razorpay_order_id: r.razorpay_order_id,
+              razorpay_signature: r.razorpay_signature,
+            });
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            await refreshTenant();
+            await load(true);
+            Alert.alert('Success', 'Subscription renewed.');
+          } catch (e: any) { Alert.alert('Verification failed', e.message || String(e)); }
+        },
+        () => {}
+      );
+    } catch (e: any) { Alert.alert('Renew failed', e.message || String(e)); }
+    finally { setBusy(null); }
+  }, [isOwner, ent, refreshTenant, load]);
+
+  const doUpgrade = useCallback(async () => {
+    if (!isOwner) return;
+    setBusy('upgrade');
+    try {
+      const cfg: any = await paymentsApi.config().catch(() => null);
+      if (!cfg?.enabled) throw new Error('Payments not configured. Contact support.');
+      const interval = (ent?.subscription?.subscription_plan === 'yearly') ? 'yearly' : 'monthly';
+      const order: any = await billingApi.createOrder({ kind: 'growth', plan: interval as any });
+      await openRazorpay(order,
+        async (r: any) => {
+          try {
+            await billingApi.verifyPayment({
+              razorpay_payment_id: r.razorpay_payment_id,
+              razorpay_order_id: r.razorpay_order_id,
+              razorpay_signature: r.razorpay_signature,
+            });
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            await refreshTenant();
+            await load(true);
+            Alert.alert('Upgraded', 'You are now on Growth. Enjoy the extra capacity!');
+          } catch (e: any) { Alert.alert('Verification failed', e.message || String(e)); }
+        },
+        () => {}
+      );
+    } catch (e: any) { Alert.alert('Upgrade failed', e.message || String(e)); }
+    finally { setBusy(null); }
+  }, [isOwner, ent, refreshTenant, load]);
+
+  const doAddBranch = useCallback(async () => {
+    if (!isOwner) return;
+    if (!ent?.addon_eligible) {
+      Alert.alert('Not available yet', 'Additional Branch add-ons become available once you have an active paid subscription.');
       return;
     }
-    // On this backend the tenant-scoped checkout endpoints handle the upgrade too.
-    // If the shared backend later exposes /billing/checkout/order, the checkout
-    // screen will simply hit that; here we route to the same checkout page with a hint.
-    Haptics.selectionAsync();
-    router.push('/checkout?type=tenant&intent=upgrade');
-  };
-
-  const openSupport = async () => {
-    const subject = encodeURIComponent(`ParlourPilot support — ${tenant?.business_name || 'account'}`);
-    const bodyLines = [
-      'Hi ParlourPilot Support,',
-      '', 'I need help with my account.', '',
-      '— Account details —',
-      `Business: ${tenant?.business_name || 'N/A'}`,
-      `Email: ${user?.email || 'N/A'}`,
-      `Subscription: ${status}`,
-      `Plan: ${subscription?.subscription_plan || 'N/A'}`,
-      tenant?.id ? `Tenant ID: ${tenant.id}` : '',
-      '', 'Please describe your issue below:', '',
-    ].filter(Boolean).join('\n');
-    const body = encodeURIComponent(bodyLines);
-    const mailto = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+    setBusy('branch');
     try {
-      if (Platform.OS === 'web') {
-        const w: any = typeof window !== 'undefined' ? window : null;
-        if (w) { w.location.href = mailto; return; }
-      }
-      const ok = await Linking.canOpenURL(mailto);
-      if (ok) await Linking.openURL(mailto);
-      else Alert.alert('Contact Support', `Email us at ${SUPPORT_EMAIL}`);
-    } catch { Alert.alert('Contact Support', `Email us at ${SUPPORT_EMAIL}`); }
-  };
+      const cfg: any = await paymentsApi.config().catch(() => null);
+      if (!cfg?.enabled) throw new Error('Payments not configured. Contact support.');
+      const interval = (ent?.subscription?.subscription_plan === 'yearly') ? 'yearly' : 'monthly';
+      const order: any = await billingApi.createOrder({ kind: 'extra_branch', plan: interval as any });
+      await openRazorpay(order,
+        async (r: any) => {
+          try {
+            await billingApi.verifyPayment({
+              razorpay_payment_id: r.razorpay_payment_id,
+              razorpay_order_id: r.razorpay_order_id,
+              razorpay_signature: r.razorpay_signature,
+            });
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            await refreshTenant();
+            await load(true);
+            Alert.alert('Branch added', 'You can now create an additional branch.');
+          } catch (e: any) { Alert.alert('Verification failed', e.message || String(e)); }
+        },
+        () => {}
+      );
+    } catch (e: any) { Alert.alert('Add-on failed', e.message || String(e)); }
+    finally { setBusy(null); }
+  }, [isOwner, ent, refreshTenant, load]);
 
-  const confirmCancel = async () => {
-    setBusy(true);
-    try {
-      await api('/tenants/me/cancel-subscription', { method: 'POST' });
-      await refreshTenant();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setCancelOpen(false);
-    } catch (e: any) {
-      toast.show(e?.message || 'Cancellation failed. Please try again.');
-    } finally { setBusy(false); }
-  };
-
-  const resumeSubscription = async () => {
+  const doDowngrade = useCallback(() => {
     if (!isOwner) return;
-    setBusy(true);
-    try {
-      await api('/tenants/me/cancel-subscription', { method: 'DELETE' });
-      await refreshTenant();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Renewal restored', 'Your subscription will renew as usual.');
-    } catch (e: any) {
-      toast.show(e?.message || 'Could not resume. Please try again.');
-    } finally { setBusy(false); }
-  };
+    Alert.alert(
+      'Downgrade to Starter?',
+      'Your plan will change to Starter at the next renewal. You keep Growth benefits until then. Extra branches/users beyond Starter limits will need to be removed before the change takes effect.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Schedule Downgrade', style: 'destructive', onPress: async () => {
+          setBusy('downgrade');
+          try { await tenantApi.downgrade(); await load(true); Alert.alert('Scheduled', 'Downgrade to Starter is scheduled for the next renewal.'); }
+          catch (e: any) { Alert.alert('Failed', e.message); }
+          finally { setBusy(null); }
+        }},
+      ]
+    );
+  }, [isOwner, load]);
+
+  const doCancelDowngrade = useCallback(async () => {
+    setBusy('cancel-downgrade');
+    try { await tenantApi.cancelDowngrade(); await load(true); Alert.alert('Cancelled', 'Downgrade cancelled.'); }
+    catch (e: any) { Alert.alert('Failed', e.message); }
+    finally { setBusy(null); }
+  }, [load]);
+
+  const doCancel = useCallback(() => {
+    if (!isOwner) return;
+    Alert.alert(
+      'Cancel subscription?',
+      'You will keep access until the end of the current billing period. You can resume anytime before then.',
+      [
+        { text: 'Keep subscription', style: 'cancel' },
+        { text: 'Cancel subscription', style: 'destructive', onPress: async () => {
+          setBusy('cancel');
+          try { await tenantApi.cancelSubscription(); await refreshTenant(); await load(true); }
+          catch (e: any) { Alert.alert('Failed', e.message); }
+          finally { setBusy(null); }
+        }},
+      ]
+    );
+  }, [isOwner, refreshTenant, load]);
+
+  const doResume = useCallback(async () => {
+    setBusy('resume');
+    try { await tenantApi.resumeSubscription(); await refreshTenant(); await load(true); }
+    catch (e: any) { Alert.alert('Failed', e.message); }
+    finally { setBusy(null); }
+  }, [refreshTenant, load]);
+
+  // ============ RENDER ============
+  if (loading) {
+    return (
+      <View style={styles.root}>
+        <Header router={router} />
+        <View style={styles.center}><ActivityIndicator color={colors.brandPrimary} /></View>
+      </View>
+    );
+  }
+
+  if (!ent) {
+    return (
+      <View style={styles.root}>
+        <Header router={router} />
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline-outline" size={48} color={colors.onSurfaceTertiary} />
+          <Text style={styles.emptyTitle}>Couldn{"'"}t load subscription</Text>
+          <TouchableOpacity onPress={() => load(true)} style={[styles.primaryBtn, { marginTop: spacing.md, paddingHorizontal: 24 }]}>
+            <Text style={styles.primaryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  const planName = titlecase(ent.plan || ent.plan_tier || 'Starter');
+  const interval = ent.billing_interval === 'yearly' ? 'Yearly' : 'Monthly';
+  const daysLeft = ent.subscription?.days_left ?? 0;
+  const isTrial = (ent.subscription?.subscription_plan || '').toLowerCase() === 'trial';
+  const cancellationPending = !!ent.subscription?.cancellation_pending;
+  const scheduledDowngrade = ent.scheduled_plan_change?.tier === 'starter';
+
+  const staffUsed = ent.staff_used ?? 0;
+  const staffLimit = ent.effective_user_limit ?? ent.base_user_limit ?? 0;
+  const branchUsed = ent.branch_count ?? 0;
+  const branchLimit = ent.effective_branch_limit ?? ent.base_branch_limit ?? 0;
+  const staffPct = staffLimit > 0 ? Math.min(100, (staffUsed / staffLimit) * 100) : 0;
+  const branchPct = branchLimit > 0 ? Math.min(100, (branchUsed / branchLimit) * 100) : 0;
+  const staffLeft = Math.max(0, staffLimit - staffUsed);
+  const branchLeft = Math.max(0, branchLimit - branchUsed);
+
+  const canUpgrade = (ent.plan_tier || ent.plan) === 'starter';
+  const canDowngrade = (ent.plan_tier || ent.plan) === 'growth' && !scheduledDowngrade;
+
+  const addonMonthlyInr = Math.round(((ent.extra_branch_price?.monthly ?? 88800) / 100));
+  const addonYearlyInr = Math.round(((ent.extra_branch_price?.yearly ?? 888800) / 100));
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={styles.root}>
+      <Header router={router} />
       <ScrollView
-        contentContainerStyle={styles.container}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brandPrimary} />}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brandPrimary} />}
       >
-        <View style={styles.headerRow}>
-          {isOwner && (
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} testID="back-btn">
-              <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
-            </TouchableOpacity>
-          )}
-          <Text style={styles.headerTitle}>Subscription</Text>
-          <View style={{ width: 32 }} />
+        <View style={styles.brandRow}>
+          <Image source={require('../assets/images/parlourpilot-logo.png')} style={{ width: 44, height: 44 }} contentFit="contain" />
+          <Text style={styles.brandName}>{businessName}</Text>
         </View>
 
-        <Image
-          source={require('../assets/images/parlourpilot-logo.png')}
-          style={styles.logo}
-          contentFit="contain"
-        />
-        {tenant && <Text style={styles.subtitle}>{tenant.business_name}</Text>}
-
-        {/* ==== Redesigned Current Plan panel ==== */}
-        <View style={styles.planCard} testID="current-plan-card">
-          <View style={styles.planHeader}>
+        {/* ===== Dark plan card ===== */}
+        <View style={styles.planCard} testID="plan-card">
+          <View style={styles.planHead}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.planEyebrow}>CURRENT PLAN</Text>
-              <Text style={styles.planTitle} testID="plan-tier-name">{planTierLabel}</Text>
-            </View>
-            <View style={[styles.statusPill, { backgroundColor: `${uiStatusColor}18`, borderColor: uiStatusColor }]}>
-              <Ionicons
-                name={uiStatus === 'active' ? 'shield-checkmark' : uiStatus === 'cancelled_pending' ? 'time-outline' : uiStatus === 'trialing' ? 'flash-outline' : 'alert-circle'}
-                size={14} color={uiStatusColor}
-              />
-              <Text style={[styles.statusText, { color: uiStatusColor }]} testID="subscription-status-pill">{uiStatusText}</Text>
-            </View>
-          </View>
-
-          <View style={styles.grid} testID="plan-detail-grid">
-            <View style={styles.gridCell}>
-              <Text style={styles.gridLabel}>Plan</Text>
-              <Text style={styles.gridValue}>{planTierLabel}</Text>
-            </View>
-            <View style={styles.gridCell}>
-              <Text style={styles.gridLabel}>Billing cycle</Text>
-              <Text style={styles.gridValue}>{billingCycleLabel}</Text>
-            </View>
-            <View style={styles.gridCell}>
-              <Text style={styles.gridLabel}>{expiryLabel}</Text>
-              <Text style={styles.gridValue}>{endDateFmt}</Text>
-            </View>
-            <View style={styles.gridCell}>
-              <Text style={styles.gridLabel}>Days remaining</Text>
-              <Text style={[styles.gridValue, { color: daysColor }]}>
-                {daysLeft === null ? '—' : `${daysLeft} day${daysLeft === 1 ? '' : 's'}`}
-              </Text>
+              <Text style={styles.planLabel}>Current Plan</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <Text style={styles.planName}>{planName}</Text>
+                <View style={[styles.statusPill, { backgroundColor: (ent.status === 'active' || isTrial) ? '#B7E4C7' : '#F5D0D0' }]}>
+                  <Text style={[styles.statusPillText, { color: (ent.status === 'active' || isTrial) ? '#166534' : '#8A1A1A' }]}>
+                    {isTrial ? 'Trial' : titlecase(ent.status || 'inactive')}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.planSubline}>{interval} billing · {staffLimit} user accounts · {branchLimit} branch{branchLimit === 1 ? '' : 'es'}</Text>
             </View>
           </View>
 
-          {nextPaymentAmount && !cancellationPending && (
-            <View style={styles.nextPayment} testID="next-payment-line">
-              <Ionicons name="card-outline" size={16} color={colors.onSurfaceSecondary} />
-              <Text style={styles.nextPaymentText}>
-                Next payment: <Text style={styles.bold}>{`${subSym}${Number(nextPaymentAmount.totalDisplay || 0).toLocaleString(subLocale)}`}</Text>
-                <Text style={styles.nextPaymentSub}>
-                  {`  (${subSym}${Number(nextPaymentAmount.pricePerBranchDisplay || 0).toLocaleString(subLocale)} × ${nextPaymentAmount.branches} branch${nextPaymentAmount.branches === 1 ? '' : 'es'})`}
-                </Text>
-              </Text>
-              {!isSubINR && (
-                <Text style={styles.disclosureNote}>  · charged in INR</Text>
+          {/* Actions */}
+          <View style={styles.planActions}>
+            {isOwner && (
+              <TouchableOpacity
+                onPress={doRenew}
+                disabled={!!busy}
+                style={[styles.planActionBtn, styles.planActionPrimary]}
+                testID="renew-btn"
+              >
+                {busy === 'renew'
+                  ? <ActivityIndicator size="small" color="#3D2100" />
+                  : <>
+                      <Ionicons name="card-outline" size={14} color="#3D2100" />
+                      <Text style={styles.planActionPrimaryText}>Pay {fmtINR(ent.renewal?.total_inr)} with Razorpay</Text>
+                    </>}
+              </TouchableOpacity>
+            )}
+            {isOwner && canUpgrade && (
+              <TouchableOpacity onPress={doUpgrade} disabled={!!busy} style={[styles.planActionBtn, styles.planActionAmber]} testID="upgrade-btn">
+                {busy === 'upgrade' ? <ActivityIndicator size="small" color="#3D2100" /> : <>
+                  <Ionicons name="rocket-outline" size={14} color="#3D2100" />
+                  <Text style={styles.planActionAmberText}>Upgrade to Growth</Text>
+                </>}
+              </TouchableOpacity>
+            )}
+            {isOwner && !cancellationPending && (
+              <TouchableOpacity onPress={doCancel} disabled={!!busy} style={[styles.planActionBtn, styles.planActionGhost]} testID="cancel-btn">
+                <Ionicons name="close-circle-outline" size={14} color="#F5D5A0" />
+                <Text style={styles.planActionGhostText}>Cancel subscription</Text>
+              </TouchableOpacity>
+            )}
+            {isOwner && cancellationPending && (
+              <TouchableOpacity onPress={doResume} disabled={!!busy} style={[styles.planActionBtn, styles.planActionAmber]}>
+                <Ionicons name="refresh-outline" size={14} color="#3D2100" />
+                <Text style={styles.planActionAmberText}>Resume subscription</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* KPIs */}
+          <View style={styles.kpiRow}>
+            <View style={styles.kpiCell}><Text style={styles.kpiLabel}>PLAN</Text><Text style={styles.kpiValue}>{planName}</Text></View>
+            <View style={styles.kpiCell}><Text style={styles.kpiLabel}>BILLING CYCLE</Text><Text style={styles.kpiValue}>{interval}</Text></View>
+          </View>
+          <View style={styles.kpiRow}>
+            <View style={styles.kpiCell}><Text style={styles.kpiLabel}>RENEWS ON</Text><Text style={styles.kpiValue}>{fmtDate(ent.subscription?.subscription_end_date)}</Text></View>
+            <View style={styles.kpiCell}><Text style={styles.kpiLabel}>DAYS REMAINING</Text><Text style={styles.kpiValue}>{daysLeft} days</Text></View>
+          </View>
+
+          {/* Renewal breakdown */}
+          {ent.renewal && (
+            <View style={styles.renewalBox}>
+              <Text style={styles.renewalLabel}>NEXT PAYMENT</Text>
+              <View style={styles.renewalRow}>
+                <Text style={styles.renewalItem}>{planName} plan ({interval})</Text>
+                <Text style={styles.renewalAmt}>{fmtINR(ent.renewal.base_inr)}</Text>
+              </View>
+              {(ent.renewal.addon_qty ?? 0) > 0 && (
+                <View style={styles.renewalRow}>
+                  <Text style={styles.renewalItem}>Additional Branch × {ent.renewal.addon_qty}</Text>
+                  <Text style={styles.renewalAmt}>{fmtINR(ent.renewal.addon_total_inr)}</Text>
+                </View>
               )}
+              <View style={[styles.renewalRow, styles.renewalTotalRow]}>
+                <Text style={styles.renewalTotalLabel}>Total /{interval === 'Yearly' ? 'yr' : 'mo'}</Text>
+                <Text style={styles.renewalTotalAmt}>{fmtINR(ent.renewal.total_inr)}</Text>
+              </View>
             </View>
           )}
 
-          {cancellationPending && (
-            <View style={styles.cancelNotice} testID="cancel-pending-notice">
-              <Ionicons name="time-outline" size={14} color="#A05B00" />
-              <Text style={styles.cancelNoticeText}>
-                Plan set to cancel — access continues until <Text style={styles.bold}>{endDateFmt}</Text>.
-              </Text>
-            </View>
-          )}
+          <View style={styles.disclaimer}>
+            <Ionicons name="information-circle-outline" size={14} color="#F5D5A0" />
+            <Text style={styles.disclaimerText}>
+              All subscription prices are charged in INR. International card issuers or banks may apply currency conversion rates and applicable fees.
+            </Text>
+          </View>
+        </View>
 
-          {/* Buttons */}
-          {isOwner && (
-            <View style={styles.actionsCol}>
-              {(isActiveOrTrial || isExpired) && !cancellationPending && (
-                <TouchableOpacity style={styles.btnPrimary} onPress={openRenew} testID="btn-renew-subscription">
-                  <Ionicons name={status === 'trialing' ? 'flash-outline' : 'refresh-outline'} size={18} color="#fff" />
-                  <Text style={styles.btnPrimaryText}>{status === 'trialing' ? 'Activate plan' : 'Renew'}</Text>
-                </TouchableOpacity>
-              )}
-              {cancellationPending && (
-                <TouchableOpacity style={styles.btnPrimary} onPress={resumeSubscription} disabled={busy} testID="btn-resume-subscription">
-                  {busy ? <ActivityIndicator color="#fff" /> : (
-                    <>
-                      <Ionicons name="refresh-circle-outline" size={18} color="#fff" />
-                      <Text style={styles.btnPrimaryText}>Resume subscription</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-              {entitlements?.can_upgrade && !cancellationPending && (
-                <TouchableOpacity style={styles.btnSecondary} onPress={openUpgrade} testID="btn-upgrade-growth">
-                  <Ionicons name="trending-up-outline" size={16} color={colors.brandPrimary} />
-                  <Text style={styles.btnSecondaryText}>Upgrade to Growth</Text>
-                </TouchableOpacity>
-              )}
-              {isActiveOrTrial && !cancellationPending && (
-                <TouchableOpacity style={styles.btnGhostDanger} onPress={() => setCancelOpen(true)} testID="btn-cancel-subscription">
-                  <Ionicons name="close-circle-outline" size={15} color={colors.error} />
-                  <Text style={styles.btnGhostDangerText}>Cancel subscription</Text>
-                </TouchableOpacity>
-              )}
+        {cancellationPending && (
+          <View style={[styles.warnBanner, { marginTop: spacing.md }]}>
+            <Ionicons name="alert-circle-outline" size={16} color="#8A1A1A" />
+            <Text style={styles.warnText}>Cancellation scheduled — active until {fmtDate(ent.subscription?.subscription_end_date)}.</Text>
+          </View>
+        )}
+        {scheduledDowngrade && (
+          <View style={[styles.warnBanner, { marginTop: spacing.md }]}>
+            <Ionicons name="arrow-down-circle-outline" size={16} color="#8A1A1A" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.warnText}>Scheduled downgrade to Starter on renewal.</Text>
+              <TouchableOpacity onPress={doCancelDowngrade}><Text style={{ color: colors.brandPrimary, fontWeight: '700', marginTop: 4 }}>Cancel downgrade</Text></TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* ===== Included with your plan ===== */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Included with your {planName} plan</Text>
+          <View style={styles.featureGrid}>
+            {ent.all_features && <FeatureRow icon="checkmark-circle" label="All features included" />}
+            {ent.web_access && <FeatureRow icon="checkmark-circle" label="Web access" />}
+            {ent.mobile_access && <FeatureRow icon="checkmark-circle" label="Mobile access" />}
+            <FeatureRow icon="checkmark-circle" label={`${staffLimit} user account${staffLimit === 1 ? '' : 's'} (owner included)`} />
+            <FeatureRow icon="checkmark-circle" label={`${branchLimit} branch${branchLimit === 1 ? '' : 'es'}`} />
+          </View>
+        </View>
+
+        {/* ===== Usage ===== */}
+        <View style={styles.card}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={styles.cardTitle}>Your plan usage</Text>
+            <View style={styles.planTag}><Text style={styles.planTagText}>{planName}</Text></View>
+          </View>
+          <Text style={styles.cardSubtitle}>Track your user accounts and branch capacity at a glance.</Text>
+
+          <View style={styles.usageBlock}>
+            <View style={styles.usageHead}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="people-outline" size={14} color={colors.onSurfaceSecondary} />
+                <Text style={styles.usageTitle}>User accounts (owner included)</Text>
+              </View>
+              <Text style={styles.usageCount}>{staffUsed}<Text style={styles.usageMax}> / {staffLimit}</Text></Text>
+            </View>
+            <View style={styles.bar}><View style={[styles.barFill, { width: `${staffPct}%`, backgroundColor: staffPct >= 100 ? colors.error : colors.brandPrimary }]} /></View>
+            {staffPct >= 100 && <View style={styles.limitPill}><Text style={styles.limitPillText}>User limit reached</Text></View>}
+            {staffPct < 100 && staffLeft <= 1 && <Text style={styles.usageHint}>{staffLeft} seat{staffLeft === 1 ? '' : 's'} left</Text>}
+          </View>
+
+          <View style={styles.usageBlock}>
+            <View style={styles.usageHead}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="business-outline" size={14} color={colors.onSurfaceSecondary} />
+                <Text style={styles.usageTitle}>Branches</Text>
+              </View>
+              <Text style={styles.usageCount}>{branchUsed}<Text style={styles.usageMax}> / {branchLimit}</Text></Text>
+            </View>
+            <View style={styles.bar}><View style={[styles.barFill, { width: `${branchPct}%`, backgroundColor: branchPct >= 100 ? colors.error : colors.brandPrimary }]} /></View>
+            {branchPct >= 100 && <View style={styles.limitPill}><Text style={styles.limitPillText}>Branch limit reached</Text></View>}
+            {branchPct < 100 && branchLeft <= 1 && <Text style={styles.usageHint}>{branchLeft} branch{branchLeft === 1 ? '' : 'es'} left</Text>}
+          </View>
+
+          {(staffPct >= 100 || branchPct >= 100) && canUpgrade && (
+            <View style={styles.growthNudge}>
+              <Ionicons name="trending-up-outline" size={16} color={colors.brandPrimary} />
+              <Text style={styles.growthNudgeText}>
+                Growing fast? <Text style={{ fontWeight: '800' }}>Growth</Text> unlocks 30 user accounts and 3 branches — and yearly billing saves you roughly two months every year.
+              </Text>
             </View>
           )}
         </View>
 
-        {/* ==== Usage hub ==== */}
-        {entitlements && (
-          <View style={styles.usageCard} testID="usage-card">
-            <Text style={styles.usageTitle}>Usage</Text>
-            <View style={styles.usageRow}>
+        {/* ===== Additional Branch add-on ===== */}
+        {isOwner && (
+          <View style={[styles.card, !ent.addon_eligible && { opacity: 0.65 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+              <View style={styles.addonIconBox}><Ionicons name={ent.addon_eligible ? 'add-circle-outline' : 'lock-closed'} size={22} color={colors.brandPrimary} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.usageLabel}>Staff</Text>
-                <Text style={styles.usageValue}>
-                  <Text style={styles.usageBig}>{entitlements.staff_count ?? 0}</Text>
-                  {typeof entitlements.staff_pool === 'number' && (
-                    <Text style={styles.usageMuted}>{`  / ${entitlements.staff_pool} pool`}</Text>
-                  )}
-                </Text>
+                <Text style={styles.cardTitle}>Additional Branch</Text>
+                <Text style={styles.cardSubtitle}>Each add-on increases your capacity by <Text style={{ fontWeight: '800' }}>1 branch</Text> and <Text style={{ fontWeight: '800' }}>10 user accounts</Text>.</Text>
+                <Text style={styles.addonPrice}>{fmtINR(addonMonthlyInr)}/mo · {fmtINR(addonYearlyInr)}/yr</Text>
+                {!ent.addon_eligible && <Text style={styles.addonLocked}>Available once you have an active paid subscription.</Text>}
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.usageLabel}>Branches</Text>
-                <Text style={styles.usageValue}>
-                  <Text style={styles.usageBig}>{entitlements.branch_count ?? 0}</Text>
-                  {typeof entitlements.branches_allowed === 'number' && (
-                    <Text style={styles.usageMuted}>{`  / ${entitlements.branches_allowed} allowed`}</Text>
-                  )}
-                </Text>
-              </View>
+              {ent.addon_eligible ? (
+                <TouchableOpacity onPress={doAddBranch} disabled={!!busy} style={styles.addonBtn} testID="add-branch-btn">
+                  {busy === 'branch' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.addonBtnText}>Add Branch</Text>}
+                </TouchableOpacity>
+              ) : (
+                <View style={[styles.addonBtn, { opacity: 0.4 }]}><Text style={styles.addonBtnText}>Locked</Text></View>
+              )}
             </View>
           </View>
         )}
 
-        {/* ==== Billing history ==== */}
-        {billingHistory.length > 0 && (
-          <View style={styles.usageCard} testID="billing-history-card">
-            <Text style={styles.usageTitle}>Billing history</Text>
-            {billingHistory.slice(0, 8).map((row, i) => {
-              const rowSym = ((row.currency || 'INR').toUpperCase() === 'INR') ? '₹' : '$';
-              const rowLocale = ((row.currency || 'INR').toUpperCase() === 'INR') ? 'en-IN' : 'en-US';
-              const displayAmt = (row.display_amount != null && row.currency && row.currency !== 'INR')
-                ? row.display_amount
-                : row.amount_inr;
-              const isNonINR = (row.currency || 'INR').toUpperCase() !== 'INR';
-              return (
-                <View key={row.id || i} style={styles.billRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.billRowTitle}>
-                      {row.description || row.plan || 'Subscription'}
-                    </Text>
-                    <Text style={styles.billRowDate}>
-                      {row.paid_at ? new Date(row.paid_at).toLocaleDateString() : '—'}
-                      {row.payment_id ? `  ·  ${row.payment_id.slice(0, 12)}…` : ''}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.billRowAmt}>
-                      {rowSym}{Number(displayAmt || 0).toLocaleString(rowLocale)}
-                    </Text>
-                    {isNonINR && (
-                      <Text style={styles.billRowCurrencyNote}>Charged in INR</Text>
-                    )}
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
-
-        {/* ==== Support / Sign out ==== */}
-        <TouchableOpacity style={styles.btnSecondary} onPress={openSupport} testID="btn-contact-support">
-          <Ionicons name="mail-outline" size={16} color={colors.brandPrimary} />
-          <Text style={styles.btnSecondaryText}>Contact support</Text>
-        </TouchableOpacity>
-        <Text style={styles.supportHint} selectable>{SUPPORT_EMAIL}</Text>
-
-        {isExpired && (
-          <TouchableOpacity onPress={logout} style={styles.logoutLink}>
-            <Text style={styles.logoutText}>Sign out</Text>
+        {/* ===== Downgrade action (Growth-only) ===== */}
+        {isOwner && canDowngrade && (
+          <TouchableOpacity onPress={doDowngrade} disabled={!!busy} style={styles.textLinkBtn} testID="downgrade-btn">
+            <Ionicons name="arrow-down-outline" size={14} color={colors.onSurfaceTertiary} />
+            <Text style={styles.textLinkBtnText}>Downgrade to Starter at next renewal</Text>
           </TouchableOpacity>
         )}
-      </ScrollView>
 
-      {/* Snackbar */}
-      {toast.msg && (
-        <View style={styles.toast} pointerEvents="box-none">
-          <View style={styles.toastBubble} testID="subscription-toast">
-            <Ionicons name="alert-circle-outline" size={16} color="#fff" />
-            <Text style={styles.toastText}>{toast.msg}</Text>
-            <TouchableOpacity onPress={toast.hide}><Ionicons name="close" size={16} color="#fff" /></TouchableOpacity>
+        {/* ===== Billing history ===== */}
+        <View style={styles.card}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="receipt-outline" size={16} color={colors.brandPrimary} />
+            <Text style={styles.cardTitle}>Billing history</Text>
           </View>
+          <Text style={styles.cardSubtitle}>Your recent plan payments — proof of every upgrade.</Text>
+          {history.length === 0 ? (
+            <View style={{ paddingVertical: spacing.lg, alignItems: 'center' }}>
+              <Ionicons name="document-outline" size={32} color={colors.onSurfaceTertiary} />
+              <Text style={styles.emptyHint}>No payments yet.</Text>
+            </View>
+          ) : history.map(row => (
+            <View key={row.id} style={styles.historyRow}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                  <Text style={styles.historyTitle}>{row.label || row.type || 'Payment'}</Text>
+                  {row.plan && <View style={styles.tinyTag}><Text style={styles.tinyTagText}>{row.plan}</Text></View>}
+                </View>
+                <Text style={styles.historyMeta}>Payment confirmed · {fmtDate(row.created_at)}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.historyAmt}>{fmtINR(row.amount_inr)}</Text>
+                <Text style={styles.historyINR}>Charged in INR</Text>
+                <TouchableOpacity onPress={() => shareReceipt(businessName, row)} style={styles.receiptBtn}>
+                  <Ionicons name="download-outline" size={12} color={colors.brandPrimary} />
+                  <Text style={styles.receiptBtnText}>Receipt</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
         </View>
-      )}
 
-      {/* Cancellation confirmation modal */}
-      <Modal visible={cancelOpen} transparent animationType="fade" onRequestClose={() => setCancelOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => !busy && setCancelOpen(false)}>
-          <Pressable style={styles.dialog} onPress={() => {}}>
-            <View style={styles.dialogIconWrap}>
-              <Ionicons name="alert-circle" size={32} color={colors.warning} />
-            </View>
-            <Text style={styles.dialogTitle}>Cancel Subscription?</Text>
-            <Text style={styles.dialogBody}>
-              By cancelling, you confirm you will not renew your plan. You keep{'\n'}
-              <Text style={styles.bold}>full access to all features</Text> until{'\n'}
-              <Text style={styles.dialogDate}>{endDateFmt}</Text>.
-            </Text>
-            <Text style={styles.dialogNote}>All your data (bills, customers, staff, reports) remains preserved. You can renew any time.</Text>
-            <View style={styles.dialogActions}>
-              <TouchableOpacity style={styles.dialogBtnGhost} onPress={() => setCancelOpen(false)} disabled={busy}>
-                <Text style={styles.dialogBtnGhostText}>Keep subscription</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dialogBtnDanger} onPress={confirmCancel} disabled={busy} testID="btn-cancel-confirm">
-                {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.dialogBtnDangerText}>Yes, cancel</Text>}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        {/* Contact support */}
+        <TouchableOpacity onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)} style={styles.supportBtn}>
+          <Ionicons name="mail-outline" size={16} color={colors.brandPrimary} />
+          <Text style={styles.supportBtnText}>Contact support</Text>
+        </TouchableOpacity>
+        <Text style={styles.supportEmailText}>{SUPPORT_EMAIL}</Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+// ------------- Sub components ---------------------------------------------
+function Header({ router }: { router: any }) {
+  return (
+    <SafeAreaView edges={['top']} style={styles.headerBar}>
+      <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
+      </TouchableOpacity>
+      <Text style={styles.headerTitle}>Subscription & Billing</Text>
+      <View style={{ width: 32 }} />
     </SafeAreaView>
   );
 }
 
+function FeatureRow({ icon, label }: { icon: keyof typeof Ionicons.glyphMap; label: string }) {
+  return (
+    <View style={styles.featureRow}>
+      <Ionicons name={icon} size={16} color={colors.success} />
+      <Text style={styles.featureLabel}>{label}</Text>
+    </View>
+  );
+}
+
+// Simple text-based receipt share (server-generated PDFs come later).
+async function shareReceipt(businessName: string, row: HistoryRow) {
+  const body = [
+    `${businessName} — Payment Receipt`,
+    '',
+    `Date: ${new Date(row.created_at || '').toLocaleString('en-IN')}`,
+    `Type: ${row.label || row.type || 'Payment'}`,
+    row.plan ? `Plan: ${row.plan}` : '',
+    row.reference ? `Reference: ${row.reference}` : '',
+    `Amount: ₹${Number(row.amount_inr ?? 0).toLocaleString('en-IN')} (charged in INR)`,
+    `Status: ${row.status || 'success'}`,
+    '',
+    'This is a payment receipt (not a GST invoice).',
+  ].filter(Boolean).join('\n');
+  try {
+    if (Platform.OS === 'web') {
+      Alert.alert('Receipt', body);
+    } else {
+      await Share.share({ message: body, title: 'ParlourPilot receipt' });
+    }
+  } catch {}
+}
+
+// ------------- Styles ------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { padding: spacing.lg, alignItems: 'center', gap: spacing.md },
-  headerRow: { flexDirection: 'row', alignItems: 'center', width: '100%' },
-  backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { flex: 1, fontSize: 18, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
-  logo: { width: 60, height: 60 },
-  subtitle: { fontSize: 13, color: colors.onSurfaceTertiary, marginTop: -6, fontWeight: '600' },
+  root: { flex: 1, backgroundColor: colors.surface },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
 
-  // Plan card
-  planCard: {
-    width: '100%', maxWidth: 560, backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
-    padding: spacing.lg, marginTop: spacing.md, gap: spacing.md, ...shadows.card,
+  headerBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  planHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  planEyebrow: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.8 },
-  planTitle: { fontSize: 24, fontWeight: '900', color: colors.brandPrimary, marginTop: 2 },
-  statusPill: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
-  statusText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },
+  backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 16, fontWeight: '800', color: colors.onSurface },
 
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  gridCell: { width: '48%', backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
-  gridLabel: { fontSize: 10, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
-  gridValue: { fontSize: 15, fontWeight: '800', color: colors.onSurface, marginTop: 4 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: spacing.md },
+  brandName: { fontSize: 18, fontWeight: '800', color: colors.onSurface },
 
-  nextPayment: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
-  nextPaymentText: { fontSize: 13, color: colors.onSurfaceSecondary, flexShrink: 1 },
-  nextPaymentSub: { fontSize: 11, color: colors.onSurfaceTertiary },
-  disclosureNote: { fontSize: 10, color: colors.onSurfaceTertiary, fontStyle: 'italic', marginLeft: 4 },
+  // Dark plan card
+  planCard: {
+    backgroundColor: '#161616', borderRadius: 18, padding: spacing.lg, ...shadows.card,
+    borderWidth: 1, borderColor: '#2A2A2A',
+  },
+  planHead: { marginBottom: spacing.md },
+  planLabel: { fontSize: 10, fontWeight: '800', color: '#8A8478', letterSpacing: 1 },
+  planName: { fontSize: 28, fontWeight: '900', color: '#F5D5A0' },
+  planSubline: { color: '#B8B0A0', fontSize: 12, marginTop: 4 },
+  statusPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  statusPillText: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
 
-  billRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  billRowTitle: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
-  billRowDate: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
-  billRowAmt: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
-  billRowCurrencyNote: { fontSize: 10, color: colors.onSurfaceTertiary, fontStyle: 'italic', marginTop: 2 },
+  planActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
+  planActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
+  planActionPrimary: { backgroundColor: '#F5D5A0', flex: 1, minWidth: '48%' },
+  planActionPrimaryText: { color: '#3D2100', fontWeight: '800', fontSize: 12 },
+  planActionAmber: { backgroundColor: '#F5D5A0' },
+  planActionAmberText: { color: '#3D2100', fontWeight: '800', fontSize: 12 },
+  planActionGhost: { borderWidth: 1, borderColor: '#3A3020', backgroundColor: 'transparent' },
+  planActionGhostText: { color: '#F5D5A0', fontWeight: '700', fontSize: 12 },
 
-  cancelNotice: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FDF3E4', borderColor: '#F0DCA6', borderWidth: 1, borderRadius: radius.sm, padding: spacing.sm },
-  cancelNoticeText: { fontSize: 12, color: '#4B3A16', flex: 1, lineHeight: 16 },
+  kpiRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  kpiCell: { flex: 1, backgroundColor: '#212121', padding: spacing.sm, borderRadius: 10 },
+  kpiLabel: { fontSize: 9, color: '#8A8478', fontWeight: '800', letterSpacing: 1 },
+  kpiValue: { fontSize: 14, color: '#F5F3EF', fontWeight: '800', marginTop: 2 },
 
-  actionsCol: { gap: spacing.sm, marginTop: 4 },
-  btnPrimary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: colors.brandPrimary, borderRadius: radius.md, paddingVertical: 14, ...shadows.sm },
-  btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  btnSecondary: { width: '100%', maxWidth: 560, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderColor: colors.brandPrimary, borderWidth: 1, borderRadius: radius.md, paddingVertical: 12 },
-  btnSecondaryText: { color: colors.brandPrimary, fontWeight: '700', fontSize: 14 },
-  btnGhostDanger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10 },
-  btnGhostDangerText: { color: colors.error, fontWeight: '600', fontSize: 13 },
+  renewalBox: { backgroundColor: '#212121', borderRadius: 10, padding: spacing.md, marginTop: 8 },
+  renewalLabel: { fontSize: 9, color: '#8A8478', fontWeight: '800', letterSpacing: 1, marginBottom: 6 },
+  renewalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  renewalItem: { color: '#B8B0A0', fontSize: 12 },
+  renewalAmt: { color: '#F5F3EF', fontSize: 12, fontWeight: '700' },
+  renewalTotalRow: { borderTopWidth: 1, borderTopColor: '#333', paddingTop: 6, marginTop: 4 },
+  renewalTotalLabel: { color: '#F5D5A0', fontSize: 13, fontWeight: '800' },
+  renewalTotalAmt: { color: '#F5D5A0', fontSize: 15, fontWeight: '900' },
 
-  // Usage
-  usageCard: { width: '100%', maxWidth: 560, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.sm },
-  usageTitle: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
-  usageRow: { flexDirection: 'row', gap: spacing.md },
-  usageLabel: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
-  usageValue: { marginTop: 4 },
-  usageBig: { fontSize: 22, fontWeight: '900', color: colors.onSurface },
-  usageMuted: { fontSize: 11, color: colors.onSurfaceTertiary, fontWeight: '600' },
+  disclaimer: { flexDirection: 'row', gap: 6, marginTop: 10, alignItems: 'flex-start', backgroundColor: '#212121', padding: 10, borderRadius: 8 },
+  disclaimerText: { flex: 1, color: '#F5D5A0', fontSize: 10, lineHeight: 14 },
 
-  bold: { fontWeight: '800', color: colors.onSurface },
-  supportHint: { fontSize: 11, color: colors.onSurfaceTertiary, textAlign: 'center' },
-  logoutLink: { marginTop: spacing.lg },
-  logoutText: { color: colors.onSurfaceTertiary, fontSize: 14, fontWeight: '600' },
+  warnBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FDECEC', borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: '#F5B6B6' },
+  warnText: { color: '#8A1A1A', fontSize: 12, fontWeight: '600', flex: 1 },
 
-  // Toast
-  toast: { position: 'absolute', left: 0, right: 0, bottom: spacing.xl, alignItems: 'center', paddingHorizontal: spacing.lg },
-  toastBubble: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#1f1e1c', borderRadius: radius.pill, paddingHorizontal: 16, paddingVertical: 12, maxWidth: 560, width: '100%' },
-  toastText: { color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 },
+  card: { backgroundColor: '#fff', borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.md, borderWidth: 1, borderColor: colors.border },
+  cardTitle: { fontSize: 15, fontWeight: '800', color: colors.onSurface },
+  cardSubtitle: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 4 },
 
-  // Modal
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  dialog: { width: '100%', maxWidth: 440, backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.xl, alignItems: 'center', gap: spacing.md, ...shadows.strong } as any,
-  dialogIconWrap: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#FFF6E5', alignItems: 'center', justifyContent: 'center' },
-  dialogTitle: { fontSize: 18, fontWeight: '800', color: colors.onSurface, textAlign: 'center' },
-  dialogBody: { fontSize: 14, color: colors.onSurfaceSecondary, lineHeight: 20, textAlign: 'center' },
-  dialogDate: { fontWeight: '900', color: colors.brandPrimary, fontSize: 15 },
-  dialogNote: { fontSize: 12, color: colors.onSurfaceTertiary, textAlign: 'center', lineHeight: 16 },
-  dialogActions: { flexDirection: 'row', gap: spacing.sm, width: '100%', marginTop: spacing.sm },
-  dialogBtnGhost: { flex: 1, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
-  dialogBtnGhostText: { color: colors.onSurface, fontWeight: '700', fontSize: 14 },
-  dialogBtnDanger: { flex: 1, paddingVertical: 12, borderRadius: radius.md, backgroundColor: colors.error, alignItems: 'center' },
-  dialogBtnDangerText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  featureGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: spacing.sm },
+  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 6, width: '48%' },
+  featureLabel: { fontSize: 12, color: colors.onSurface, flex: 1 },
+
+  planTag: { backgroundColor: '#FDECC1', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  planTagText: { fontSize: 10, fontWeight: '800', color: '#7A5300' },
+
+  usageBlock: { marginTop: spacing.md },
+  usageHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  usageTitle: { fontSize: 12, color: colors.onSurfaceSecondary, fontWeight: '600' },
+  usageCount: { fontSize: 13, fontWeight: '800', color: colors.onSurface },
+  usageMax: { fontWeight: '600', color: colors.onSurfaceTertiary },
+  usageHint: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 },
+  bar: { height: 6, backgroundColor: '#EFE8DA', borderRadius: 3, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 3 },
+  limitPill: { alignSelf: 'flex-start', marginTop: 6, backgroundColor: '#FDECEC', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  limitPillText: { fontSize: 10, color: '#8A1A1A', fontWeight: '800' },
+
+  growthNudge: { flexDirection: 'row', gap: 6, alignItems: 'flex-start', marginTop: spacing.md, padding: spacing.md, backgroundColor: '#F7F5EE', borderRadius: radius.md },
+  growthNudgeText: { flex: 1, fontSize: 12, color: colors.onSurface, lineHeight: 18 },
+
+  addonIconBox: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brandPrimary + '15' },
+  addonPrice: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 },
+  addonLocked: { fontSize: 11, color: colors.error, marginTop: 4, fontStyle: 'italic' },
+  addonBtn: { backgroundColor: '#F5D5A0', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
+  addonBtnText: { color: '#3D2100', fontWeight: '800', fontSize: 12 },
+
+  textLinkBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, marginTop: spacing.md },
+  textLinkBtnText: { color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
+
+  historyRow: { flexDirection: 'row', paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.divider, gap: 8 },
+  historyTitle: { fontSize: 13, fontWeight: '800', color: colors.onSurface },
+  historyMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  historyAmt: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
+  historyINR: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 1 },
+  tinyTag: { backgroundColor: '#F7F5EE', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999 },
+  tinyTagText: { fontSize: 10, color: colors.onSurfaceSecondary, fontWeight: '700' },
+  receiptBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, borderWidth: 1, borderColor: colors.border, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: '#fff' },
+  receiptBtnText: { color: colors.brandPrimary, fontSize: 11, fontWeight: '700' },
+
+  supportBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: colors.brandPrimary, padding: 14, borderRadius: radius.md, marginTop: spacing.md, backgroundColor: '#fff' },
+  supportBtnText: { color: colors.brandPrimary, fontWeight: '800' },
+  supportEmailText: { textAlign: 'center', color: colors.onSurfaceTertiary, fontSize: 11, marginTop: 6 },
+
+  primaryBtn: { backgroundColor: colors.brandPrimary, paddingVertical: 12, borderRadius: radius.md, alignItems: 'center' },
+  primaryBtnText: { color: '#fff', fontWeight: '800' },
+
+  emptyTitle: { fontSize: 15, fontWeight: '700', color: colors.onSurface, marginTop: 10 },
+  emptyHint: { color: colors.onSurfaceTertiary, marginTop: 6, fontSize: 12 },
 });

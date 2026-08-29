@@ -2393,3 +2393,82 @@ Also two adjacent UI strings were rendering `"undefined pool"` /
 ### User action required
 Re-publish so the Expo Go bundle on the phone picks up the patched
 subscription screen.
+
+---
+
+## Iteration 51 — Subscription screen INR-only rewrite + Signup plan-tier selector
+
+### Scope
+Aligned the mobile Subscription & Billing screen and Signup screen with
+the backend's new authoritative INR-only tier + add-on model.
+
+### Files changed
+- `/app/frontend/app/subscription.tsx` — full rewrite (595 lines)
+- `/app/frontend/app/signup.tsx` — plan-tier selector, dropped USD text
+- `/app/frontend/src/api/client.ts` — billingApi.entitlements added;
+  tenantApi.downgrade / cancelDowngrade / cancelSubscription / resume;
+  removed display_amount / display_currency USD-conversion params
+- `/app/frontend/src/context/AuthContext.tsx` — SignupData.plan_tier
+
+### Data model consumed (verified end-to-end)
+`GET /api/billing/entitlements` — every render reads `plan`, `plan_tier`,
+`status`, `billing_interval`, `base_branch_limit`, `base_user_limit`,
+`effective_*`, `staff_used`, `branch_count`, `renewal.{base_inr,
+addon_qty, addon_unit_inr, addon_total_inr, total_inr}`,
+`extra_branch_price.{monthly,yearly}` (paise → ÷100),
+`addon_eligible`, `subscription.{days_left, subscription_end_date,
+subscription_plan, cancellation_pending}`, `scheduled_plan_change`.
+
+### UI mirrors the web mockup
+- Dark plan card: name + Trial/Active pill + subline (interval · N users
+  · N branches)
+- Action row (Owner-only): Pay ₹{total} with Razorpay · Upgrade to
+  Growth (only when plan_tier==='starter') · Cancel/Resume
+- KPI grid: Plan · Billing Cycle · Renews On · Days Remaining
+- Renewal breakdown: base line + addon line (only when addon_qty>0)
+  + Total /mo|yr
+- INR disclaimer verbatim as spec'd
+- Warning banners for cancellation-pending and scheduled downgrade
+- "Included with your {plan} plan" tick-list
+- Usage bars for user accounts & branches with "N seat/branch left"
+  hints and "limit reached" red pills
+- Additional Branch card: shows Add Branch when addon_eligible; renders
+  a locked/greyed variant with the "Available once you have an active
+  paid subscription" message otherwise
+- Downgrade to Starter link (Growth-only)
+- Billing history with per-row Receipt share (`Share.share` on native,
+  Alert on web; labelled as receipt, not GST invoice)
+
+### Crash-safety
+Every numeric render uses `Number(x ?? 0).toLocaleString('en-IN')`.
+`renewal` and `subscription` objects are read via optional chaining.
+Loading state until `entitlements` resolves; error state with Retry
+when it doesn't. Playwright `pageerror` captured 0 errors across the
+full flow.
+
+### Actions (all Owner-only, Razorpay via web SDK; native falls back to
+hosted URL / support link)
+- Renew → tenants/checkout/order → open Razorpay → tenants/checkout/verify
+- Upgrade to Growth → billing/checkout/order (kind=growth) → verify
+- Add Branch → billing/checkout/order (kind=extra_branch) → verify
+- Downgrade → billing/downgrade
+- Cancel Downgrade → billing/downgrade/cancel
+- Cancel / Resume → tenants/me/subscription/cancel|resume
+
+### Not changed
+- Auth architecture, single JWT login, role/branch model — unchanged
+- Tenant/branch isolation — unchanged
+- Backend contract — unchanged (mobile is pure consumer)
+
+### Verified on preview
+- QA Growth Owner → subscription card shows Growth · Trial, ₹2,499
+  monthly, renews 08 Oct 2026, 39 days remaining, 5/30 users, 4/3
+  branches (grandfathered — shows "Branch limit reached" pill), all
+  features included, Additional Branch add-on visible with Add Branch
+  button, Downgrade link, Billing history row (₹24,999 yearly Growth
+  upgrade with Receipt button)
+- Signup screen shows Starter (₹999/mo · ₹9,999/yr · 1 branch · 10
+  users) and Growth POPULAR (₹2,499/mo · ₹24,999/yr · 3 branches · 30
+  users) as radio-tiles; help text: "All plans include every feature
+  (web + mobile). Prices charged in INR at renewal."
+- No USD text anywhere on either screen

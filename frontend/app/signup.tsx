@@ -27,6 +27,7 @@ export default function SignupScreen() {
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [numBranches, setNumBranches] = useState('1');
+  const [planTier, setPlanTier] = useState<'starter' | 'growth'>('starter');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Per-field errors so we can highlight only what's wrong (red border + msg).
@@ -65,6 +66,7 @@ export default function SignupScreen() {
         phone: sanitizePhone(phone),
         city: city.trim(),
         num_branches: nb,
+        plan_tier: planTier,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(tabs)');
@@ -210,6 +212,40 @@ export default function SignupScreen() {
         </View>
 
         <View style={styles.field}>
+          <Text style={styles.label}>Choose your trial plan *</Text>
+          <View style={styles.planPickerRow}>
+            <TouchableOpacity
+              testID="signup-plan-starter"
+              onPress={() => setPlanTier('starter')}
+              style={[styles.planTile, planTier === 'starter' && styles.planTileActive]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name={planTier === 'starter' ? 'radio-button-on' : 'radio-button-off'} size={18} color={planTier === 'starter' ? colors.brandPrimary : colors.onSurfaceTertiary} />
+                <Text style={styles.planTileName}>Starter</Text>
+              </View>
+              <Text style={styles.planTilePrice}>₹999/mo · ₹9,999/yr</Text>
+              <Text style={styles.planTileMeta}>1 branch · 10 user accounts</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              testID="signup-plan-growth"
+              onPress={() => setPlanTier('growth')}
+              style={[styles.planTile, planTier === 'growth' && styles.planTileActive]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name={planTier === 'growth' ? 'radio-button-on' : 'radio-button-off'} size={18} color={planTier === 'growth' ? colors.brandPrimary : colors.onSurfaceTertiary} />
+                <Text style={styles.planTileName}>Growth</Text>
+                <View style={styles.recBadge}><Text style={styles.recBadgeText}>POPULAR</Text></View>
+              </View>
+              <Text style={styles.planTilePrice}>₹2,499/mo · ₹24,999/yr</Text>
+              <Text style={styles.planTileMeta}>3 branches · 30 user accounts</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 6 }}>
+            All plans include every feature (web + mobile). 15-day free trial with your chosen plan{"'"}s limits. Prices charged in INR at renewal.
+          </Text>
+        </View>
+
+        <View style={styles.field}>
           <Text style={styles.label}>Number of Branches</Text>
           <View style={styles.inputWrap}>
             <Ionicons name="business-outline" size={18} color={colors.onSurfaceTertiary} />
@@ -224,7 +260,7 @@ export default function SignupScreen() {
             />
           </View>
           <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
-            Start with 1 branch (Main). You can add more branches anytime. Starts at ₹999/mo (₹9,999/yr) — or $12/mo ($120/yr) for international salons.
+            Start with 1 branch (Main). Add more anytime via the Additional Branch add-on (₹888/mo · ₹8,888/yr each).
           </Text>
         </View>
 
@@ -328,4 +364,13 @@ const styles = StyleSheet.create({
   termsLink: { color: colors.brandPrimary, fontWeight: '600', textDecorationLine: 'underline' },
   loginLink: { marginTop: spacing.lg, alignItems: 'center' },
   loginLinkText: { fontSize: 14, color: colors.onSurfaceSecondary },
+
+  planPickerRow: { flexDirection: 'row', gap: 8 },
+  planTile: { flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 12 },
+  planTileActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
+  planTileName: { fontSize: 14, fontWeight: '800', color: colors.onSurface },
+  planTilePrice: { fontSize: 12, color: colors.brandPrimary, fontWeight: '700', marginTop: 6 },
+  planTileMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  recBadge: { backgroundColor: '#F5D5A0', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999 },
+  recBadgeText: { color: '#3D2100', fontSize: 9, fontWeight: '800' },
 });

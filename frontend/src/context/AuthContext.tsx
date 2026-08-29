@@ -106,6 +106,7 @@ type SignupData = {
   city?: string;
   num_branches?: number;
   branch_names?: string[];
+  plan_tier?: 'starter' | 'growth';
 };
 
 type AuthCtx = {

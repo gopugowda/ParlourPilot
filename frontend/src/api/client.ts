@@ -223,17 +223,21 @@ export const authApi = {
 };
 
 export const tenantApi = {
-  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string; num_branches?: number; branch_names?: string[] }) =>
+  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string; num_branches?: number; branch_names?: string[]; plan_tier?: 'starter' | 'growth' }) =>
     api('/tenants/signup', { method: 'POST', body: data, auth: false }),
   getMine: () => api('/tenants/me'),
   updateMine: (data: any) => api('/tenants/me', { method: 'PUT', body: data }),
   subscription: () => api('/tenants/me/subscription'),
   plans: () => api('/subscription/plans', { auth: false }),
-  // Razorpay tenant renewal
-  createOrder: (data: { plan: 'monthly' | 'yearly'; display_amount?: number; display_currency?: string }) =>
+  // Razorpay tenant renewal (INR only; server returns amount in paise)
+  createOrder: (data: { plan: 'monthly' | 'yearly' }) =>
     api('/tenants/checkout/order', { method: 'POST', body: data }),
   verifyPayment: (data: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) =>
     api('/tenants/checkout/verify', { method: 'POST', body: data }),
+  downgrade: () => api('/billing/downgrade', { method: 'POST' }),
+  cancelDowngrade: () => api('/billing/downgrade/cancel', { method: 'POST' }),
+  cancelSubscription: () => api('/tenants/me/subscription/cancel', { method: 'POST' }),
+  resumeSubscription: () => api('/tenants/me/subscription/resume', { method: 'POST' }),
 };
 
 export const branchApi = {
@@ -252,13 +256,15 @@ export const branchApi = {
   pricing: () => api('/pricing'),
 };
 
-/** Unified billing endpoint (shared prod backend) — used for Growth upgrade and future add-ons. */
+/** Unified billing endpoint (shared prod backend) — INR-only. */
 export const billingApi = {
-  createOrder: (data: { kind: 'growth' | 'extra_branch'; plan: 'monthly' | 'yearly'; display_currency?: string }) =>
+  entitlements: () => api('/billing/entitlements'),
+  createOrder: (data: { kind: 'growth' | 'extra_branch'; plan: 'monthly' | 'yearly' }) =>
     api('/billing/checkout/order', { method: 'POST', body: data }),
   verifyPayment: (data: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) =>
     api('/billing/checkout/verify', { method: 'POST', body: data }),
   history: () => api('/billing/history'),
+  ackReceipt: (rid: string) => api(`/billing/receipts/${rid}/ack`, { method: 'POST' }),
 };
 
 export const paymentsApi = {
