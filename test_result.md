@@ -2472,3 +2472,54 @@ hosted URL / support link)
   users) as radio-tiles; help text: "All plans include every feature
   (web + mobile). Prices charged in INR at renewal."
 - No USD text anywhere on either screen
+
+---
+
+## Iteration 52 — Subscription production hardening (final QA report)
+
+### Hardening deltas over iter 51
+- **Status normalisation**: added a single `canonicalStatus` derived
+  from `ent.subscription.status || ent.status`, covering
+  trial / active / past_due / cancelled / expired / suspended /
+  inactive. `statusPillMeta` maps each to a distinct colour + label
+  (no more generic "inactive" fallback for past_due).
+- **Past-due / expired / suspended banner**: added an amber warning
+  strip with contextual copy — "Payment past due", "Subscription
+  expired", "Subscription suspended". The primary CTA text also
+  switches from "Pay ₹X with Razorpay" to "Renew now — ₹X" when
+  `needsPayment` is true.
+- **Over-limit detection**: replaced `pct >= 100` with dedicated
+  `staffOverLimit` / `branchOverLimit` booleans that compare raw
+  counts (`used >= limit`). This is the same non-destructive rule
+  used by the web app — a grandfathered `4/3` correctly renders
+  "Branch limit reached" without hiding the 4th branch anywhere.
+- **Add-on visibility**: reworked to hide the entire Additional
+  Branch card when `addon_eligible !== true` (was: locked/greyed
+  variant). Copy tightened to "+1 branch and +10 users" and prices
+  presented as "₹888/month · ₹8,888/year" per spec.
+- Dropped an unused `useMemo` import.
+
+### QA report (all against staff-portal-331 preview backend, real DB)
+
+| Category | Result |
+|---|---|
+| **Subscription screen QA (Owner)** | PASS — dark card, KPIs, renewal breakdown, INR disclaimer, features list, usage bars, add-on card, downgrade link, billing history all render exactly like the approved web mockup. |
+| **Trial QA** | PASS — QA Growth Owner shows `Trial` pill (green), 39 days remaining, Renews 08 Oct 2026, ₹2,499 monthly total. |
+| **Entitlement QA** | PASS — every displayed number is read directly from `GET /billing/entitlements` (no client math): `staff_used`, `branch_count`, `effective_user_limit`, `effective_branch_limit`, `renewal.base_inr`, `renewal.total_inr`, `renewal.addon_qty`, `extra_branch_price.*`. |
+| **Over-limit QA** | PASS — Growth grandfathered tenant has 4 branches vs limit 3. Screen shows `4 / 3` counter, red-filled progress bar, "Branch limit reached" pill. The 4th branch is not hidden or deleted anywhere in the app. |
+| **Add-on QA** | PASS — Additional Branch card renders only when `addon_eligible === true`; Owner sees it during active paid, hidden entirely when addon_eligible is false (e.g. trial without paid subscription). Copy: "+1 branch and +10 users. ₹888/month · ₹8,888/year". |
+| **Renewal QA** | PASS — total shown is exactly `renewal.total_inr` from the backend. When `renewal.addon_qty > 0` an extra line "Additional Branch × N" appears above the total (verified logic; live tenant currently has `addon_qty = 0`). No independent client-side computation. |
+| **Receipt QA** | PASS — Billing history row displays label ("Upgraded to Growth"), plan pill ("yearly"), amount `₹24,999`, date `14 Aug 2026`, status tick, Receipt button. Share text explicitly labelled "This is a payment receipt (not a GST invoice)." |
+| **Owner/RBAC QA** | PASS — Staff login (`qa_staff_demo`) → backend returns 403 on `/billing/entitlements`; mobile shows a clean "Couldn't load subscription" state with Retry. All action buttons (Renew, Upgrade, Add Branch, Downgrade, Cancel, Resume) are wrapped in `isOwner` gates in the render tree, so a Staff user cannot even see them. Backend remains authoritative. |
+| **Cold-start QA** | PASS — full navigation `login → dashboard → /subscription`: entitlements fetched on mount with an explicit `loading` gate; `ActivityIndicator` shown until resolved; no premature render. |
+| **Slow-network QA** | PASS — both API calls wrapped in `.catch(() => null)`; if entitlements fails the screen renders the error state (not a crash), Retry re-fetches; if history fails but entitlements succeeds the "No payments yet" empty state renders. |
+| **Previous crash regression QA** | PASS — Playwright `pageerror` listener captured **0 errors** across the full flow. Every numeric render uses `Number(x ?? 0).toLocaleString('en-IN')`. All accesses to `renewal.*` / `subscription.*` / `extra_branch_price.*` use optional chaining plus `??` fallbacks. `Cannot read properties of undefined (reading 'toLocaleString')` is no longer reachable. |
+| **Build result** | PASS — `lint_javascript` on `app/subscription.tsx` reports `✅ No issues found`; expo bundler serves without warnings on `sudo supervisorctl restart expo`. |
+
+### Not started (per spec)
+- Customer Loyalty
+- Staff Leaderboard
+- Native `react-native-razorpay` SDK
+
+Current web-only Razorpay flow via checkout.js is unchanged and
+verified working on preview.

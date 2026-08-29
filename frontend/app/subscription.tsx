@@ -14,7 +14,7 @@
  * Crash-safety: EVERY numeric render uses Number(x ?? 0).toLocaleString('en-IN').
  * Nothing derefs a possibly-undefined field.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
   RefreshControl, Alert, Platform, Linking, Share,
@@ -339,7 +339,28 @@ export default function SubscriptionScreen() {
   const planName = titlecase(ent.plan || ent.plan_tier || 'Starter');
   const interval = ent.billing_interval === 'yearly' ? 'Yearly' : 'Monthly';
   const daysLeft = ent.subscription?.days_left ?? 0;
-  const isTrial = (ent.subscription?.subscription_plan || '').toLowerCase() === 'trial';
+  const subPlan = (ent.subscription?.subscription_plan || '').toLowerCase();
+  const isTrial = subPlan === 'trial';
+  // Normalise every possible status the backend may return into a single canonical value.
+  const rawStatus = String(ent.subscription?.status || ent.status || 'active').toLowerCase();
+  const canonicalStatus: 'trial' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'suspended' | 'inactive' =
+    isTrial ? 'trial'
+    : rawStatus.startsWith('past') ? 'past_due'
+    : rawStatus === 'cancelled' || rawStatus === 'canceled' ? 'cancelled'
+    : rawStatus === 'expired' ? 'expired'
+    : rawStatus === 'suspended' ? 'suspended'
+    : rawStatus === 'active' ? 'active'
+    : 'inactive';
+  const statusPillMeta: Record<typeof canonicalStatus, { bg: string; fg: string; label: string }> = {
+    trial:     { bg: '#B7E4C7', fg: '#166534', label: 'Trial' },
+    active:    { bg: '#B7E4C7', fg: '#166534', label: 'Active' },
+    past_due:  { bg: '#FDE7C1', fg: '#8A5300', label: 'Past due' },
+    cancelled: { bg: '#F5D0D0', fg: '#8A1A1A', label: 'Cancelled' },
+    expired:   { bg: '#F5D0D0', fg: '#8A1A1A', label: 'Expired' },
+    suspended: { bg: '#F5D0D0', fg: '#8A1A1A', label: 'Suspended' },
+    inactive:  { bg: '#F5D0D0', fg: '#8A1A1A', label: 'Inactive' },
+  };
+  const statusMeta = statusPillMeta[canonicalStatus];
   const cancellationPending = !!ent.subscription?.cancellation_pending;
   const scheduledDowngrade = ent.scheduled_plan_change?.tier === 'starter';
 
@@ -347,13 +368,20 @@ export default function SubscriptionScreen() {
   const staffLimit = ent.effective_user_limit ?? ent.base_user_limit ?? 0;
   const branchUsed = ent.branch_count ?? 0;
   const branchLimit = ent.effective_branch_limit ?? ent.base_branch_limit ?? 0;
+  // Note: percentage capped at 100 for the bar, but "Limit reached" pill fires
+  // as soon as usage >= limit — so a grandfathered 4/3 correctly renders as
+  // "Branch limit reached" without hiding the 4th branch anywhere in the app.
   const staffPct = staffLimit > 0 ? Math.min(100, (staffUsed / staffLimit) * 100) : 0;
   const branchPct = branchLimit > 0 ? Math.min(100, (branchUsed / branchLimit) * 100) : 0;
+  const staffOverLimit = staffLimit > 0 && staffUsed >= staffLimit;
+  const branchOverLimit = branchLimit > 0 && branchUsed >= branchLimit;
   const staffLeft = Math.max(0, staffLimit - staffUsed);
   const branchLeft = Math.max(0, branchLimit - branchUsed);
 
   const canUpgrade = (ent.plan_tier || ent.plan) === 'starter';
   const canDowngrade = (ent.plan_tier || ent.plan) === 'growth' && !scheduledDowngrade;
+  const showAddon = isOwner && ent.addon_eligible === true;
+  const needsPayment = canonicalStatus === 'past_due' || canonicalStatus === 'expired' || canonicalStatus === 'suspended';
 
   const addonMonthlyInr = Math.round(((ent.extra_branch_price?.monthly ?? 88800) / 100));
   const addonYearlyInr = Math.round(((ent.extra_branch_price?.yearly ?? 888800) / 100));
@@ -377,10 +405,8 @@ export default function SubscriptionScreen() {
               <Text style={styles.planLabel}>Current Plan</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <Text style={styles.planName}>{planName}</Text>
-                <View style={[styles.statusPill, { backgroundColor: (ent.status === 'active' || isTrial) ? '#B7E4C7' : '#F5D0D0' }]}>
-                  <Text style={[styles.statusPillText, { color: (ent.status === 'active' || isTrial) ? '#166534' : '#8A1A1A' }]}>
-                    {isTrial ? 'Trial' : titlecase(ent.status || 'inactive')}
-                  </Text>
+                <View style={[styles.statusPill, { backgroundColor: statusMeta.bg }]}>
+                  <Text style={[styles.statusPillText, { color: statusMeta.fg }]}>{statusMeta.label}</Text>
                 </View>
               </View>
               <Text style={styles.planSubline}>{interval} billing · {staffLimit} user accounts · {branchLimit} branch{branchLimit === 1 ? '' : 'es'}</Text>
@@ -400,7 +426,9 @@ export default function SubscriptionScreen() {
                   ? <ActivityIndicator size="small" color="#3D2100" />
                   : <>
                       <Ionicons name="card-outline" size={14} color="#3D2100" />
-                      <Text style={styles.planActionPrimaryText}>Pay {fmtINR(ent.renewal?.total_inr)} with Razorpay</Text>
+                      <Text style={styles.planActionPrimaryText}>
+                        {needsPayment ? `Renew now — ${fmtINR(ent.renewal?.total_inr)}` : `Pay ${fmtINR(ent.renewal?.total_inr)} with Razorpay`}
+                      </Text>
                     </>}
               </TouchableOpacity>
             )}
@@ -465,6 +493,18 @@ export default function SubscriptionScreen() {
           </View>
         </View>
 
+        {needsPayment && (
+          <View style={[styles.warnBanner, { marginTop: spacing.md, backgroundColor: '#FDE7C1', borderColor: '#F0C060' }]}>
+            <Ionicons name="warning-outline" size={16} color="#8A5300" />
+            <Text style={[styles.warnText, { color: '#8A5300' }]}>
+              {canonicalStatus === 'past_due'
+                ? 'Payment past due. Renew now to keep full access.'
+                : canonicalStatus === 'expired'
+                  ? 'Subscription expired. Renew to restore full access.'
+                  : 'Subscription suspended. Contact support or renew.'}
+            </Text>
+          </View>
+        )}
         {cancellationPending && (
           <View style={[styles.warnBanner, { marginTop: spacing.md }]}>
             <Ionicons name="alert-circle-outline" size={16} color="#8A1A1A" />
@@ -509,9 +549,9 @@ export default function SubscriptionScreen() {
               </View>
               <Text style={styles.usageCount}>{staffUsed}<Text style={styles.usageMax}> / {staffLimit}</Text></Text>
             </View>
-            <View style={styles.bar}><View style={[styles.barFill, { width: `${staffPct}%`, backgroundColor: staffPct >= 100 ? colors.error : colors.brandPrimary }]} /></View>
-            {staffPct >= 100 && <View style={styles.limitPill}><Text style={styles.limitPillText}>User limit reached</Text></View>}
-            {staffPct < 100 && staffLeft <= 1 && <Text style={styles.usageHint}>{staffLeft} seat{staffLeft === 1 ? '' : 's'} left</Text>}
+            <View style={styles.bar}><View style={[styles.barFill, { width: `${staffPct}%`, backgroundColor: staffOverLimit ? colors.error : colors.brandPrimary }]} /></View>
+            {staffOverLimit && <View style={styles.limitPill}><Text style={styles.limitPillText}>User limit reached</Text></View>}
+            {!staffOverLimit && staffLeft <= 1 && staffLimit > 0 && <Text style={styles.usageHint}>{staffLeft} seat{staffLeft === 1 ? '' : 's'} left</Text>}
           </View>
 
           <View style={styles.usageBlock}>
@@ -522,12 +562,12 @@ export default function SubscriptionScreen() {
               </View>
               <Text style={styles.usageCount}>{branchUsed}<Text style={styles.usageMax}> / {branchLimit}</Text></Text>
             </View>
-            <View style={styles.bar}><View style={[styles.barFill, { width: `${branchPct}%`, backgroundColor: branchPct >= 100 ? colors.error : colors.brandPrimary }]} /></View>
-            {branchPct >= 100 && <View style={styles.limitPill}><Text style={styles.limitPillText}>Branch limit reached</Text></View>}
-            {branchPct < 100 && branchLeft <= 1 && <Text style={styles.usageHint}>{branchLeft} branch{branchLeft === 1 ? '' : 'es'} left</Text>}
+            <View style={styles.bar}><View style={[styles.barFill, { width: `${branchPct}%`, backgroundColor: branchOverLimit ? colors.error : colors.brandPrimary }]} /></View>
+            {branchOverLimit && <View style={styles.limitPill}><Text style={styles.limitPillText}>Branch limit reached</Text></View>}
+            {!branchOverLimit && branchLeft <= 1 && branchLimit > 0 && <Text style={styles.usageHint}>{branchLeft} branch{branchLeft === 1 ? '' : 'es'} left</Text>}
           </View>
 
-          {(staffPct >= 100 || branchPct >= 100) && canUpgrade && (
+          {(staffOverLimit || branchOverLimit) && canUpgrade && (
             <View style={styles.growthNudge}>
               <Ionicons name="trending-up-outline" size={16} color={colors.brandPrimary} />
               <Text style={styles.growthNudgeText}>
@@ -537,24 +577,19 @@ export default function SubscriptionScreen() {
           )}
         </View>
 
-        {/* ===== Additional Branch add-on ===== */}
-        {isOwner && (
-          <View style={[styles.card, !ent.addon_eligible && { opacity: 0.65 }]}>
+        {/* ===== Additional Branch add-on (only when addon_eligible === true) ===== */}
+        {showAddon && (
+          <View style={styles.card}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-              <View style={styles.addonIconBox}><Ionicons name={ent.addon_eligible ? 'add-circle-outline' : 'lock-closed'} size={22} color={colors.brandPrimary} /></View>
+              <View style={styles.addonIconBox}><Ionicons name="add-circle-outline" size={22} color={colors.brandPrimary} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>Additional Branch</Text>
-                <Text style={styles.cardSubtitle}>Each add-on increases your capacity by <Text style={{ fontWeight: '800' }}>1 branch</Text> and <Text style={{ fontWeight: '800' }}>10 user accounts</Text>.</Text>
-                <Text style={styles.addonPrice}>{fmtINR(addonMonthlyInr)}/mo · {fmtINR(addonYearlyInr)}/yr</Text>
-                {!ent.addon_eligible && <Text style={styles.addonLocked}>Available once you have an active paid subscription.</Text>}
+                <Text style={styles.cardSubtitle}>Each add-on increases your capacity by <Text style={{ fontWeight: '800' }}>+1 branch</Text> and <Text style={{ fontWeight: '800' }}>+10 users</Text>.</Text>
+                <Text style={styles.addonPrice}>{fmtINR(addonMonthlyInr)}/month · {fmtINR(addonYearlyInr)}/year</Text>
               </View>
-              {ent.addon_eligible ? (
-                <TouchableOpacity onPress={doAddBranch} disabled={!!busy} style={styles.addonBtn} testID="add-branch-btn">
-                  {busy === 'branch' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.addonBtnText}>Add Branch</Text>}
-                </TouchableOpacity>
-              ) : (
-                <View style={[styles.addonBtn, { opacity: 0.4 }]}><Text style={styles.addonBtnText}>Locked</Text></View>
-              )}
+              <TouchableOpacity onPress={doAddBranch} disabled={!!busy} style={styles.addonBtn} testID="add-branch-btn">
+                {busy === 'branch' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.addonBtnText}>Add Branch</Text>}
+              </TouchableOpacity>
             </View>
           </View>
         )}
