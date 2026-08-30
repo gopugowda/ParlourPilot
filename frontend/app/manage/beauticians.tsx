@@ -14,6 +14,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
 import { useAuth, PERMISSION_KEYS, PERMISSION_LABELS, PermissionKey } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
@@ -102,6 +104,28 @@ export default function TeamScreen() {
   const [active, setActive] = useState(true);
   const [joinedDate, setJoinedDate] = useState('');
   const [lastWorkingDate, setLastWorkingDate] = useState('');
+  // Date picker for Joined / Last Working
+  const [dateField, setDateField] = useState<null | 'joined' | 'lastWorking'>(null);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const isValidIso = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + 'T00:00:00').getTime());
+  const fmtDateLabel = (s: string) => {
+    if (!isValidIso(s)) return '';
+    const d = new Date(s + 'T00:00:00');
+    return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+  const openDatePicker = (which: 'joined' | 'lastWorking') => {
+    if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
+    setDateField(which);
+  };
+  const applyDatePick = (iso: string) => {
+    if (dateField === 'joined') setJoinedDate(iso);
+    else if (dateField === 'lastWorking') setLastWorkingDate(iso);
+  };
+  const clearDatePick = () => {
+    if (dateField === 'joined') setJoinedDate('');
+    else if (dateField === 'lastWorking') setLastWorkingDate('');
+    setDateField(null);
+  };
 
   // ---- Per-user permissions (11 booleans). Owner row → ignored on save. ----
   const initialPerms = (): Record<PermissionKey, boolean> => {
@@ -675,27 +699,31 @@ export default function TeamScreen() {
                       <View style={{ flexDirection: 'row', gap: 8 }}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.label}>Joined date *</Text>
-                          <TextInput
+                          <TouchableOpacity
                             testID="team-joined-date-input"
-                            value={joinedDate}
-                            onChangeText={setJoinedDate}
-                            placeholder="YYYY-MM-DD"
-                            placeholderTextColor={colors.onSurfaceTertiary}
-                            style={styles.input}
-                            autoCapitalize="none"
-                          />
+                            onPress={() => openDatePicker('joined')}
+                            style={[styles.input, styles.dateInputBtn]}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="calendar-outline" size={16} color={joinedDate ? colors.brandPrimary : colors.onSurfaceTertiary} />
+                            <Text style={[styles.dateInputText, !joinedDate && { color: colors.onSurfaceTertiary }]} numberOfLines={1}>
+                              {joinedDate ? fmtDateLabel(joinedDate) || joinedDate : 'Select date'}
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.label}>Last working date <Text style={{ color: colors.onSurfaceTertiary, fontWeight: '400' }}>(if left)</Text></Text>
-                          <TextInput
+                          <TouchableOpacity
                             testID="team-last-working-input"
-                            value={lastWorkingDate}
-                            onChangeText={setLastWorkingDate}
-                            placeholder="YYYY-MM-DD"
-                            placeholderTextColor={colors.onSurfaceTertiary}
-                            style={styles.input}
-                            autoCapitalize="none"
-                          />
+                            onPress={() => openDatePicker('lastWorking')}
+                            style={[styles.input, styles.dateInputBtn]}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="calendar-outline" size={16} color={lastWorkingDate ? colors.brandPrimary : colors.onSurfaceTertiary} />
+                            <Text style={[styles.dateInputText, !lastWorkingDate && { color: colors.onSurfaceTertiary }]} numberOfLines={1}>
+                              {lastWorkingDate ? fmtDateLabel(lastWorkingDate) || lastWorkingDate : 'Select date'}
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
                       {joinedDate ? (
@@ -878,6 +906,117 @@ export default function TeamScreen() {
         </Pressable>
       </Modal>
 
+      {/* ============ Employment date picker (Joined / Last Working) ============ */}
+      {dateField && Platform.OS !== 'web' ? (
+        Platform.OS === 'ios' ? (
+          <Modal transparent animationType="fade" visible onRequestClose={() => setDateField(null)}>
+            <Pressable style={styles.dateBackdrop} onPress={() => setDateField(null)}>
+              <Pressable style={styles.dateSheet} onPress={() => {}}>
+                <View style={styles.handle} />
+                <Text style={styles.dateSheetTitle}>
+                  {dateField === 'joined' ? 'Joined date' : 'Last working date'}
+                </Text>
+                <DateTimePicker
+                  testID="employment-date-native"
+                  value={new Date(
+                    (dateField === 'joined' ? joinedDate : lastWorkingDate) && isValidIso(dateField === 'joined' ? joinedDate : lastWorkingDate)
+                      ? (dateField === 'joined' ? joinedDate : lastWorkingDate) + 'T00:00:00'
+                      : todayIso + 'T00:00:00'
+                  )}
+                  mode="date"
+                  display="spinner"
+                  maximumDate={dateField === 'lastWorking' ? new Date(todayIso + 'T00:00:00') : undefined}
+                  minimumDate={dateField === 'lastWorking' && isValidIso(joinedDate) ? new Date(joinedDate + 'T00:00:00') : undefined}
+                  onChange={(_, d) => { if (d) applyDatePick(d.toISOString().slice(0, 10)); }}
+                />
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity style={[styles.dateDone, { flex: 1, backgroundColor: '#F3F3F3' }]} onPress={clearDatePick}>
+                    <Text style={[styles.dateDoneText, { color: colors.onSurfaceSecondary }]}>Clear</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="employment-date-done"
+                    style={[styles.dateDone, { flex: 1 }]}
+                    onPress={() => { Haptics.selectionAsync().catch(() => {}); setDateField(null); }}
+                  >
+                    <Text style={styles.dateDoneText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        ) : (
+          <DateTimePicker
+            testID="employment-date-native"
+            value={new Date(
+              (dateField === 'joined' ? joinedDate : lastWorkingDate) && isValidIso(dateField === 'joined' ? joinedDate : lastWorkingDate)
+                ? (dateField === 'joined' ? joinedDate : lastWorkingDate) + 'T00:00:00'
+                : todayIso + 'T00:00:00'
+            )}
+            mode="date"
+            display="default"
+            maximumDate={dateField === 'lastWorking' ? new Date(todayIso + 'T00:00:00') : undefined}
+            minimumDate={dateField === 'lastWorking' && isValidIso(joinedDate) ? new Date(joinedDate + 'T00:00:00') : undefined}
+            onChange={(evt, d) => {
+              setDateField(null);
+              if (evt?.type === 'set' && d) applyDatePick(d.toISOString().slice(0, 10));
+            }}
+          />
+        )
+      ) : (
+        <Modal
+          transparent
+          animationType="fade"
+          visible={!!dateField}
+          onRequestClose={() => setDateField(null)}
+        >
+          <Pressable style={styles.dateBackdrop} onPress={() => setDateField(null)}>
+            <Pressable style={styles.dateSheet} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={styles.dateSheetTitle}>
+                {dateField === 'joined' ? 'Joined date' : 'Last working date'}
+              </Text>
+              <Calendar
+                testID="employment-date-calendar"
+                current={
+                  (dateField === 'joined' ? joinedDate : lastWorkingDate) && isValidIso(dateField === 'joined' ? joinedDate : lastWorkingDate)
+                    ? (dateField === 'joined' ? joinedDate : lastWorkingDate)
+                    : todayIso
+                }
+                maxDate={dateField === 'lastWorking' ? todayIso : undefined}
+                minDate={dateField === 'lastWorking' && isValidIso(joinedDate) ? joinedDate : undefined}
+                onDayPress={(d) => {
+                  applyDatePick(d.dateString);
+                  setDateField(null);
+                }}
+                markedDates={
+                  (dateField === 'joined' ? joinedDate : lastWorkingDate)
+                    ? { [dateField === 'joined' ? joinedDate : lastWorkingDate]: { selected: true, selectedColor: colors.brandPrimary } }
+                    : {}
+                }
+                theme={{
+                  backgroundColor: colors.surface,
+                  calendarBackground: colors.surface,
+                  selectedDayBackgroundColor: colors.brandPrimary,
+                  selectedDayTextColor: '#fff',
+                  todayTextColor: colors.brandPrimary,
+                  dayTextColor: colors.onSurface,
+                  monthTextColor: colors.onSurface,
+                  arrowColor: colors.brandPrimary,
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity style={[styles.dateDone, { flex: 1, backgroundColor: '#F3F3F3' }]} onPress={clearDatePick}>
+                  <Text style={[styles.dateDoneText, { color: colors.onSurfaceSecondary }]}>Clear</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.dateDone, { flex: 1 }]} onPress={() => setDateField(null)}>
+                  <Text style={styles.dateDoneText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       {/* ============ Filter sheet ============ */}
       <FilterSheet
         visible={fsOpen}
@@ -935,6 +1074,31 @@ const styles = StyleSheet.create({
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, gap: spacing.md, width: '100%', maxWidth: 480, alignSelf: 'center', flexShrink: 1 },
   sheetScroll: { flexGrow: 0, flexShrink: 1 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
+  // ---- Employment date picker ----
+  dateInputBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12 },
+  dateInputText: { flex: 1, fontSize: 14, color: colors.onSurface, fontWeight: '500' },
+  dateBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  dateSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
+    gap: spacing.md,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+  },
+  dateSheetTitle: { fontSize: 16, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  dateDone: {
+    backgroundColor: colors.brandPrimary,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateDoneText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
   field: { gap: 6 },
   label: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
