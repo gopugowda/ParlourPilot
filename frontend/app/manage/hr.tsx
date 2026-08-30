@@ -667,6 +667,7 @@ function EmployeeCalendarTab({ beauticians, brand }: { beauticians: Beautician[]
 function LeaveTypesTab({ canManage, brand }: { canManage: boolean; brand: string }) {
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [policies, setPolicies] = useState<LeavePolicy[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<LeaveType | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -674,23 +675,42 @@ function LeaveTypesTab({ canManage, brand }: { canManage: boolean; brand: string
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ts, ps] = await Promise.all([hrApi.listLeaveTypes(), hrApi.listLeavePolicies().catch(() => [])]);
+      const [ts, ps, brs] = await Promise.all([
+        hrApi.listLeaveTypes(),
+        hrApi.listLeavePolicies().catch(() => []),
+        api<{ id: string; name: string }[]>('/branches').catch(() => []),
+      ]);
       setTypes(ts as LeaveType[]);
       setPolicies(ps as LeavePolicy[]);
+      setBranches(brs || []);
     } catch (e: any) { Alert.alert('Load failed', e.message || String(e)); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const del = (t: LeaveType) => {
+  const toggleActive = (t: LeaveType) => {
     if (!canManage) return;
-    Alert.alert('Deactivate?', `Remove "${t.name}"? This preserves history but hides it from new requests.`, [
-      { text: 'Cancel' },
-      { text: 'Deactivate', style: 'destructive', onPress: async () => {
-        try { await hrApi.deactivateLeaveType(t.id); load(); } catch (e: any) { Alert.alert('Failed', e.message); }
-      }},
-    ]);
+    const nextActive = t.active === false;
+    Alert.alert(
+      nextActive ? 'Enable leave type?' : 'Disable leave type?',
+      nextActive
+        ? `Enable "${t.name}" so employees can request it again.`
+        : `Disable "${t.name}"? Employees won't be able to request it. Existing balances and history stay intact.`,
+      [
+        { text: 'Cancel' },
+        {
+          text: nextActive ? 'Enable' : 'Disable',
+          style: nextActive ? 'default' : 'destructive',
+          onPress: async () => {
+            try {
+              await hrApi.updateLeaveType(t.id, { active: nextActive });
+              load();
+            } catch (e: any) { Alert.alert('Failed', e.message || String(e)); }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -706,8 +726,9 @@ function LeaveTypesTab({ canManage, brand }: { canManage: boolean; brand: string
         <Empty icon="pricetags-outline" title="No leave types" hint="Create leave types like Casual Leave, Sick Leave, etc." />
       ) : types.map(t => {
         const pol = policies.find(p => p.leave_type_id === t.id);
+        const isInactive = t.active === false;
         return (
-          <TouchableOpacity key={t.id} onPress={() => canManage && (setEditing(t), setModalOpen(true))} style={styles.card} disabled={!canManage}>
+          <TouchableOpacity key={t.id} onPress={() => canManage && (setEditing(t), setModalOpen(true))} style={[styles.card, isInactive && { opacity: 0.6 }]} disabled={!canManage}>
             <View style={styles.rowHead}>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -717,16 +738,40 @@ function LeaveTypesTab({ canManage, brand }: { canManage: boolean; brand: string
                       <Text style={{ fontSize: 10, fontWeight: '800', color: brand }}>/mo</Text>
                     </View>
                   )}
+                  {isInactive ? (
+                    <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: '#FDECEC', borderWidth: 1, borderColor: colors.error + '66' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: colors.error }}>Inactive</Text>
+                    </View>
+                  ) : (
+                    <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.success + '18' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: colors.success }}>Active</Text>
+                    </View>
+                  )}
                 </View>
                 <Text style={styles.rowSub}>
                   {t.paid ? 'Paid' : 'Unpaid'} • {t.allow_half_day ? 'Half day OK' : 'Full day only'} • {t.requires_approval ? 'Approval required' : 'Auto approve'}
                 </Text>
                 {pol && <Text style={styles.rowSub}>Entitlement: {pol.annual_entitlement}/year{(pol as any).monthly_accrual ? ` · accrues ${(pol.annual_entitlement / 12).toFixed(2)}/mo` : ''}</Text>}
+                {(() => {
+                  const bids = t.branch_ids || [];
+                  if (!bids.length) {
+                    return <Text style={[styles.rowSub, { color: colors.onSurfaceTertiary }]}>Applicable to <Text style={{ fontWeight: '700', color: colors.onSurfaceSecondary }}>All branches</Text></Text>;
+                  }
+                  const names = bids
+                    .map(id => branches.find(b => b.id === id)?.name)
+                    .filter(Boolean)
+                    .join(', ') || `${bids.length} branch${bids.length === 1 ? '' : 'es'}`;
+                  return <Text style={[styles.rowSub, { color: colors.onSurfaceTertiary }]}>Applicable to <Text style={{ fontWeight: '700', color: colors.onSurfaceSecondary }}>{names}</Text></Text>;
+                })()}
               </View>
               {canManage && (
-                <TouchableOpacity onPress={() => del(t)} style={{ padding: 6 }}>
-                  <Ionicons name="trash-outline" size={18} color={colors.error} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <TouchableOpacity onPress={() => toggleActive(t)} style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: isInactive ? colors.success : colors.borderStrong, backgroundColor: isInactive ? colors.success + '18' : '#fff' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: isInactive ? colors.success : colors.onSurfaceSecondary }}>
+                      {isInactive ? 'Enable' : 'Disable'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
           </TouchableOpacity>
@@ -740,6 +785,7 @@ function LeaveTypesTab({ canManage, brand }: { canManage: boolean; brand: string
         editing={editing}
         existingPolicy={editing ? policies.find(p => p.leave_type_id === editing.id) : undefined}
         brand={brand}
+        branches={branches}
       />
     </ScrollView>
   );
@@ -869,11 +915,28 @@ function CreateLeaveModal({ visible, onClose, onCreated, beauticians, types, bra
 
             <Text style={styles.formLabel}>Leave Type *</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 4 }}>
-              {types.filter(t => (t as any).active !== false).map(t => (
-                <TouchableOpacity key={t.id} onPress={() => setTypeId(t.id)} style={[styles.filterPill, typeId === t.id && { backgroundColor: brand, borderColor: brand }]}>
-                  <Text style={[styles.filterPillText, typeId === t.id && { color: '#fff' }]}>{t.name}</Text>
-                </TouchableOpacity>
-              ))}
+              {(() => {
+                const empBranch = beauticians.find(b => b.id === empId)?.branch_id;
+                const eligible = types.filter(t => {
+                  if ((t as any).active === false) return false;
+                  const bids = (t as any).branch_ids as string[] | undefined;
+                  if (!bids || bids.length === 0) return true;   // empty = all branches
+                  if (!empBranch) return true;                    // no branch info yet — allow
+                  return bids.includes(empBranch);
+                });
+                if (eligible.length === 0) {
+                  return (
+                    <Text style={{ fontSize: 12, color: colors.onSurfaceTertiary, paddingVertical: 6 }}>
+                      No leave type available for this employee&apos;s branch.
+                    </Text>
+                  );
+                }
+                return eligible.map(t => (
+                  <TouchableOpacity key={t.id} onPress={() => setTypeId(t.id)} style={[styles.filterPill, typeId === t.id && { backgroundColor: brand, borderColor: brand }]}>
+                    <Text style={[styles.filterPillText, typeId === t.id && { color: '#fff' }]}>{t.name}</Text>
+                  </TouchableOpacity>
+                ));
+              })()}
             </ScrollView>
 
             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -994,8 +1057,8 @@ function HolidayModal({ visible, onClose, onSaved, editing, brand }:
   );
 }
 
-function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, brand }:
-  { visible: boolean; onClose: () => void; onSaved: () => void; editing: LeaveType | null; existingPolicy?: LeavePolicy; brand: string }) {
+function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, brand, branches }:
+  { visible: boolean; onClose: () => void; onSaved: () => void; editing: LeaveType | null; existingPolicy?: LeavePolicy; brand: string; branches: { id: string; name: string }[] }) {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [paid, setPaid] = useState(true);
@@ -1003,6 +1066,8 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
   const [needsApproval, setNeedsApproval] = useState(true);
   const [entitlement, setEntitlement] = useState('12');
   const [monthlyAccrual, setMonthlyAccrual] = useState(false);
+  const [active, setActive] = useState(true);
+  const [branchIds, setBranchIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -1014,8 +1079,15 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
       setNeedsApproval(editing?.requires_approval ?? true);
       setEntitlement(existingPolicy ? String(existingPolicy.annual_entitlement) : '12');
       setMonthlyAccrual(!!((editing as any)?.policy?.monthly_accrual ?? (existingPolicy as any)?.monthly_accrual));
+      setActive(editing?.active ?? true);
+      setBranchIds(Array.isArray(editing?.branch_ids) ? [...(editing!.branch_ids as string[])] : []);
     }
   }, [visible, editing, existingPolicy]);
+
+  const toggleBranch = (id: string) => {
+    setBranchIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const allBranchesSelected = branchIds.length === 0;
 
   const annual = parseFloat(entitlement) || 0;
   const perMonth = annual > 0 ? (annual / 12) : 0;
@@ -1029,6 +1101,8 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
         allow_half_day: halfDay, requires_approval: needsApproval,
         monthly_accrual: monthlyAccrual,
         annual_entitlement: annual,
+        active,
+        branch_ids: branchIds,
       };
       let lt: any;
       if (editing) lt = await hrApi.updateLeaveType(editing.id, body);
@@ -1083,6 +1157,52 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
               <Text style={styles.formLabel}>Requires approval</Text>
               <Switch value={needsApproval} onValueChange={setNeedsApproval} trackColor={{ true: brand + '55' }} thumbColor={needsApproval ? brand : '#f4f3f4'} />
             </View>
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.formLabel}>Active</Text>
+                <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 }}>
+                  {active ? 'Employees can request this leave type.' : 'Hidden from new requests (existing history unaffected).'}
+                </Text>
+              </View>
+              <Switch value={active} onValueChange={setActive} trackColor={{ true: brand + '55' }} thumbColor={active ? brand : '#f4f3f4'} />
+            </View>
+
+            {/* --- Applicable branches (empty = all) — mirrors web app ---- */}
+            {branches.length > 0 && (
+              <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.formLabel}>Applicable branches</Text>
+                  <TouchableOpacity onPress={() => setBranchIds([])} disabled={allBranchesSelected}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: allBranchesSelected ? colors.onSurfaceTertiary : brand }}>
+                      All branches
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2, marginBottom: 8 }}>
+                  {allBranchesSelected
+                    ? 'This leave type is available to staff across all branches.'
+                    : `Only staff of the selected ${branchIds.length === 1 ? 'branch' : 'branches'} can request this leave.`}
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {branches.map(b => {
+                    const selected = branchIds.includes(b.id);
+                    return (
+                      <TouchableOpacity
+                        key={b.id}
+                        onPress={() => toggleBranch(b.id)}
+                        style={[
+                          styles.filterPill,
+                          selected && { backgroundColor: brand, borderColor: brand },
+                        ]}
+                      >
+                        {selected && <Ionicons name="checkmark" size={12} color="#fff" style={{ marginRight: 4 }} />}
+                        <Text style={[styles.filterPillText, selected && { color: '#fff' }]}>{b.name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
 
             <TouchableOpacity onPress={submit} disabled={busy} style={[styles.primaryBtn, { backgroundColor: brand, marginTop: spacing.md }]}>
               {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save</Text>}

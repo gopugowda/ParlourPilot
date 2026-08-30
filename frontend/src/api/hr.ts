@@ -39,6 +39,12 @@ export type LeaveType = {
   allow_half_day: boolean;
   requires_approval: boolean;
   requires_attachment: boolean;
+  active?: boolean;
+  /**
+   * Branches this leave type is applicable to.
+   * Empty array [] means ALL branches (server contract).
+   */
+  branch_ids?: string[];
 };
 
 export type LeaveBalance = {
