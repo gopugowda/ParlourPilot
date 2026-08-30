@@ -26,7 +26,6 @@ export default function SignupScreen() {
   const [city, setCity] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
-  const [numBranches, setNumBranches] = useState('1');
   const [planTier, setPlanTier] = useState<'starter' | 'growth'>('starter');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -54,7 +53,6 @@ export default function SignupScreen() {
       return;
     }
     if (password.length < 6) return setErr('Password must be at least 6 characters');
-    const nb = Math.max(1, Math.min(20, parseInt(numBranches || '1', 10) || 1));
 
     setLoading(true);
     try {
@@ -65,7 +63,6 @@ export default function SignupScreen() {
         password,
         phone: sanitizePhone(phone),
         city: city.trim(),
-        num_branches: nb,
         plan_tier: planTier,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -89,7 +86,7 @@ export default function SignupScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Salon Account</Text>
+        <Text style={styles.headerTitle}>Create Your Business Account</Text>
         <View style={{ width: 36 }} />
       </SafeAreaView>
 
@@ -112,7 +109,7 @@ export default function SignupScreen() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>Salon / Business Name *</Text>
+          <Text style={styles.label}>Business Name *</Text>
           <View style={styles.inputWrap}>
             <Ionicons name="storefront-outline" size={18} color={colors.onSurfaceTertiary} />
             <TextInput
@@ -242,25 +239,6 @@ export default function SignupScreen() {
           </View>
           <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 6 }}>
             All plans include every feature (web + mobile). 15-day free trial with your chosen plan{"'"}s limits. Prices charged in INR at renewal.
-          </Text>
-        </View>
-
-        <View style={styles.field}>
-          <Text style={styles.label}>Number of Branches</Text>
-          <View style={styles.inputWrap}>
-            <Ionicons name="business-outline" size={18} color={colors.onSurfaceTertiary} />
-            <TextInput
-              testID="signup-branches-input"
-              value={numBranches}
-              onChangeText={(v) => setNumBranches(v.replace(/[^0-9]/g, ''))}
-              keyboardType="numeric"
-              placeholder="1"
-              placeholderTextColor={colors.onSurfaceTertiary}
-              style={styles.input}
-            />
-          </View>
-          <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>
-            Start with 1 branch (Main). Add more anytime via the Additional Branch add-on (₹888/mo · ₹8,888/yr each).
           </Text>
         </View>
 

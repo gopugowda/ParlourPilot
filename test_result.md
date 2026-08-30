@@ -2523,3 +2523,44 @@ hosted URL / support link)
 
 Current web-only Razorpay flow via checkout.js is unchanged and
 verified working on preview.
+
+---
+
+## Iteration 53 — Signup: remove Number of Branches, tighten terminology
+
+### Changes
+- `app/signup.tsx`
+  - Removed the "Number of Branches" input field, its default `'1'`, its
+    helper text, and the associated state (`numBranches` /
+    `setNumBranches`) plus the `Math.max(1, Math.min(20, ...))`
+    validation.
+  - Header: "Create Salon Account" → **"Create Your Business Account"**
+  - Field label: "Salon / Business Name" → **"Business Name"**
+  - Signup payload now only contains `plan_tier`; no
+    `num_branches` / `branch_names`. Entitlement is derived server-side.
+- `src/api/client.ts` — dropped `num_branches` and `branch_names` from
+  `tenantApi.signup` TS contract so the mobile client can't accidentally
+  send a branch-count override again.
+- `src/context/AuthContext.tsx` — dropped both fields from `SignupData`.
+
+### QA (screenshot verified)
+- Screen renders "Create Your Business Account" header + "Business Name"
+  field.
+- `document.body.textContent` no longer contains "Number of Branches"
+  or "Salon / Business".
+- Password + Start Free Trial CTA moved up, layout is balanced, no
+  horizontal overflow, no empty space.
+- Playwright pageerror listener captured 0 errors.
+- Lint clean.
+
+### Backend authority
+Mobile now sends only `plan_tier: 'starter' | 'growth'` (plus the usual
+business name / owner / email / phone / city / password). The backend
+derives entitlements from the plan — Starter → 1/10, Growth → 3/30 —
+per the ParlourPilot subscription model. No client-supplied branch
+count can influence the entitlement.
+
+### Not changed
+- Auth architecture, login, subscription screen, Additional Branch
+  purchase flow (still Owner-only from Subscription & Billing).
+- Existing signup flow, validation logic, logo, trial banner.

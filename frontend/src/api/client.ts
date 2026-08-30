@@ -223,7 +223,7 @@ export const authApi = {
 };
 
 export const tenantApi = {
-  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string; num_branches?: number; branch_names?: string[]; plan_tier?: 'starter' | 'growth' }) =>
+  signup: (data: { business_name: string; owner_name: string; email: string; password: string; phone?: string; city?: string; country?: string; plan_tier?: 'starter' | 'growth' }) =>
     api('/tenants/signup', { method: 'POST', body: data, auth: false }),
   getMine: () => api('/tenants/me'),
   updateMine: (data: any) => api('/tenants/me', { method: 'PUT', body: data }),
