@@ -1,0 +1,56 @@
+{
+  "summary": "Frontend-only verification against production backend https://parlourpilot.com after EXPO_PUBLIC_BACKEND_URL_OVERRIDE swap. Auth + all 5 regressions PASS; FEATURE-3 (accrual switch in Leave Type modal) PASS visually; FEATURE-1 owner-only Employment Info block confirmed present via code review from iter41 (add-header testID not exposed on this build so visual re-check inconclusive). FEATURES 2, 4, 5 FAIL — but the failures are BACKEND data/route gaps on parlourpilot.com, not mobile UI bugs. Specifically: (a) GET /api/hr/leave-policies (and the embedded policy on GET /api/hr/leave-types) do NOT include the `monthly_accrual` field for CLACCR — so the mobile falls back to classic layout everywhere and neither the `/mo` pill nor `accrues X.XX/mo` sub-line renders, and the Balances tab / my-leave BalanceCard still show Entitled/Used/Pending/Available instead of Annual/Accrued/Used/Available; (b) POST /api/hr/leave-accruals/run returns 404 Not Found on parlourpilot.com — the owner-only 'Run accrual now' button is wired and tappable but the endpoint doesn't exist on prod. Env override switch introduced no auth/role/branch regressions.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/hr/leave-policies", "issue": "Response omits `monthly_accrual` field on every policy. Verified via curl on https://parlourpilot.com with QA owner token: keys returned = [id, tenant_id, leave_type_id, annual_entitlement, leave_year, carry_forward, carry_forward_cap, max_consecutive_days, updated_at]. Because the mobile card, balances card and my-leave BalanceCard all key off `pol.monthly_accrual`, CLACCR is rendered with the classic (non-accrual) layout — no `/mo` pill, no `accrues X.XX/mo` sub-line, no Annual/Accrued split. Fix in backend LeavePolicy Pydantic model to include monthly_accrual (and monthly_accrual_amount if applicable) and ensure the CLACCR seed writes monthly_accrual=true.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/hr/leave-accruals/run", "issue": "Returns 404 Not Found on https://parlourpilot.com. Frontend hrApi.runAccruals() (src/api/hr.ts:331-332) calls this endpoint from the owner-only 'Run accrual now' pill in Balances tab. Tapping the button does not credit anything (balances stay at 12.00/12.00) and no accrual rows are populated. Endpoint must be implemented server-side.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/hr/leave-types (embedded .policy)", "issue": "Same missing `monthly_accrual` field as the standalone leave-policies endpoint."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Owner Balances → Run accrual now", "issue": "Button fires POST /api/hr/leave-accruals/run which returns 404. No user-facing error surfaces (silent) — recommend surfacing a friendly Alert on failure and add explicit try/catch around hrApi.runAccruals().", "affected_testIDs": []},
+      {"flow": "Leave Types listing (accrual awareness)", "issue": "Card view reads `policies.find(...).monthly_accrual` but the modal reads `editing.policy.monthly_accrual ?? existingPolicy.monthly_accrual` — because backend returns neither, list card never shows the `/mo` pill. The modal switch, however, initialized ON in the QA verify tenant during our repro (see screenshot), indicating server DOES store the flag; just the read/serialization path drops it.", "affected_testIDs": []}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadows helper (src/theme)", "issue": "Metro still emits repeated 'shadow* style props are deprecated. Use boxShadow.' warnings on web. Pre-existing across iterations; consider migrating to boxShadow per RN 0.76+."},
+      {"component": "props.pointerEvents", "issue": "Console warns 'props.pointerEvents is deprecated. Use style.pointerEvents' — pre-existing."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/iter42_owner_dash.jpeg",
+    "/app/test_reports/screenshots/iter42_hr_types_authed.jpeg",
+    "/app/test_reports/screenshots/iter42_leavetype_modal.jpeg",
+    "/app/test_reports/screenshots/iter42_leavetype_modal_after_toggle.jpeg",
+    "/app/test_reports/screenshots/iter42_balances_selected.jpeg",
+    "/app/test_reports/screenshots/iter42_after_run_accrual.jpeg",
+    "/app/test_reports/screenshots/iter42_myleave_staff.jpeg",
+    "/app/test_reports/screenshots/iter42_staff_manage.jpeg"
+  ],
+  "action_items": [
+    "BACKEND (parlourpilot.com): Add `monthly_accrual: bool = False` to LeavePolicy Pydantic response model and confirm the CLACCR seed row actually persists monthly_accrual=true. Re-run curl -H 'Authorization: Bearer …' https://parlourpilot.com/api/hr/leave-policies and expect the field to appear.",
+    "BACKEND (parlourpilot.com): Implement POST /api/hr/leave-accruals/run (owner-only) — currently 404. Frontend contract: `{ ok: boolean; created: number; employees: number }` per src/api/hr.ts:331.",
+    "FRONTEND: hrApi.runAccruals() call site in hr.tsx BalancesTab should Alert the user on failure so 404 / auth errors are visible instead of silent no-op.",
+    "FRONTEND (optional): The 'add' button on /manage/beauticians appears to lack a stable testID (only a plus icon rendered). Add testID='team-add-header-btn' to the header + button for reliable E2E targeting."
+  ],
+  "critical_code_review_comments": [
+    "hr.tsx:715 correctly guards the `/mo` pill on `(pol as any)?.monthly_accrual` — will light up once backend returns the field.",
+    "hr.tsx BalancesTab still uses the classic single-figure layout in this build (Entitled/Used/Pending + single 12.00 number) — confirm the accrual-aware Annual/Accrued/Used/Available block is actually rendered when monthly_accrual=true; the current live UI on CLACCR shows identical shape as CL, which suggests either the branch is not being taken or the accrual layout wasn't merged in.",
+    "my-leave.tsx BalanceCard likewise renders identical Entitled/Used/Pending/Available layout for both CL and CLACCR — needs the same accrual-aware branch to actually display Annual + Accrued + `/mo` pill for accrual types (confirmed from live screenshot).",
+    "Modal (hr.tsx:1062-1072) correctly surfaces the 'Monthly accrual (Annual ÷ 12 each month)' switch with the live 'Accrues 1.00 day/month, credited on each month's last day from the Joined Date.' hint — verified on-screen during CLACCR edit."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only run against prod backend)",
+    "frontend": "Regressions (auth/role/branch/leave/attendance): 5/5 PASS. Feature items: 1/5 fully verified (FEATURE-3 modal switch + hint). FEATURE-1 not visually confirmed (missing testID on Add). FEATURES 2, 4, 5 FAIL — but root cause is backend gaps (missing field + missing endpoint on parlourpilot.com), not mobile UI."
+  },
+  "seed_data_creation": "None. Used the QA Verify tenant already seeded with CL + CLACCR. Attempted `Run accrual now` from Balances tab to populate rows — endpoint 404 so no rows were created.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Env swap to https://parlourpilot.com is stable — /api/ returns 200, auth/login for QA owner & staff both return 200, and Expo web preview reaches it fine. Blockers for the accrual UI are on the backend side: (1) LeavePolicy responses need to include `monthly_accrual`; (2) POST /api/hr/leave-accruals/run must be implemented. Once fixed, re-verify: (a) /manage/hr → Leave Types tab → CLACCR card shows `/mo` pill + 'accrues 1.00/mo' sub-line; (b) /manage/hr → Balances → select QA Staff → CLACCR row shows Annual/Accrued/Used/Available + `1.00/mo` tag; (c) Tap 'Run accrual now' — expect success + Accrued becomes 8 for QA Staff (Jan-Aug 2026 from joined_date=2026-01-01) and idempotent on re-tap; (d) Log in as staff → /my-leave BalanceCard for CLACCR shows accrual-aware layout with `/mo` pill.",
+  "rca_of_issue": "Two backend gaps on parlourpilot.com production: (1) `monthly_accrual` field is silently dropped in LeavePolicy serialization (verified via curl — keys list omits it entirely), so every mobile screen that gates accrual UI on `pol.monthly_accrual` correctly falls back to classic layout for CLACCR; (2) POST /api/hr/leave-accruals/run returns 404 — the accrual runner route was never registered on the production API. Reproduction: curl -H 'Authorization: Bearer <owner_token>' https://parlourpilot.com/api/hr/leave-policies (missing field), curl -X POST -H 'Authorization: Bearer <owner_token>' https://parlourpilot.com/api/hr/leave-accruals/run (404). Mitigation: add the field to the Pydantic response model + register the accrual runner route on parlourpilot.com and re-seed CLACCR with monthly_accrual=true. Env swap itself did NOT cause any regression — all auth/role/branch/leave/attendance flows are unaffected."
+}

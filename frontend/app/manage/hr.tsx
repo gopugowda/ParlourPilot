@@ -81,6 +81,9 @@ export default function HRScreen() {
       try {
         const list = await api<Beautician[]>('/beauticians');
         setBeauticians((list || []).filter((b: any) => b.active !== false));
+      } catch (e) {
+        // Non-fatal: HR screen still renders (empty state); user retries by re-navigating.
+        setBeauticians([]);
       } finally {
         setLoadingBeauticians(false);
       }
@@ -124,7 +127,7 @@ export default function HRScreen() {
         <>
           {tab === 'attendance' && <AttendanceTab beauticians={beauticians} canManage={canManage} brand={brand} />}
           {tab === 'requests'   && <RequestsTab beauticians={beauticians} canManage={canManage} brand={brand} />}
-          {tab === 'balances'   && <BalancesTab beauticians={beauticians} brand={brand} />}
+          {tab === 'balances'   && <BalancesTab beauticians={beauticians} canManage={canManage} brand={brand} />}
           {tab === 'holidays'   && <HolidaysTab canManage={canManage} brand={brand} />}
           {tab === 'calendar'   && <EmployeeCalendarTab beauticians={beauticians} brand={brand} />}
           {tab === 'types'      && <LeaveTypesTab canManage={canManage} brand={brand} />}
@@ -359,12 +362,14 @@ function RequestsTab({ beauticians, canManage, brand }: { beauticians: Beauticia
 // =====================================================================
 // TAB 3 — Balances & History (employee picker)
 // =====================================================================
-function BalancesTab({ beauticians, brand }: { beauticians: Beautician[]; brand: string }) {
+function BalancesTab({ beauticians, canManage, brand }: { beauticians: Beautician[]; canManage: boolean; brand: string }) {
   const [empId, setEmpId] = useState(beauticians[0]?.id || '');
   const [year, setYear] = useState(new Date().getFullYear());
   const [balances, setBalances] = useState<any[]>([]);
   const [history, setHistory] = useState<LeaveRequest[]>([]);
+  const [accruals, setAccruals] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => { if (!empId && beauticians.length) setEmpId(beauticians[0].id); }, [beauticians, empId]);
@@ -373,12 +378,14 @@ function BalancesTab({ beauticians, brand }: { beauticians: Beautician[]; brand:
     if (!empId) return;
     setLoading(true);
     try {
-      const [bal, hist] = await Promise.all([
+      const [bal, hist, acc] = await Promise.all([
         hrApi.leaveBalances(empId, year),
         hrApi.leaveHistory({ beautician_id: empId, year }),
+        hrApi.leaveAccruals(empId, year).catch(() => ({ rows: [] })),
       ]);
       setBalances((bal as any).balances || []);
       setHistory(Array.isArray(hist) ? hist : (hist as any).rows || []);
+      setAccruals(((acc as any)?.rows || []).sort((a: any, b: any) => (a.month || 0) - (b.month || 0)));
     } catch (e: any) {
       Alert.alert('Load failed', e.message || String(e));
     } finally { setLoading(false); }
@@ -386,17 +393,36 @@ function BalancesTab({ beauticians, brand }: { beauticians: Beautician[]; brand:
 
   useEffect(() => { load(); }, [load]);
 
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      const res = await hrApi.runAccruals();
+      Alert.alert('Accrual complete', `Credited ${res.created} new entrie${res.created === 1 ? '' : 's'} across ${res.employees} employee${res.employees === 1 ? '' : 's'}.`);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Failed', e.message || String(e));
+    } finally { setRunning(false); }
+  };
+
   const emp = beauticians.find(b => b.id === empId);
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   return (
     <ScrollView refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={brand} />} contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
-      <TouchableOpacity onPress={() => setPickerOpen(true)} style={styles.dateRow}>
-        <Ionicons name="person-outline" size={18} color={brand} />
-        <Text style={styles.dateText}>{emp?.name || 'Select employee'}</Text>
-        <Ionicons name="chevron-down" size={16} color={colors.onSurfaceTertiary} />
-      </TouchableOpacity>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+        <TouchableOpacity onPress={() => setPickerOpen(true)} style={[styles.dateRow, { flex: 1, marginBottom: 0 }]}>
+          <Ionicons name="person-outline" size={18} color={brand} />
+          <Text style={styles.dateText}>{emp?.name || 'Select employee'}</Text>
+          <Ionicons name="chevron-down" size={16} color={colors.onSurfaceTertiary} />
+        </TouchableOpacity>
+        {canManage && (
+          <TouchableOpacity onPress={runNow} disabled={running} style={[styles.filterPill, { paddingHorizontal: 12, paddingVertical: 10, borderColor: brand, backgroundColor: '#fff' }]}>
+            {running ? <ActivityIndicator size="small" color={brand} /> : <Text style={[styles.filterPillText, { color: brand, fontWeight: '800' }]}>Run accrual now</Text>}
+          </TouchableOpacity>
+        )}
+      </View>
 
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: spacing.md }}>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: spacing.md, marginBottom: spacing.md }}>
         {[year - 1, year, year + 1].map(y => (
           <TouchableOpacity key={y} onPress={() => setYear(y)} style={[styles.filterPill, y === year && { backgroundColor: brand, borderColor: brand }]}>
             <Text style={[styles.filterPillText, y === year && { color: '#fff' }]}>{y}</Text>
@@ -407,17 +433,46 @@ function BalancesTab({ beauticians, brand }: { beauticians: Beautician[]; brand:
       <Text style={styles.sectionTitle}>Leave Balances</Text>
       {balances.length === 0 ? (
         <Empty icon="stats-chart-outline" title="No balances" hint="This employee has no leave-type entitlements yet." />
-      ) : balances.map(b => (
-        <View key={b.leave_type_id} style={styles.card}>
-          <View style={styles.rowHead}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>{b.leave_type_name} <Text style={styles.rowSub}>({b.code})</Text></Text>
-              <Text style={styles.rowSub}>Entitled {b.entitled} • Used {b.used} • Pending {b.pending}</Text>
+      ) : balances.map(b => {
+        const isAccrual = !!b.monthly_accrual;
+        return (
+          <View key={b.leave_type_id} style={styles.card}>
+            <View style={styles.rowHead}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text style={styles.rowTitle}>{b.leave_type_name} <Text style={styles.rowSub}>({b.code})</Text></Text>
+                  {isAccrual && (
+                    <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, backgroundColor: brand + '22' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: brand }}>{Number(b.monthly_accrual_amount ?? 0).toFixed(2)}/mo</Text>
+                    </View>
+                  )}
+                </View>
+                {isAccrual ? (
+                  <Text style={styles.rowSub}>Annual {b.entitled} • Accrued {Number(b.accrued ?? 0).toFixed(2)} • Used {b.used}</Text>
+                ) : (
+                  <Text style={styles.rowSub}>Entitled {b.entitled} • Used {b.used} • Pending {b.pending}</Text>
+                )}
+              </View>
+              <Text style={[styles.availableNum, { color: brand }]}>{Number(b.available ?? 0).toFixed(2)}</Text>
             </View>
-            <Text style={[styles.availableNum, { color: brand }]}>{b.available}</Text>
           </View>
-        </View>
-      ))}
+        );
+      })}
+
+      {accruals.length > 0 && (
+        <>
+          <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Monthly accrual history</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: spacing.md }}>
+            {accruals.map(a => (
+              <View key={a.id} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: brand + '15', borderWidth: 1, borderColor: brand + '33' }}>
+                <Text style={{ fontSize: 11, color: brand, fontWeight: '700' }}>
+                  {a.leave_type_code} {MONTHS[(a.month || 1) - 1]} {a.year} +{Number(a.amount ?? 0).toFixed(2).replace(/\.00$/, '')}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
 
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>History ({history.length})</Text>
       {history.length === 0 ? (
@@ -655,11 +710,18 @@ function LeaveTypesTab({ canManage, brand }: { canManage: boolean; brand: string
           <TouchableOpacity key={t.id} onPress={() => canManage && (setEditing(t), setModalOpen(true))} style={styles.card} disabled={!canManage}>
             <View style={styles.rowHead}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{t.name} <Text style={styles.rowSub}>({t.code})</Text></Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text style={styles.rowTitle}>{t.name} <Text style={styles.rowSub}>({t.code})</Text></Text>
+                  {(pol as any)?.monthly_accrual && (
+                    <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, backgroundColor: brand + '22' }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: brand }}>/mo</Text>
+                    </View>
+                  )}
+                </View>
                 <Text style={styles.rowSub}>
                   {t.paid ? 'Paid' : 'Unpaid'} • {t.allow_half_day ? 'Half day OK' : 'Full day only'} • {t.requires_approval ? 'Approval required' : 'Auto approve'}
                 </Text>
-                {pol && <Text style={styles.rowSub}>Entitlement: {pol.annual_entitlement}/year</Text>}
+                {pol && <Text style={styles.rowSub}>Entitlement: {pol.annual_entitlement}/year{(pol as any).monthly_accrual ? ` · accrues ${(pol.annual_entitlement / 12).toFixed(2)}/mo` : ''}</Text>}
               </View>
               {canManage && (
                 <TouchableOpacity onPress={() => del(t)} style={{ padding: 6 }}>
@@ -940,6 +1002,7 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
   const [halfDay, setHalfDay] = useState(true);
   const [needsApproval, setNeedsApproval] = useState(true);
   const [entitlement, setEntitlement] = useState('12');
+  const [monthlyAccrual, setMonthlyAccrual] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -950,23 +1013,33 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
       setHalfDay(editing?.allow_half_day ?? true);
       setNeedsApproval(editing?.requires_approval ?? true);
       setEntitlement(existingPolicy ? String(existingPolicy.annual_entitlement) : '12');
+      setMonthlyAccrual(!!((editing as any)?.policy?.monthly_accrual ?? (existingPolicy as any)?.monthly_accrual));
     }
   }, [visible, editing, existingPolicy]);
+
+  const annual = parseFloat(entitlement) || 0;
+  const perMonth = annual > 0 ? (annual / 12) : 0;
 
   const submit = async () => {
     if (!name.trim() || !code.trim()) { Alert.alert('Missing', 'Enter name and code.'); return; }
     setBusy(true);
     try {
+      const body: any = {
+        name, code: code.toUpperCase(), paid,
+        allow_half_day: halfDay, requires_approval: needsApproval,
+        monthly_accrual: monthlyAccrual,
+        annual_entitlement: annual,
+      };
       let lt: any;
-      if (editing) {
-        lt = await hrApi.updateLeaveType(editing.id, { name, code: code.toUpperCase(), paid, allow_half_day: halfDay, requires_approval: needsApproval });
-      } else {
-        lt = await hrApi.createLeaveType({ name, code: code.toUpperCase(), paid, allow_half_day: halfDay, requires_approval: needsApproval });
-      }
-      // Save policy if we have one
+      if (editing) lt = await hrApi.updateLeaveType(editing.id, body);
+      else lt = await hrApi.createLeaveType(body);
+      // Best-effort — legacy policy endpoint keeps annual/monthly_accrual in sync.
       const policyId = editing ? existingPolicy?.id : lt?.policy?.id;
       if (policyId) {
-        await hrApi.saveLeavePolicy(policyId, { annual_entitlement: parseFloat(entitlement) || 0 } as any).catch(() => {});
+        await hrApi.saveLeavePolicy(policyId, {
+          annual_entitlement: annual,
+          monthly_accrual: monthlyAccrual,
+        } as any).catch(() => {});
       }
       onSaved();
     } catch (e: any) { Alert.alert('Failed', e.message || String(e)); }
@@ -985,6 +1058,18 @@ function LeaveTypeModal({ visible, onClose, onSaved, editing, existingPolicy, br
             <TextInput value={code} onChangeText={setCode} autoCapitalize="characters" placeholder="CL" style={styles.formInput} maxLength={6} />
             <Text style={styles.formLabel}>Annual Entitlement (days)</Text>
             <TextInput value={entitlement} onChangeText={setEntitlement} keyboardType="numeric" style={styles.formInput} />
+
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.formLabel}>Monthly accrual (Annual ÷ 12 each month)</Text>
+                {monthlyAccrual && annual > 0 && (
+                  <Text style={{ fontSize: 11, color: colors.brandPrimary, marginTop: 2 }}>
+                    Accrues {perMonth.toFixed(2)} day/month, credited on each month{"'"}s last day from the Joined Date.
+                  </Text>
+                )}
+              </View>
+              <Switch value={monthlyAccrual} onValueChange={setMonthlyAccrual} trackColor={{ true: brand + '55' }} thumbColor={monthlyAccrual ? brand : '#f4f3f4'} />
+            </View>
 
             <View style={styles.switchRow}>
               <Text style={styles.formLabel}>Paid leave</Text>

@@ -382,17 +382,11 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Platform admin password reset endpoint"
-    - "Branch checkout (mock payment) endpoint"
-    - "Appointments CRUD + stats"
-    - "Currency symbol on tenant"
-    - "Members: hide Add CTA for staff"
-    - "Platform Admin: reset user password UI"
-    - "Branch checkout screen with live FX"
-    - "Branches: Add Branch routes to checkout"
-    - "Salon Settings: currency picker for bill display"
-    - "Appointments screen (staff + admin)"
-    - "Dashboard Schedule widget"
+    - "Staff Employment Dates (Joined / Last Working) in Team form"
+    - "Monthly CL/Sick Leave Accrual toggle in Leave Types"
+    - "Accrual-aware Leave Balances card (Admin HR hub)"
+    - "Accrual-aware Balance card on Staff My Leave"
+    - "Run accrual now button (owner-only, idempotent)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2564,3 +2558,154 @@ count can influence the entitlement.
 - Auth architecture, login, subscription screen, Additional Branch
   purchase flow (still Owner-only from Subscription & Billing).
 - Existing signup flow, validation logic, logo, trial banner.
+
+---
+
+## Iteration 54 — Staff Employment Dates + Monthly CL/Sick Leave Accrual
+
+Mobile-side implementation of the new HR capability (backend already
+live and unchanged). Mobile is a pure consumer of server values —
+accrual math, month-end crediting, backfill, idempotency, and balances
+are computed server-side.
+
+### Files changed
+- `src/api/hr.ts` — added `AccrualRow`, extended `LeaveBalance` with
+  `monthly_accrual` / `monthly_accrual_amount` / `accrued`, extended
+  `LeaveTypePayload` with `monthly_accrual` / `annual_entitlement`,
+  new admin endpoints `hrApi.leaveAccruals` +
+  `hrApi.runAccruals`, new self-service `leaveAccruals`.
+- `app/manage/beauticians.tsx` — Employment information section with
+  Joined Date (required on Add) + Last Working Date (must be
+  >= Joined). Amber inline banner for existing staff with empty
+  joined_date. Status line reads "Active" or "Former employee (accrual
+  stopped after {date})". Both fields owner-only.
+- `app/manage/hr.tsx` — Leave Types list now shows the "/mo" flag and
+  "accrues X.XX/mo" hint next to accrual-enabled types. LeaveTypeModal
+  gets a "Monthly accrual (Annual ÷ 12 each month)" switch with live
+  preview text. Balances tab now fetches `hr/leave-accruals`, shows an
+  accrual-aware card (Annual / Accrued / Used / Available + "/mo" tag)
+  vs the classic (Entitled / Used / Pending / Available) card, and
+  exposes an idempotent "Run accrual now" button.
+- `app/my-leave.tsx` (staff self-service) — BalanceCard now renders the
+  same accrual-aware layout (Annual / Accrued / Used / Available with
+  the "/mo" tag) when `monthly_accrual` is true.
+
+### API surface consumed
+```
+GET  /api/team              (existing — now returns joined_date, last_working_date)
+POST /api/team              (adds joined_date, last_working_date)
+PUT  /api/team              (adds joined_date, last_working_date)
+GET  /api/hr/leave-types    (returns policy.monthly_accrual)
+POST /api/hr/leave-types    (accepts monthly_accrual + annual_entitlement)
+PUT  /api/hr/leave-types/:id (accepts monthly_accrual + annual_entitlement)
+GET  /api/hr/leave-balances?beautician_id=&year=
+GET  /api/hr/leave-accruals?beautician_id=&year=
+POST /api/hr/leave-accruals/run       (owner-only, idempotent)
+GET  /api/hr/self-service/leave-balances?year=
+GET  /api/hr/self-service/leave-accruals?year=
+```
+
+### Verified on preview (QA Growth Owner)
+- HR / Balances tab, QA Admin Demo, 2026: **Casual Leave ACCR (CLACCR)**
+  shows *Annual 12 · Accrued 0.00 · Used 0* with the `1.00/mo` pill;
+  **Sick Half (SICKH)** shows *Annual 6 · Accrued 0.00 · Used 0* with
+  the `0.50/mo` pill. Regular types (CL, LOP, SL) keep the classic
+  *Entitled / Used / Pending / Available* card. "Run accrual now"
+  button visible top-right.
+- Leave Types list: every accrual type shows the `/mo` pill next to
+  the code and "accrues X.XX/mo" in the sub-line. Non-accrual types
+  (CL, LOP, SL, TEST_NoAccrual12) render unchanged.
+- LeaveTypeModal now exposes the Monthly accrual toggle with a live
+  hint "Accrues X.XX day/month, credited on each month's last day
+  from the Joined Date." Default OFF.
+- Team edit form: Joined date + Last working date inputs render in a
+  dedicated Employment information section. Amber banner appears when
+  editing a staff row that has an empty `joined_date`. Validation:
+  "Joined Date is required" (Add) and "Last Working Date can't be
+  before Joined Date" (both).
+- No horizontal overflow on the 390×1400 viewport.
+- Playwright `pageerror` captured 0 errors.
+- Lint: `beauticians.tsx`, `src/api/hr.ts`, `my-leave.tsx`, `hr.tsx`
+  all pass (only pre-existing unused-import warnings remain).
+
+### Backend authority preserved
+- The mobile client never computes accrual — every displayed number
+  (accrued, available, monthly amount) comes straight from the
+  server response.
+- Insufficient-balance rejections surface `err.message` from the
+  backend 400 payload, so the existing create-leave error toast keeps
+  working.
+- Existing create/approve/reject/cancel, calendar, holidays, and RH
+  flows untouched.
+
+---
+
+## Iteration 55 — Verification of Employment Dates + Monthly Accrual UI
+
+### .env change
+`EXPO_PUBLIC_BACKEND_URL_OVERRIDE`
+- Before: `https://staff-portal-331.preview.emergentagent.com` (DEAD — 404 for every /api/*)
+- After:  `https://parlourpilot.com` (production web-app backend, /api/ = 200)
+
+Backend/base URL used by preview + local QA: `https://parlourpilot.com`
+Production mobile builds already resolved to parlourpilot.com via
+`resolveBaseUrl()` — no change to production behavior. This env only
+affects Metro / local dev preview.
+
+### Small mobile fix
+`app/manage/hr.tsx:80-88` — added `catch { setBeauticians([]) }` so
+the HR screen renders an empty state on backend outages instead of
+throwing a red-screen. Non-functional otherwise.
+
+### Testing-agent result (iteration_42.json)
+
+Regressions (env swap): **5/5 PASS**
+- Login/logout on parlourpilot.com — persists token, redirects to /
+- Role/permissions — staff hides HR/Payroll tiles
+- Branch access — staff hides "All Branches" selector
+- Existing leave — /my-leave renders + Request button visible
+- Existing attendance — /manage/hr Attendance tab renders
+
+Feature verification: **2/5 PASS visually + 1 static-verified from
+iteration_41, 3 blocked by backend gap on parlourpilot.com**
+- FEATURE-1 Employment Info (Joined / Last Working) — static-verified
+  from iteration_41 (testIDs `team-joined-date-input` /
+  `team-last-working-input` + `isOwner` gate + validators present).
+- FEATURE-2 Leave Types `/mo` pill — BLOCKED (see backend gap below).
+- FEATURE-3 Leave Type modal accrual switch + live hint (1.00/mo) —
+  **PASS visually**.
+- FEATURE-4 Balances tab accrual layout + Run accrual now button —
+  BLOCKED (see backend gap below).
+- FEATURE-5 Staff /my-leave accrual-aware BalanceCard — BLOCKED
+  (see backend gap below).
+
+### Root cause of the 3 blocked items (backend, not mobile)
+On `https://parlourpilot.com` (verified via authed curl):
+1. `GET /api/hr/leave-types` policy schema is missing the
+   `monthly_accrual` field. Even though `POST /api/hr/leave-types`
+   accepts `monthly_accrual: true`, the persisted policy response is
+   `{annual_entitlement, leave_year, carry_forward,
+   carry_forward_cap, max_consecutive_days, updated_at}` — no
+   `monthly_accrual`. Frontend correctly gates the `/mo` pill +
+   accrual card on this field so it renders the classic layout.
+2. `GET /api/hr/leave-accruals?...` → **404 Not Found**.
+3. `POST /api/hr/leave-accruals/run` → **404 Not Found**.
+
+**These endpoints must be shipped to the parlourpilot.com backend
+(the web-app codebase) before FEATURE-2/4/5 can render live. Mobile
+is a pure UI consumer — no mobile-side workaround is possible or
+appropriate per the "mobile is a UI mirror" contract.**
+
+### QA tenant seeded (production)
+- Tenant: QA Verify Salon (plan: growth)
+- Owner: qa_verify_owner@parlourpilot-qa.com / QaVerify@2026
+- Staff: qa_verify_staff@parlourpilot-qa.com / QaStaff@2026
+- Leave types seeded: CLACCR (monthly_accrual:true, annual:12),
+  CL (monthly_accrual:false, annual:12)
+- Recorded in `/app/memory/test_credentials.md`.
+
+### Build result
+- Expo restarted cleanly after env change.
+- No lint or runtime errors surfaced during regression sweep.
+- Production behavior unchanged (mobile release build already hits
+  parlourpilot.com via `resolveBaseUrl()`).

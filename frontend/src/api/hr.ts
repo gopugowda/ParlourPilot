@@ -50,6 +50,20 @@ export type LeaveBalance = {
   used: number;
   pending: number;
   available: number;
+  // Present when this type accrues monthly (server-computed):
+  monthly_accrual?: boolean;
+  monthly_accrual_amount?: number;
+  accrued?: number;
+};
+
+export type AccrualRow = {
+  id: string;
+  leave_type_code: string;
+  leave_type_name?: string;
+  year: number;
+  month: number; // 1..12
+  amount: number;
+  source?: string;
 };
 
 export type LeaveBalancesResponse = {
@@ -134,6 +148,10 @@ export const hrSelfServiceApi = {
 
   leaveBalances: (year?: number): Promise<LeaveBalancesResponse> =>
     api(P(`/leave-balances${year ? `?year=${year}` : ''}`)),
+
+  // Monthly accrual history for the logged-in staff (identity from JWT).
+  leaveAccruals: (year?: number): Promise<{ rows: AccrualRow[] }> =>
+    api(P(`/leave-accruals${year ? `?year=${year}` : ''}`)),
 
   leaveRequests: (status?: LeaveStatus): Promise<{ beautician_id: string; rows: LeaveRequest[] }> =>
     api(P(`/leave-requests${status ? `?status=${status}` : ''}`)),
@@ -222,6 +240,9 @@ export type LeaveTypePayload = {
   requires_attachment?: boolean;
   active?: boolean;
   branch_ids?: string[];
+  // NEW — server accrues Annual/12 at each month's last day when true.
+  monthly_accrual?: boolean;
+  annual_entitlement?: number;
 };
 
 export type HolidayPayload = {
@@ -303,6 +324,12 @@ export const hrApi = {
   },
   leaveAudit: (limit = 50): Promise<{ rows: LeaveAuditRow[] }> =>
     api(`/hr/leave-audit?limit=${limit}`),
+
+  // ---- Monthly leave accruals (server-side, backend authoritative) ----
+  leaveAccruals: (beautician_id: string, year: number): Promise<{ rows: AccrualRow[] }> =>
+    api(`/hr/leave-accruals?beautician_id=${beautician_id}&year=${year}`),
+  runAccruals: (): Promise<{ ok: boolean; created: number; employees: number }> =>
+    api('/hr/leave-accruals/run', { method: 'POST' }),
 
   // ---- Holidays --------------------------------------------------------
   listHolidays: (year?: number): Promise<Holiday_[]> =>

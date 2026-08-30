@@ -364,27 +364,49 @@ function BalanceCard({ b }: { b: LeaveBalance }) {
   const paidPill = b.paid
     ? <View style={[styles.pill, { backgroundColor: '#DDF3E4' }]}><Text style={[styles.pillText, { color: colors.success }]}>PAID</Text></View>
     : <View style={[styles.pill, { backgroundColor: '#FDECEC' }]}><Text style={[styles.pillText, { color: colors.error }]}>UNPAID</Text></View>;
+  const isAccrual = !!b.monthly_accrual;
   return (
     <View style={styles.balCard} testID={`bal-${b.code}`}>
       <View style={styles.balHead}>
         <View style={{ flex: 1 }}>
           <Text style={styles.balName}>{b.leave_type_name}</Text>
-          <Text style={styles.balCode}>{b.code}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={styles.balCode}>{b.code}</Text>
+            {isAccrual && (
+              <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.brandPrimary + '22' }}>
+                <Text style={{ fontSize: 9, fontWeight: '800', color: colors.brandPrimary }}>
+                  {Number(b.monthly_accrual_amount ?? 0).toFixed(2)}/mo
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
         {paidPill}
       </View>
       <View style={styles.balStats}>
-        <BalStat label="Entitled" value={b.entitled} />
-        <BalStat label="Used" value={b.used} />
-        <BalStat label="Pending" value={b.pending} warn={b.pending > 0} />
-        <BalStat label="Available" value={b.available} highlight />
+        {isAccrual ? (
+          <>
+            <BalStat label="Annual" value={b.entitled} />
+            <BalStat label="Accrued" value={Number(b.accrued ?? 0)} />
+            <BalStat label="Used" value={b.used} />
+            <BalStat label="Available" value={b.available} highlight />
+          </>
+        ) : (
+          <>
+            <BalStat label="Entitled" value={b.entitled} />
+            <BalStat label="Used" value={b.used} />
+            <BalStat label="Pending" value={b.pending} warn={b.pending > 0} />
+            <BalStat label="Available" value={b.available} highlight />
+          </>
+        )}
       </View>
     </View>
   );
 }
 
 function BalStat({ label, value, highlight, warn }: { label: string; value: number; highlight?: boolean; warn?: boolean }) {
-  const v = Number.isInteger(value) ? String(value) : value.toFixed(1);
+  const num = Number(value ?? 0);
+  const v = Number.isInteger(num) ? String(num) : num.toFixed(2);
   return (
     <View style={styles.balStat}>
       <Text style={styles.balStatLabel}>{label}</Text>

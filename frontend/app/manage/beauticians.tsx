@@ -35,6 +35,8 @@ type TeamMember = {
   is_owner_locked: boolean;
   is_owner?: boolean;
   permissions?: Partial<Record<PermissionKey, boolean>>;
+  joined_date?: string;
+  last_working_date?: string;
 };
 
 const ROLE_SUGGESTIONS = ['Stylist', 'Senior Stylist', 'Manager', 'Therapist', 'Beautician', 'Assistant', 'Receptionist'];
@@ -98,6 +100,8 @@ export default function TeamScreen() {
   const [idType, setIdType] = useState('Aadhaar');
   const [idNumber, setIdNumber] = useState('');
   const [active, setActive] = useState(true);
+  const [joinedDate, setJoinedDate] = useState('');
+  const [lastWorkingDate, setLastWorkingDate] = useState('');
 
   // ---- Per-user permissions (11 booleans). Owner row → ignored on save. ----
   const initialPerms = (): Record<PermissionKey, boolean> => {
@@ -152,6 +156,7 @@ export default function TeamScreen() {
     setBasicSalary(''); setWorkStart('10:00'); setWorkEnd('20:00');
     setWeekOff([]); setCommissionPct(''); setMonthlyTarget('');
     setAddress(''); setIdType('Aadhaar'); setIdNumber(''); setActive(true);
+    setJoinedDate(''); setLastWorkingDate('');
     setErr(null); setEmailErr(null); setPwdErr(null);
     // New members: default ALL permissions OFF (owner enables what they need).
     setPerms(initialPerms());
@@ -179,6 +184,8 @@ export default function TeamScreen() {
     setIdType(m.id_type || 'Aadhaar');
     setIdNumber(m.id_number || '');
     setActive(m.is_active !== false);
+    setJoinedDate(m.joined_date || '');
+    setLastWorkingDate(m.last_working_date || '');
     // Load per-user permissions (all defaults false if missing).
     const p = initialPerms();
     if (m.permissions) {
@@ -228,6 +235,13 @@ export default function TeamScreen() {
       if (password !== password2) { setPwdErr('Passwords do not match'); return; }
     }
 
+    // ---- Employment date validation (Joined = required on add) -------
+    const isNew2 = !editing;
+    if (isNew2 && !joinedDate) { setErr('Joined Date is required'); return; }
+    if (lastWorkingDate && joinedDate && lastWorkingDate < joinedDate) {
+      setErr("Last Working Date can't be before Joined Date"); return;
+    }
+
     setSaving(true);
     try {
       const asNum = (v: string) => { const n = Number(String(v || '').trim()); return Number.isFinite(n) ? n : 0; };
@@ -249,6 +263,8 @@ export default function TeamScreen() {
         address: address.trim(),
         id_type: idType,
         id_number: idNumber.trim(),
+        joined_date: joinedDate || null,
+        last_working_date: lastWorkingDate || null,
       };
       if (password) body.password = password;
       // Permissions: only send for non-owner. Owner is always full access on backend.
@@ -631,6 +647,56 @@ export default function TeamScreen() {
                        try to change these). We hide them entirely for admins. ---- */}
                 {isOwner && (
                   <>
+                    {/* ---- Employment information (drives leave accrual) ---- */}
+                    <View style={styles.field}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="briefcase-outline" size={14} color={colors.brandPrimary} />
+                        <Text style={[styles.label, { color: colors.brandPrimary, marginBottom: 0 }]}>Employment information</Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4, marginBottom: 8 }}>
+                        Joined Date is the actual employment start — it drives monthly leave accrual (not the date added here).
+                      </Text>
+                      {editing && !editing.is_owner_locked && !editing.joined_date && (
+                        <View style={{ backgroundColor: '#FFF6E0', borderColor: '#F0C060', borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8, flexDirection: 'row', gap: 6 }}>
+                          <Ionicons name="alert-circle-outline" size={14} color="#8A5300" />
+                          <Text style={{ flex: 1, fontSize: 11, color: '#8A5300' }}>
+                            Joined Date required — set it to enable monthly leave accrual for this staff member.
+                          </Text>
+                        </View>
+                      )}
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.label}>Joined date *</Text>
+                          <TextInput
+                            testID="team-joined-date-input"
+                            value={joinedDate}
+                            onChangeText={setJoinedDate}
+                            placeholder="YYYY-MM-DD"
+                            placeholderTextColor={colors.onSurfaceTertiary}
+                            style={styles.input}
+                            autoCapitalize="none"
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.label}>Last working date <Text style={{ color: colors.onSurfaceTertiary, fontWeight: '400' }}>(if left)</Text></Text>
+                          <TextInput
+                            testID="team-last-working-input"
+                            value={lastWorkingDate}
+                            onChangeText={setLastWorkingDate}
+                            placeholder="YYYY-MM-DD"
+                            placeholderTextColor={colors.onSurfaceTertiary}
+                            style={styles.input}
+                            autoCapitalize="none"
+                          />
+                        </View>
+                      </View>
+                      {joinedDate ? (
+                        <Text style={{ fontSize: 11, marginTop: 6, color: lastWorkingDate ? colors.onSurfaceTertiary : colors.success, fontWeight: '600' }}>
+                          Status: {lastWorkingDate ? `Former employee (accrual stopped after ${lastWorkingDate})` : 'Active'}
+                        </Text>
+                      ) : null}
+                    </View>
+
                     {/* ---- Job title (Role) ---- */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Job title</Text>

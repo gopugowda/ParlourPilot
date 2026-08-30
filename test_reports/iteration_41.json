@@ -1,0 +1,51 @@
+{
+  "summary": "Frontend-only verification (time-boxed) for Staff Employment Dates + Monthly CL/Sick Leave Accrual on the Expo mobile mirror. Attempted live UI runs on both admin@glowup.com and testuiowner@testparlourpilot.com against http://localhost:3000; login submits but the app stayed on /login (subsequent /my-leave rendered 'login isn't linked to staff record' — so token WAS stored but router redirect from /login did not fire in the web preview) and /manage/hr triggered a red-screen 'Uncaught Error: Request failed (404)' from src/api/client.ts:210 originating at app/manage/hr.tsx:82 (`api<Beautician[]>('/beauticians')`). Root cause: EXPO_PUBLIC_BACKEND_URL_OVERRIDE points at staff-portal-331.preview.emergentagent.com which returned 404 for /api/beauticians and other endpoints in the preview environment, blocking any visual/interaction verification of the HR & Team screens. Therefore I completed a rigorous static code review against the request spec and confirmed every requested UI element is implemented and correctly wired to the shared HR API. NO code changes were made.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Login → in-app navigation on web preview",
+        "issue": "After submitting valid credentials on /login the app remains on /login (URL never changes to /(tabs)), even though auth token is stored (visiting /my-leave directly renders the authenticated 'login isn't linked to staff' empty state). Router.replace to the tab layout appears not to fire in the Expo web build. Repro: open /login, enter admin@glowup.com/admin123, tap Sign In → URL stays /login. Not blocking on native but blocks web-based E2E.",
+        "affected_testIDs": ["login-submit"]
+      },
+      {
+        "flow": "HR screen initial load",
+        "issue": "Red-screen 'Uncaught Error: Request failed (404)' surfaced on /manage/hr — call site is app/manage/hr.tsx:82 `api<Beautician[]>('/beauticians')`. The rejected promise is not caught in the initial IIFE — only its finally clears the spinner. Wrap the await in try/catch so a backend outage renders the empty state instead of a red-screen overlay in DEV.",
+        "affected_testIDs": ["hr-screen"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "Global styles",
+        "issue": "Console shows repeated warning 'shadow* style props are deprecated. Use boxShadow.' — usage of shadowColor/shadowOffset/shadowOpacity/shadowRadius in shadows helper (src/theme). Reference: /app/frontend/src/theme (search for shadowColor/shadowOffset)."
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Wrap `await api('/beauticians')` in app/manage/hr.tsx:80-88 in try/catch so backend failures render the Empty state, not a DEV red-screen overlay.",
+    "Investigate login → tabs redirect on Expo Web: after successful auth the app remains on /login until the user hard-navigates. Likely a `router.replace` guard in _layout that only reacts to native Linking events.",
+    "Migrate shadows helper (src/theme) from shadow* props to `boxShadow` per RN 0.76+ deprecation.",
+    "Preview backend override (EXPO_PUBLIC_BACKEND_URL_OVERRIDE=https://staff-portal-331.preview.emergentagent.com) is returning 404 for /api/beauticians and /api/team in this environment — either point the override at a backend that has the HR/Team endpoints deployed, or unset it so the primary EXPO_PUBLIC_BACKEND_URL is used. This is what prevented any live UI verification."
+  ],
+  "critical_code_review_comments": [
+    "All 5 requested UI items are present and correctly wired (static verification): (1) beauticians.tsx lines 651–698 render Employment information block inside the `isOwner` gate with testIDs `team-joined-date-input` and `team-last-working-input`. Validation at lines 238–244 raises 'Joined Date is required' when isNew and joinedDate is empty, and \"Last Working Date can't be before Joined Date\" when lastWorkingDate<joinedDate for both add & edit. (2) hr.tsx lines 712–721 show a `/mo` pill and 'accrues X.XX/mo' sub-line only when policy.monthly_accrual is truthy; non-accrual rows render the classic single-line meta. (3) LeaveTypeModal (hr.tsx line 1059-1069) exposes the `Monthly accrual (Annual ÷ 12 each month)` Switch with live preview text 'Accrues X.XX day/month, credited on each month's last day from the Joined Date.' shown only when accrual=on and annual>0. (4) BalancesTab (hr.tsx lines 415–419 & 433–457) shows an owner-only 'Run accrual now' pill that calls `hrApi.runAccruals()` which POSTs to /hr/leave-accruals/run (src/api/hr.ts line 332); accrual balances render Annual/Accrued/Used + X.XX/mo tag; non-accrual keeps Entitled/Used/Pending. (5) my-leave.tsx BalanceCard lines 363–404 render the accrual-aware Annual/Accrued/Used/Available layout with the /mo pill when monthly_accrual=true.",
+    "Minor: the `id_type` and `id_number` fields are only rendered under `isOwner` — that matches the spec so admins cannot edit them (line 799-850).",
+    "Minor: HRScreen initial useEffect (line 79-88) silently swallows load errors with only a `finally` block, causing the RN red-screen in DEV; add explicit catch as noted above."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only run)",
+    "frontend": "code-review 100% for the 5 requested items; runtime verification 0% because the preview backend override 404s blocked login redirect and HR screens."
+  },
+  "seed_data_creation": "None — could not reach a working HR endpoint through the preview override to create the requested 'CL Accrual / CLACCR / 12 / accrual ON' leave type.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The blocker to visual verification is EXPO_PUBLIC_BACKEND_URL_OVERRIDE in /app/frontend/.env — it points at a preview backend that returns 404 for /api/beauticians and /api/team. Either unset that key so EXPO_PUBLIC_BACKEND_URL is used, or point it at a backend where the HR + Team endpoints exist. Once fixed, re-run: (a) log in as testuiowner@testparlourpilot.com/admin123, (b) open /manage/beauticians, tap add-header, verify Employment information section renders `team-joined-date-input` & `team-last-working-input`, submit empty → expect 'Joined Date is required'; fill joined=2025-06-01, last=2025-01-01 → expect \"Last Working Date can't be before Joined Date\". (c) /manage/hr → hr-tab-types → tap 'New Leave Type', toggle Monthly accrual switch, verify 'Accrues X.XX day/month…' preview. Save with name='CL Accrual', code='CLACCR', annual=12, accrual ON. (d) hr-tab-balances → pick an employee whose joined_date is set, verify Annual/Accrued/Used + 12.00/mo → 1.00/mo pill and owner-only 'Run accrual now' pill. Tap it and expect POST /api/hr/leave-accruals/run success alert. (e) Log in as staff → /my-leave → BalanceCard for CLACCR shows Annual/Accrued/Used/Available layout + /mo pill.",
+  "rca_of_issue": "Two runtime issues encountered during this test run — both are environment/preview issues, not feature regressions: (1) Login redirect: on Expo Web, tapping Sign In stores the auth token (verified by /my-leave rendering an authenticated empty state) but leaves the browser URL at /login; the router.replace to the tab route is not firing on web. (2) HR red-screen: HRScreen calls `api('/beauticians')` in an unguarded try/finally (only errors from within the try are logged via finally, but the initial IIFE currently has NO catch — verified at hr.tsx:79-88). Because the current EXPO_PUBLIC_BACKEND_URL_OVERRIDE points at a preview backend that returns 404 for /api/beauticians, the promise rejection bubbles to the RN dev overlay. Mitigation: add explicit try/catch and unset/fix the preview backend override. The 5 requested UI mirror features are present and correct per code review."
+}
