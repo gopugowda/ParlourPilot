@@ -501,6 +501,7 @@ function BalancesTab({ beauticians, canManage, brand }: { beauticians: Beauticia
 function HolidaysTab({ canManage, brand }: { canManage: boolean; brand: string }) {
   const [year, setYear] = useState(new Date().getFullYear());
   const [rows, setRows] = useState<Holiday_[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [rhConfig, setRhConfig] = useState<number>(0);
   const [editing, setEditing] = useState<Holiday_ | null>(null);
@@ -509,9 +510,14 @@ function HolidaysTab({ canManage, brand }: { canManage: boolean; brand: string }
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [hs, cfg] = await Promise.all([hrApi.listHolidays(year), hrApi.rhConfig().catch(() => ({ rh_entitlement: 0 }))]);
+      const [hs, cfg, brs] = await Promise.all([
+        hrApi.listHolidays(year),
+        hrApi.rhConfig().catch(() => ({ rh_entitlement: 0 })),
+        api<{ id: string; name: string }[]>('/branches').catch(() => []),
+      ]);
       setRows(hs || []);
       setRhConfig(cfg.rh_entitlement || 0);
+      setBranches(brs || []);
     } catch (e: any) {
       Alert.alert('Load failed', e.message || String(e));
     } finally { setLoading(false); }
@@ -553,24 +559,33 @@ function HolidaysTab({ canManage, brand }: { canManage: boolean; brand: string }
 
       {rows.length === 0 ? (
         <Empty icon="gift-outline" title="No holidays" hint="No holidays configured for this year." />
-      ) : rows.map(h => (
-        <TouchableOpacity key={h.id} style={styles.card} onPress={() => canManage && (setEditing(h), setModalOpen(true))} disabled={!canManage}>
-          <View style={styles.rowHead}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>{h.name}</Text>
-              <Text style={styles.rowSub}>{new Date(h.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })} • {h.paid ? 'Paid' : 'Unpaid'}</Text>
+      ) : rows.map(h => {
+        const bids = (h as any).branch_ids as string[] | undefined;
+        const branchLabel = !bids || bids.length === 0
+          ? 'All branches'
+          : (bids.map(id => branches.find(b => b.id === id)?.name).filter(Boolean).join(', ') || `${bids.length} branch${bids.length === 1 ? '' : 'es'}`);
+        return (
+          <TouchableOpacity key={h.id} style={styles.card} onPress={() => canManage && (setEditing(h), setModalOpen(true))} disabled={!canManage}>
+            <View style={styles.rowHead}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>{h.name}</Text>
+                <Text style={styles.rowSub}>{new Date(h.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })} • {h.paid ? 'Paid' : 'Unpaid'}</Text>
+                <Text style={[styles.rowSub, { color: colors.onSurfaceTertiary }]}>
+                  Applicable to <Text style={{ fontWeight: '700', color: colors.onSurfaceSecondary }}>{branchLabel}</Text>
+                </Text>
+              </View>
+              <View style={[styles.badge, { backgroundColor: (h.holiday_type === 'restricted' ? '#F0E6FA' : '#DFEAF7') }]}>
+                <Text style={[styles.badgeText, { color: h.holiday_type === 'restricted' ? '#8A5CB8' : '#3F6C9C' }]}>{h.holiday_type === 'restricted' ? 'RH' : 'Public'}</Text>
+              </View>
+              {canManage && (
+                <TouchableOpacity onPress={() => del(h)} style={{ padding: 6, marginLeft: 6 }}>
+                  <Ionicons name="trash-outline" size={18} color={colors.error} />
+                </TouchableOpacity>
+              )}
             </View>
-            <View style={[styles.badge, { backgroundColor: (h.holiday_type === 'restricted' ? '#F0E6FA' : '#DFEAF7') }]}>
-              <Text style={[styles.badgeText, { color: h.holiday_type === 'restricted' ? '#8A5CB8' : '#3F6C9C' }]}>{h.holiday_type === 'restricted' ? 'RH' : 'Public'}</Text>
-            </View>
-            {canManage && (
-              <TouchableOpacity onPress={() => del(h)} style={{ padding: 6, marginLeft: 6 }}>
-                <Ionicons name="trash-outline" size={18} color={colors.error} />
-              </TouchableOpacity>
-            )}
-          </View>
-        </TouchableOpacity>
-      ))}
+          </TouchableOpacity>
+        );
+      })}
 
       <HolidayModal
         visible={modalOpen}
@@ -578,6 +593,7 @@ function HolidaysTab({ canManage, brand }: { canManage: boolean; brand: string }
         onSaved={() => { setModalOpen(false); load(); }}
         editing={editing}
         brand={brand}
+        branches={branches}
       />
     </ScrollView>
   );
@@ -989,12 +1005,13 @@ function CreateLeaveModal({ visible, onClose, onCreated, beauticians, types, bra
   );
 }
 
-function HolidayModal({ visible, onClose, onSaved, editing, brand }:
-  { visible: boolean; onClose: () => void; onSaved: () => void; editing: Holiday_ | null; brand: string }) {
+function HolidayModal({ visible, onClose, onSaved, editing, brand, branches }:
+  { visible: boolean; onClose: () => void; onSaved: () => void; editing: Holiday_ | null; brand: string; branches: { id: string; name: string }[] }) {
   const [name, setName] = useState('');
   const [date, setDate] = useState(ymd());
   const [type, setType] = useState<'public' | 'restricted'>('public');
   const [paid, setPaid] = useState(true);
+  const [branchIds, setBranchIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [showCal, setShowCal] = useState(false);
 
@@ -1004,15 +1021,22 @@ function HolidayModal({ visible, onClose, onSaved, editing, brand }:
       setDate(editing?.date || ymd());
       setType((editing?.holiday_type as any) || 'public');
       setPaid(editing?.paid ?? true);
+      setBranchIds(Array.isArray((editing as any)?.branch_ids) ? [...((editing as any).branch_ids as string[])] : []);
     }
   }, [visible, editing]);
+
+  const toggleBranch = (id: string) => {
+    setBranchIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const allBranchesSelected = branchIds.length === 0;
 
   const submit = async () => {
     if (!name.trim()) { Alert.alert('Missing', 'Enter a holiday name.'); return; }
     setBusy(true);
     try {
-      if (editing) await hrApi.updateHoliday(editing.id, { name, date, holiday_type: type, paid });
-      else await hrApi.createHoliday({ name, date, holiday_type: type, paid });
+      const payload: any = { name, date, holiday_type: type, paid, branch_ids: branchIds };
+      if (editing) await hrApi.updateHoliday(editing.id, payload);
+      else await hrApi.createHoliday(payload);
       onSaved();
     } catch (e: any) { Alert.alert('Failed', e.message || String(e)); }
     finally { setBusy(false); }
@@ -1021,27 +1045,67 @@ function HolidayModal({ visible, onClose, onSaved, editing, brand }:
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.modalScrim} onPress={onClose}>
-        <Pressable style={styles.modalCard} onPress={e => e.stopPropagation()}>
-          <Text style={styles.modalTitle}>{editing ? 'Edit Holiday' : 'New Holiday'}</Text>
-          <Text style={styles.formLabel}>Name *</Text>
-          <TextInput value={name} onChangeText={setName} placeholder="e.g. Diwali" style={styles.formInput} />
-          <Text style={styles.formLabel}>Date *</Text>
-          <TouchableOpacity onPress={() => setShowCal(true)} style={styles.formInput}><Text>{date}</Text></TouchableOpacity>
-          <Text style={styles.formLabel}>Type</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {(['public', 'restricted'] as const).map(t => (
-              <TouchableOpacity key={t} onPress={() => setType(t)} style={[styles.filterPill, type === t && { backgroundColor: brand, borderColor: brand }]}>
-                <Text style={[styles.filterPillText, type === t && { color: '#fff' }]}>{t === 'public' ? 'Public' : 'Restricted'}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md }}>
-            <Text style={styles.formLabel}>Paid holiday</Text>
-            <Switch value={paid} onValueChange={setPaid} trackColor={{ true: brand + '55', false: '#ccc' }} thumbColor={paid ? brand : '#f4f3f4'} />
-          </View>
-          <TouchableOpacity onPress={submit} disabled={busy} style={[styles.primaryBtn, { backgroundColor: brand, marginTop: spacing.md }]}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save Holiday</Text>}
-          </TouchableOpacity>
+        <Pressable style={[styles.modalCard, { maxHeight: '92%' }]} onPress={e => e.stopPropagation()}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.md }}>
+            <Text style={styles.modalTitle}>{editing ? 'Edit Holiday' : 'New Holiday'}</Text>
+            <Text style={styles.formLabel}>Name *</Text>
+            <TextInput value={name} onChangeText={setName} placeholder="e.g. Diwali" style={styles.formInput} />
+            <Text style={styles.formLabel}>Date *</Text>
+            <TouchableOpacity onPress={() => setShowCal(true)} style={styles.formInput}><Text>{date}</Text></TouchableOpacity>
+            <Text style={styles.formLabel}>Type</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {(['public', 'restricted'] as const).map(t => (
+                <TouchableOpacity key={t} onPress={() => setType(t)} style={[styles.filterPill, type === t && { backgroundColor: brand, borderColor: brand }]}>
+                  <Text style={[styles.filterPillText, type === t && { color: '#fff' }]}>{t === 'public' ? 'Public' : 'Restricted'}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md }}>
+              <Text style={styles.formLabel}>Paid holiday</Text>
+              <Switch value={paid} onValueChange={setPaid} trackColor={{ true: brand + '55', false: '#ccc' }} thumbColor={paid ? brand : '#f4f3f4'} />
+            </View>
+
+            {/* --- Applicable branches (empty = all) — mirrors web app ---- */}
+            {branches.length > 0 && (
+              <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.formLabel}>Applicable branches</Text>
+                  <TouchableOpacity onPress={() => setBranchIds([])} disabled={allBranchesSelected}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: allBranchesSelected ? colors.onSurfaceTertiary : brand }}>
+                      All branches
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2, marginBottom: 8 }}>
+                  {allBranchesSelected
+                    ? 'This holiday will apply to every branch.'
+                    : `Only the selected ${branchIds.length === 1 ? 'branch' : 'branches'} will observe this holiday.`}
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {branches.map(b => {
+                    const selected = branchIds.includes(b.id);
+                    return (
+                      <TouchableOpacity
+                        key={b.id}
+                        onPress={() => toggleBranch(b.id)}
+                        style={[
+                          styles.filterPill,
+                          selected && { backgroundColor: brand, borderColor: brand },
+                        ]}
+                      >
+                        {selected && <Ionicons name="checkmark" size={12} color="#fff" style={{ marginRight: 4 }} />}
+                        <Text style={[styles.filterPillText, selected && { color: '#fff' }]}>{b.name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            <TouchableOpacity onPress={submit} disabled={busy} style={[styles.primaryBtn, { backgroundColor: brand, marginTop: spacing.md }]}>
+              {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save Holiday</Text>}
+            </TouchableOpacity>
+          </ScrollView>
           {showCal && (
             <Modal visible transparent animationType="fade" onRequestClose={() => setShowCal(false)}>
               <Pressable style={styles.modalScrim} onPress={() => setShowCal(false)}>
