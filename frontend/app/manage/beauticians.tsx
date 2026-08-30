@@ -452,14 +452,22 @@ export default function TeamScreen() {
       {/* ============ Add / Edit sheet ============ */}
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.kav}
+          >
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>
                 {editing ? (editing.is_owner_locked ? 'Edit Owner' : 'Edit Team Member') : 'Add Team Member'}
               </Text>
 
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                style={styles.sheetScroll}
+                contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xxl }}
+                showsVerticalScrollIndicator={true}
+              >
                 <View style={styles.field}>
                   <Text style={styles.label}>Full name *</Text>
                   <TextInput testID="team-name-input" value={name} onChangeText={setName} placeholder="e.g. Preetha P" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
@@ -923,7 +931,9 @@ const styles = StyleSheet.create({
   ctaBtnText: { color: '#fff', fontWeight: '700' },
 
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md, maxHeight: '92%', width: '100%', maxWidth: 480, alignSelf: 'center' },
+  kav: { width: '100%', maxHeight: '92%', alignSelf: 'center' },
+  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, gap: spacing.md, width: '100%', maxWidth: 480, alignSelf: 'center', flexShrink: 1 },
+  sheetScroll: { flexGrow: 0, flexShrink: 1 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
   sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
   field: { gap: 6 },
