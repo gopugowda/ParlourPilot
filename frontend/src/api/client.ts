@@ -292,7 +292,24 @@ export const platformApi = {
   listTenantUsers: (tid: string) => api(`/platform/tenants/${tid}/users`),
   // New: detailed view + delete + CSV export
   tenantDetail: (tid: string) => api(`/platform/tenants/${tid}/detail`),
-  deleteTenant: (tid: string) => api(`/platform/tenants/${tid}`, { method: 'DELETE' }),
+  /**
+   * PERMANENT tenant deletion — high-risk, super-admin only.
+   * Server re-validates both fields: `confirm_name` must equal
+   * tenant.business_name and `confirm_phrase` must equal the
+   * literal string "DELETE PERMANENTLY". Never call this without the
+   * two-step modal in the UI.
+   */
+  deleteTenant: (tid: string, body: { confirm_name: string; confirm_phrase: string; reason?: string }) =>
+    api(`/platform/tenants/${tid}`, { method: 'DELETE', body }),
+  /**
+   * Reversible tenant lifecycle: suspend (deactivate) or restore.
+   * `action: 'suspend'` requires `confirm_name` matching business_name.
+   * `action: 'restore'` needs no extra confirmation. Both are idempotent.
+   */
+  tenantStatus: (tid: string, body: { action: 'suspend' | 'restore'; confirm_name?: string; reason?: string }) =>
+    api(`/platform/tenants/${tid}/status`, { method: 'POST', body }),
+  /** Read-only audit trail for a tenant's lifecycle actions. */
+  tenantAudit: (tid: string) => api<{ rows: { action: string; admin_email?: string; reason?: string; at: string }[] }>(`/platform/tenants/${tid}/audit`),
   exportCsv: () => api('/platform/tenants/export'),
   // Platform user management (admin only for mutations)
   listPlatformUsers: () => api('/platform/users'),

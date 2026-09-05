@@ -27,7 +27,6 @@ export default function PlatformScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [subEditor, setSubEditor] = useState<{ tenant: Tenant | null; visible: boolean }>({ tenant: null, visible: false });
   const [extendDays, setExtendDays] = useState('30');
@@ -113,39 +112,92 @@ export default function PlatformScreen() {
     } finally { setBusy(false); }
   };
 
-  const toggleActive = async (tenant: Tenant) => {
+  // -------- Tenant lifecycle (Deactivate / Restore / Permanent Delete) ------
+  // NOTE: All safety rules are enforced server-side; the mobile UI mirrors
+  // them so a single tap can never destroy a tenant.
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
+
+  // Deactivate (suspend) — requires typed exact business name
+  const [suspendModal, setSuspendModal] = useState<{ tenant: Tenant | null; visible: boolean }>({ tenant: null, visible: false });
+  const [suspendTypedName, setSuspendTypedName] = useState('');
+  const [suspendReason, setSuspendReason] = useState('');
+  const openSuspend = (tenant: Tenant) => {
+    if (!isSuperAdmin) { Alert.alert('Restricted', 'Only super admins can change tenant status.'); return; }
+    setSuspendTypedName(''); setSuspendReason('');
+    setSuspendModal({ tenant, visible: true });
+  };
+  const submitSuspend = async () => {
+    const t = suspendModal.tenant;
+    if (!t) return;
+    if (lifecycleBusyId === t.id) return; // double-submit guard
+    setLifecycleBusyId(t.id);
     try {
-      await platformApi.setSubscription(tenant.id, { is_active: !tenant.is_active });
+      await platformApi.tenantStatus(t.id, {
+        action: 'suspend',
+        confirm_name: suspendTypedName.trim(),
+        reason: suspendReason.trim() || undefined,
+      });
+      setSuspendModal({ tenant: null, visible: false });
+      Alert.alert('Deactivated', `"${t.business_name}" has been deactivated. All data is preserved and can be restored anytime.`);
       await load();
-    } catch (e: any) { Alert.alert('Failed', e.message || String(e)); }
+    } catch (e: any) {
+      Alert.alert('Failed', e.message || String(e));
+    } finally { setLifecycleBusyId(null); }
   };
 
-  const confirmDeleteTenant = (tenant: Tenant) => {
-    if (!isSuperAdmin) {
-      Alert.alert('Restricted', 'Only super admins can delete tenants');
-      return;
-    }
+  // Restore
+  const doRestore = (tenant: Tenant) => {
+    if (!isSuperAdmin) { Alert.alert('Restricted', 'Only super admins can change tenant status.'); return; }
     Alert.alert(
-      'Delete Tenant?',
-      `This will permanently delete "${tenant.business_name}" and ALL its data (branches, users, bills, appointments, etc). This cannot be undone.`,
+      'Restore tenant?',
+      `Restore "${tenant.business_name}"? This reactivates the tenant and restores user access. All existing data is preserved.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete Forever',
-          style: 'destructive',
+          text: 'Restore Tenant',
           onPress: async () => {
-            setDeletingId(tenant.id);
+            if (lifecycleBusyId === tenant.id) return;
+            setLifecycleBusyId(tenant.id);
             try {
-              await platformApi.deleteTenant(tenant.id);
-              Alert.alert('Deleted', `Tenant "${tenant.business_name}" was permanently deleted.`);
+              await platformApi.tenantStatus(tenant.id, { action: 'restore' });
               await load();
+              Alert.alert('Restored', `"${tenant.business_name}" has been reactivated.`);
             } catch (e: any) {
               Alert.alert('Failed', e.message || String(e));
-            } finally { setDeletingId(null); }
+            } finally { setLifecycleBusyId(null); }
           },
         },
       ],
     );
+  };
+
+  // Permanent delete — multi-step
+  const [deleteModal, setDeleteModal] = useState<{ tenant: Tenant | null; visible: boolean; step: 1 | 2 }>({ tenant: null, visible: false, step: 1 });
+  const [deleteTypedName, setDeleteTypedName] = useState('');
+  const [deleteTypedPhrase, setDeleteTypedPhrase] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
+  const openDelete = (tenant: Tenant) => {
+    if (!isSuperAdmin) { Alert.alert('Restricted', 'Only super admins can permanently delete tenants.'); return; }
+    setDeleteTypedName(''); setDeleteTypedPhrase(''); setDeleteReason('');
+    setDeleteModal({ tenant, visible: true, step: 1 });
+  };
+  const submitDelete = async () => {
+    const t = deleteModal.tenant;
+    if (!t) return;
+    if (lifecycleBusyId === t.id) return;
+    setLifecycleBusyId(t.id);
+    try {
+      await platformApi.deleteTenant(t.id, {
+        confirm_name: deleteTypedName.trim(),
+        confirm_phrase: deleteTypedPhrase.trim(),
+        reason: deleteReason.trim() || undefined,
+      });
+      setDeleteModal({ tenant: null, visible: false, step: 1 });
+      Alert.alert('Deleted', `"${t.business_name}" and all its data have been permanently deleted.`);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Delete failed', e.message || String(e));
+    } finally { setLifecycleBusyId(null); }
   };
 
   const downloadCsvReport = async () => {
@@ -315,9 +367,15 @@ export default function PlatformScreen() {
                   <Text style={[styles.tdText, { flex: 1.2 }]}>{t.phone || '—'}</Text>
                   <Text style={[styles.tdText, { flex: 1.2 }]}>{t.city || '—'}</Text>
                   <View style={{ width: 90, alignSelf: 'flex-start', gap: 3 }}>
-                    <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
-                      <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
-                    </View>
+                    {t.is_active === false ? (
+                      <View style={[styles.statusChip, { backgroundColor: '#FDECEC', borderColor: colors.error }]} testID={`suspended-badge-${t.id}`}>
+                        <Text style={[styles.statusText, { color: colors.error }]}>SUSPENDED</Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
+                        <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                      </View>
+                    )}
                     {sub.cancellation_pending && (
                       <View style={[styles.statusChip, { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' }]} testID={`cancelled-badge-${t.id}`}>
                         <Text style={[styles.statusText, { color: '#A05B00' }]}>CANCELLING</Text>
@@ -341,18 +399,40 @@ export default function PlatformScreen() {
                       <Ionicons name="key-outline" size={13} color={colors.brandPrimary} />
                       <Text style={styles.actionText}>Reset</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.actionBtn, !t.is_active && { backgroundColor: '#FEE' }]} onPress={() => toggleActive(t)}>
-                      <Ionicons name={t.is_active ? 'lock-open-outline' : 'lock-closed-outline'} size={13} color={t.is_active ? colors.success : colors.error} />
-                      <Text style={[styles.actionText, { color: t.is_active ? colors.success : colors.error }]}>{t.is_active ? 'Active' : 'Suspended'}</Text>
-                    </TouchableOpacity>
-                    {isSuperAdmin && (
-                      <TouchableOpacity style={[styles.actionBtn, styles.actionDanger]} onPress={() => confirmDeleteTenant(t)} disabled={deletingId === t.id} testID={`delete-tenant-${t.id}`}>
-                        {deletingId === t.id ? <ActivityIndicator color={colors.error} size="small" /> : (
+                    {t.is_active === false ? (
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionSuccess]}
+                        onPress={() => doRestore(t)}
+                        disabled={lifecycleBusyId === t.id}
+                        testID={`restore-tenant-${t.id}`}
+                      >
+                        {lifecycleBusyId === t.id ? <ActivityIndicator color={colors.success} size="small" /> : (
                           <>
-                            <Ionicons name="trash-outline" size={13} color={colors.error} />
-                            <Text style={[styles.actionText, { color: colors.error }]}>Delete</Text>
+                            <Ionicons name="refresh-outline" size={13} color={colors.success} />
+                            <Text style={[styles.actionText, { color: colors.success }]}>Restore</Text>
                           </>
                         )}
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionWarning]}
+                        onPress={() => openSuspend(t)}
+                        disabled={lifecycleBusyId === t.id}
+                        testID={`suspend-tenant-${t.id}`}
+                      >
+                        <Ionicons name="pause-circle-outline" size={13} color="#A05B00" />
+                        <Text style={[styles.actionText, { color: '#A05B00' }]}>Deactivate</Text>
+                      </TouchableOpacity>
+                    )}
+                    {isSuperAdmin && (
+                      <TouchableOpacity
+                        style={styles.dangerIconBtn}
+                        onPress={() => openDelete(t)}
+                        disabled={lifecycleBusyId === t.id}
+                        testID={`delete-tenant-${t.id}`}
+                        accessibilityLabel="Permanently delete tenant"
+                      >
+                        <Ionicons name="trash-outline" size={13} color={colors.error} />
                       </TouchableOpacity>
                     )}
                   </View>
@@ -377,9 +457,15 @@ export default function PlatformScreen() {
                   <Text style={styles.tenantEmail}>{t.email}</Text>
                 </View>
                 <View style={{ gap: 4, alignItems: 'flex-end' }}>
-                  <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
-                    <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
-                  </View>
+                  {t.is_active === false ? (
+                    <View style={[styles.statusChip, { backgroundColor: '#FDECEC', borderColor: colors.error }]} testID={`suspended-badge-mobile-${t.id}`}>
+                      <Text style={[styles.statusText, { color: colors.error }]}>SUSPENDED</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.statusChip, { backgroundColor: `${statColor}20`, borderColor: statColor }]}>
+                      <Text style={[styles.statusText, { color: statColor }]}>{(sub.status || '').toUpperCase()}</Text>
+                    </View>
+                  )}
                   {sub.cancellation_pending && (
                     <View style={[styles.statusChip, { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' }]} testID={`cancelled-badge-mobile-${t.id}`}>
                       <Text style={[styles.statusText, { color: '#A05B00' }]}>CANCELLING</Text>
@@ -419,28 +505,40 @@ export default function PlatformScreen() {
                   <Ionicons name="key-outline" size={16} color={colors.brandPrimary} />
                   <Text style={styles.actionText}>Reset Password</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, !t.is_active && { backgroundColor: '#FEE' }]}
-                  onPress={() => toggleActive(t)}
-                >
-                  <Ionicons name={t.is_active ? 'lock-open-outline' : 'lock-closed-outline'} size={16} color={t.is_active ? colors.success : colors.error} />
-                  <Text style={[styles.actionText, { color: t.is_active ? colors.success : colors.error }]}>
-                    {t.is_active ? 'Active' : 'Suspended'}
-                  </Text>
-                </TouchableOpacity>
-                {isSuperAdmin && (
+                {t.is_active === false ? (
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.actionDanger]}
-                    onPress={() => confirmDeleteTenant(t)}
-                    disabled={deletingId === t.id}
-                    testID={`delete-tenant-${t.id}`}
+                    style={[styles.actionBtn, styles.actionSuccess]}
+                    onPress={() => doRestore(t)}
+                    disabled={lifecycleBusyId === t.id}
+                    testID={`restore-tenant-mobile-${t.id}`}
                   >
-                    {deletingId === t.id ? <ActivityIndicator color={colors.error} size="small" /> : (
+                    {lifecycleBusyId === t.id ? <ActivityIndicator color={colors.success} size="small" /> : (
                       <>
-                        <Ionicons name="trash-outline" size={16} color={colors.error} />
-                        <Text style={[styles.actionText, { color: colors.error }]}>Delete</Text>
+                        <Ionicons name="refresh-outline" size={16} color={colors.success} />
+                        <Text style={[styles.actionText, { color: colors.success }]}>Restore</Text>
                       </>
                     )}
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionWarning]}
+                    onPress={() => openSuspend(t)}
+                    disabled={lifecycleBusyId === t.id}
+                    testID={`suspend-tenant-mobile-${t.id}`}
+                  >
+                    <Ionicons name="pause-circle-outline" size={16} color="#A05B00" />
+                    <Text style={[styles.actionText, { color: '#A05B00' }]}>Deactivate</Text>
+                  </TouchableOpacity>
+                )}
+                {isSuperAdmin && (
+                  <TouchableOpacity
+                    style={styles.dangerIconBtn}
+                    onPress={() => openDelete(t)}
+                    disabled={lifecycleBusyId === t.id}
+                    testID={`delete-tenant-mobile-${t.id}`}
+                    accessibilityLabel="Permanently delete tenant"
+                  >
+                    <Ionicons name="trash-outline" size={16} color={colors.error} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -556,6 +654,200 @@ export default function PlatformScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      {/* ============ Deactivate (Suspend) Modal ============ */}
+      <Modal
+        visible={suspendModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSuspendModal({ tenant: null, visible: false })}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setSuspendModal({ tenant: null, visible: false })}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '92%', alignSelf: 'center' }}>
+            <Pressable style={[styles.sheet, { flexShrink: 1 }]} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={styles.sheetTitle}>Deactivate tenant</Text>
+              <Text style={styles.sheetSub} numberOfLines={2}>
+                Tenant: {suspendModal.tenant?.business_name}
+              </Text>
+
+              <View style={styles.warningBox} testID="deactivate-warning">
+                <Ionicons name="alert-circle-outline" size={20} color="#A05B00" />
+                <Text style={styles.warningText}>
+                  This will prevent users from accessing this tenant but will NOT permanently delete any data. You can restore it anytime.
+                </Text>
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Type the exact business name to confirm</Text>
+                <TextInput
+                  testID="suspend-confirm-name"
+                  value={suspendTypedName}
+                  onChangeText={setSuspendTypedName}
+                  placeholder={suspendModal.tenant?.business_name || 'Business name'}
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.plainInput}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Reason (optional)</Text>
+                <TextInput
+                  testID="suspend-reason"
+                  value={suspendReason}
+                  onChangeText={setSuspendReason}
+                  placeholder="e.g. non-payment, requested by owner"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.plainInput}
+                />
+              </View>
+
+              {(() => {
+                const target = (suspendModal.tenant?.business_name || '').trim();
+                const disabled = suspendTypedName.trim() !== target || !target || lifecycleBusyId === suspendModal.tenant?.id;
+                return (
+                  <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm }}>
+                    <TouchableOpacity style={styles.btnGhost} onPress={() => setSuspendModal({ tenant: null, visible: false })}>
+                      <Text style={styles.btnGhostText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      testID="suspend-submit"
+                      style={[styles.btnWarning, { flex: 1 }, disabled && { opacity: 0.5 }]}
+                      onPress={submitSuspend}
+                      disabled={disabled}
+                    >
+                      {lifecycleBusyId === suspendModal.tenant?.id
+                        ? <ActivityIndicator color="#fff" />
+                        : <Text style={styles.btnPrimaryText}>Deactivate Tenant</Text>}
+                    </TouchableOpacity>
+                  </View>
+                );
+              })()}
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
+      {/* ============ Permanent Delete (multi-step) Modal ============ */}
+      <Modal
+        visible={deleteModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDeleteModal({ tenant: null, visible: false, step: 1 })}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setDeleteModal({ tenant: null, visible: false, step: 1 })}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '92%', alignSelf: 'center' }}>
+            <Pressable style={[styles.sheet, { flexShrink: 1 }]} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={[styles.sheetTitle, { color: colors.error }]}>Permanent delete</Text>
+              <Text style={styles.sheetSub} numberOfLines={2}>
+                Tenant: {deleteModal.tenant?.business_name}
+              </Text>
+
+              {deleteModal.step === 1 ? (
+                <>
+                  <View style={[styles.warningBox, styles.dangerBox]} testID="delete-warning-1">
+                    <Ionicons name="warning-outline" size={22} color={colors.error} />
+                    <Text style={[styles.warningText, { color: colors.error }]}>
+                      This permanently deletes the tenant &ldquo;{deleteModal.tenant?.business_name}&rdquo; and ALL its data (users, bills, staff, customers, payroll, inventory, reports). This CANNOT be undone.
+                      {'\n\n'}
+                      Consider using <Text style={{ fontWeight: '900' }}>Deactivate</Text> instead — it hides the tenant but preserves data.
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm }}>
+                    <TouchableOpacity style={styles.btnGhost} onPress={() => setDeleteModal({ tenant: null, visible: false, step: 1 })}>
+                      <Text style={styles.btnGhostText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      testID="delete-continue"
+                      style={[styles.btnDanger, { flex: 1 }]}
+                      onPress={() => setDeleteModal(m => ({ ...m, step: 2 }))}
+                    >
+                      <Text style={styles.btnPrimaryText}>I understand, continue</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={[styles.warningBox, styles.dangerBox]}>
+                    <Ionicons name="lock-closed-outline" size={20} color={colors.error} />
+                    <Text style={[styles.warningText, { color: colors.error }]}>
+                      Two matching phrases are required. Both are re-validated on the server.
+                    </Text>
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Type the exact business name</Text>
+                    <TextInput
+                      testID="delete-confirm-name"
+                      value={deleteTypedName}
+                      onChangeText={setDeleteTypedName}
+                      placeholder={deleteModal.tenant?.business_name || 'Business name'}
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={styles.plainInput}
+                    />
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Type <Text style={{ fontWeight: '900', color: colors.error }}>DELETE PERMANENTLY</Text> to confirm</Text>
+                    <TextInput
+                      testID="delete-confirm-phrase"
+                      value={deleteTypedPhrase}
+                      onChangeText={setDeleteTypedPhrase}
+                      placeholder="DELETE PERMANENTLY"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      style={styles.plainInput}
+                    />
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Reason (optional)</Text>
+                    <TextInput
+                      testID="delete-reason"
+                      value={deleteReason}
+                      onChangeText={setDeleteReason}
+                      placeholder="Why is this tenant being permanently deleted?"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      style={styles.plainInput}
+                    />
+                  </View>
+
+                  {(() => {
+                    const target = (deleteModal.tenant?.business_name || '').trim();
+                    const nameOk = deleteTypedName.trim() === target && !!target;
+                    const phraseOk = deleteTypedPhrase.trim() === 'DELETE PERMANENTLY';
+                    const inFlight = lifecycleBusyId === deleteModal.tenant?.id;
+                    const disabled = !nameOk || !phraseOk || inFlight;
+                    return (
+                      <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm }}>
+                        <TouchableOpacity style={styles.btnGhost} onPress={() => setDeleteModal(m => ({ ...m, step: 1 }))}>
+                          <Text style={styles.btnGhostText}>Back</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          testID="delete-submit"
+                          style={[styles.btnDanger, { flex: 1 }, disabled && { opacity: 0.5 }]}
+                          onPress={submitDelete}
+                          disabled={disabled}
+                        >
+                          {inFlight
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={styles.btnPrimaryText}>Permanently Delete Tenant</Text>}
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })()}
+                </>
+              )}
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
       </View>
     </SafeAreaView>
     </View>
@@ -611,7 +903,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brandSecondary,
   },
   actionText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
-  actionDanger: { backgroundColor: '#FEE2E2', borderColor: colors.error },
+  actionWarning: { backgroundColor: '#FFF6E5', borderColor: '#F0DCA6' },
+  actionSuccess: { backgroundColor: '#E7F5EA', borderColor: '#8BC79B' },
+  dangerIconBtn: {
+    width: 32, height: 32, borderRadius: radius.sm,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: colors.error,
+  },
+  warningBox: {
+    flexDirection: 'row', gap: 10,
+    backgroundColor: '#FFF6E5', borderColor: '#F0DCA6', borderWidth: 1,
+    borderRadius: radius.sm, padding: 12,
+  },
+  dangerBox: { backgroundColor: '#FEE2E2', borderColor: colors.error },
+  warningText: { flex: 1, fontSize: 12, color: '#A05B00', fontWeight: '600', lineHeight: 17 },
+  btnWarning: { backgroundColor: '#F59E0B', borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', ...shadows.card },
+  btnDanger: { backgroundColor: colors.error, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', ...shadows.card },
 
   toolbar: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   toolbarBtn: {
