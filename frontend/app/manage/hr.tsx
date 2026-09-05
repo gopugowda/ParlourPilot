@@ -26,6 +26,10 @@ import * as Haptics from 'expo-haptics';
 
 import { api } from '@/src/api/client';
 import { hrApi, computeDays, type LeaveRequest, type LeaveType, type LeaveStatus, type AttendanceRow, type LeavePolicy, type Holiday_, type LeaveAuditRow, type CalendarDay, type LeaveDayPart } from '@/src/api/hr';
+import {
+  attendanceApi, fmtLocalTimeISO, localDateToIso,
+  type CorrectionRequest as AttendanceCorrection,
+} from '@/src/api/attendance';
 import { useAuth, useBrand } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, contrastText } from '@/src/theme';
 
@@ -148,6 +152,30 @@ function AttendanceTab({ beauticians, canManage, brand }: { beauticians: Beautic
   const [loading, setLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
+  // Correction review
+  const [pendingCorrections, setPendingCorrections] = useState<AttendanceCorrection[]>([]);
+  const [reviewing, setReviewing] = useState<AttendanceCorrection | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [reviewBusy, setReviewBusy] = useState<'approve' | 'reject' | null>(null);
+  const [reviewMode, setReviewMode] = useState<'view' | 'reject'>('view');
+
+  // Direct edit
+  const [directOpen, setDirectOpen] = useState(false);
+  const [dEmpId, setDEmpId] = useState<string>('');
+  const [dDate, setDDate] = useState(ymd());
+  const [dInHM, setDInHM] = useState<{ hh: number; mm: number } | null>(null);
+  const [dOutHM, setDOutHM] = useState<{ hh: number; mm: number } | null>(null);
+  const [dReason, setDReason] = useState('');
+  const [dBusy, setDBusy] = useState(false);
+
+  const loadCorrections = useCallback(async () => {
+    if (!canManage) return;
+    try {
+      const res = await attendanceApi.listCorrections('pending');
+      setPendingCorrections(res.rows || []);
+    } catch { /* ignore load errors — banner just hides */ }
+  }, [canManage]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -176,6 +204,72 @@ function AttendanceTab({ beauticians, canManage, brand }: { beauticians: Beautic
     }
   };
 
+  useEffect(() => { loadCorrections(); }, [loadCorrections]);
+
+  // ---- Review helpers ------------------------------------------------
+  const openReview = (r: AttendanceCorrection) => {
+    setReviewing(r); setRejectReason(''); setReviewMode('view');
+  };
+  const doApprove = async () => {
+    if (!reviewing) return;
+    setReviewBusy('approve');
+    try {
+      await attendanceApi.approveCorrection(reviewing.id);
+      setReviewing(null);
+      await Promise.all([load(), loadCorrections()]);
+      Alert.alert('Approved', 'Correction applied to the attendance log.');
+    } catch (e: any) {
+      Alert.alert('Approve failed', e.message || String(e));
+    } finally { setReviewBusy(null); }
+  };
+  const doReject = async () => {
+    if (!reviewing) return;
+    if (!rejectReason.trim()) { Alert.alert('Reason required', 'Please provide a rejection reason.'); return; }
+    setReviewBusy('reject');
+    try {
+      await attendanceApi.rejectCorrection(reviewing.id, rejectReason.trim());
+      setReviewing(null);
+      await loadCorrections();
+      Alert.alert('Rejected', 'The correction request has been rejected.');
+    } catch (e: any) {
+      Alert.alert('Reject failed', e.message || String(e));
+    } finally { setReviewBusy(null); }
+  };
+
+  // ---- Direct edit ---------------------------------------------------
+  const openDirect = () => {
+    setDEmpId(beauticians[0]?.id || '');
+    setDDate(date);
+    setDInHM(null); setDOutHM(null); setDReason('');
+    setDirectOpen(true);
+  };
+  const submitDirect = async () => {
+    if (!dEmpId) { Alert.alert('Employee required', 'Please pick an employee.'); return; }
+    if (!dInHM && !dOutHM) { Alert.alert('Missing time', 'Enter at least one of Clock In or Clock Out.'); return; }
+    if (dInHM && dOutHM) {
+      const iM = dInHM.hh * 60 + dInHM.mm;
+      const oM = dOutHM.hh * 60 + dOutHM.mm;
+      if (oM < iM) { Alert.alert('Invalid range', 'Clock Out cannot be before Clock In.'); return; }
+    }
+    if (!dReason.trim()) { Alert.alert('Reason required', 'Please enter a reason for the edit.'); return; }
+    setDBusy(true);
+    try {
+      await attendanceApi.directEdit({
+        beautician_id: dEmpId,
+        date: dDate,
+        clock_in: dInHM ? localDateToIso(dDate, dInHM.hh, dInHM.mm) : null,
+        clock_out: dOutHM ? localDateToIso(dDate, dOutHM.hh, dOutHM.mm) : null,
+        reason: dReason.trim(),
+      });
+      setDirectOpen(false);
+      await load();
+      Alert.alert('Updated', 'Attendance updated.');
+    } catch (e: any) {
+      Alert.alert('Update failed', e.message || String(e));
+    } finally { setDBusy(false); }
+  };
+
+
   const summary = useMemo(() => {
     const c = { present: 0, absent: 0, half_day: 0, week_off: 0, on_leave: 0, holiday: 0, unmarked: 0 };
     rows.forEach(r => {
@@ -201,6 +295,53 @@ function AttendanceTab({ beauticians, canManage, brand }: { beauticians: Beautic
         <Chip label={`Off ${summary.week_off}`} color={colors.onSurfaceTertiary} />
         <Chip label={`Leave ${summary.on_leave}`} color={colors.brandPrimary} />
       </View>
+
+      {/* Corrections banner + direct edit action */}
+      {canManage && (
+        <View style={{ marginBottom: spacing.md, gap: 8 }}>
+          {pendingCorrections.length > 0 && (
+            <View style={{ backgroundColor: colors.warning + '18', borderColor: colors.warning + '55', borderWidth: 1, borderRadius: radius.md, padding: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Ionicons name="hourglass-outline" size={14} color={colors.warning} />
+                <Text style={{ fontSize: 12, fontWeight: '800', color: colors.warning }}>
+                  {pendingCorrections.length} pending correction{pendingCorrections.length === 1 ? '' : 's'}
+                </Text>
+              </View>
+              {pendingCorrections.slice(0, 4).map(r => (
+                <TouchableOpacity
+                  key={r.id}
+                  onPress={() => openReview(r)}
+                  testID={`review-${r.id}`}
+                  style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.warning + '22' }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.onSurface }}>
+                    {r.beautician_name || 'Staff'} · {r.attendance_date}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2 }}>
+                    In {fmtLocalTimeISO(r.current_clock_in)} → {fmtLocalTimeISO(r.requested_clock_in)}   ·   Out {fmtLocalTimeISO(r.current_clock_out)} → {fmtLocalTimeISO(r.requested_clock_out)}
+                  </Text>
+                  {r.reason ? <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 }} numberOfLines={2}>Reason: {r.reason}</Text> : null}
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: colors.brandPrimary, marginTop: 4 }}>Review →</Text>
+                </TouchableOpacity>
+              ))}
+              {pendingCorrections.length > 4 && (
+                <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 6 }}>
+                  +{pendingCorrections.length - 4} more…
+                </Text>
+              )}
+            </View>
+          )}
+          <TouchableOpacity
+            onPress={openDirect}
+            testID="direct-edit-btn"
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: brand + '55', backgroundColor: brand + '10' }}
+          >
+            <Ionicons name="create-outline" size={14} color={brand} />
+            <Text style={{ fontSize: 12, fontWeight: '800', color: brand }}>Edit attendance directly</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
 
       {rows.length === 0 ? (
         <Empty icon="calendar-outline" title="No team members" hint="Add employees under Team Management." />
@@ -245,6 +386,196 @@ function AttendanceTab({ beauticians, canManage, brand }: { beauticians: Beautic
       )}
 
       <DatePickerModal visible={pickerOpen} value={date} onClose={() => setPickerOpen(false)} onPick={d => { setDate(d); setPickerOpen(false); }} />
+
+      {/* ============ Review Correction Modal ============ */}
+      <Modal visible={!!reviewing} transparent animationType="slide" onRequestClose={() => setReviewing(null)}>
+        <Pressable style={styles.modalScrim} onPress={() => setReviewing(null)}>
+          <Pressable style={[styles.modalCard, { maxHeight: '92%' }]} onPress={e => e.stopPropagation()}>
+            <ScrollView contentContainerStyle={{ paddingBottom: spacing.md }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Review correction</Text>
+              {reviewing && (
+                <>
+                  <Text style={styles.formLabel}>Staff · Date</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: colors.onSurface }}>{reviewing.beautician_name || 'Staff'} · {reviewing.attendance_date}</Text>
+
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                    <View style={{ flex: 1, backgroundColor: colors.surfaceTertiary, padding: 10, borderRadius: radius.sm }}>
+                      <Text style={styles.formLabel}>Current In</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.onSurface }}>{fmtLocalTimeISO(reviewing.current_clock_in)}</Text>
+                    </View>
+                    <View style={{ flex: 1, backgroundColor: brand + '18', padding: 10, borderRadius: radius.sm }}>
+                      <Text style={[styles.formLabel, { color: brand }]}>Requested In</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: brand }}>{fmtLocalTimeISO(reviewing.requested_clock_in)}</Text>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+                    <View style={{ flex: 1, backgroundColor: colors.surfaceTertiary, padding: 10, borderRadius: radius.sm }}>
+                      <Text style={styles.formLabel}>Current Out</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.onSurface }}>{fmtLocalTimeISO(reviewing.current_clock_out)}</Text>
+                    </View>
+                    <View style={{ flex: 1, backgroundColor: brand + '18', padding: 10, borderRadius: radius.sm }}>
+                      <Text style={[styles.formLabel, { color: brand }]}>Requested Out</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: brand }}>{fmtLocalTimeISO(reviewing.requested_clock_out)}</Text>
+                    </View>
+                  </View>
+
+                  {reviewing.reason ? (
+                    <View style={{ marginTop: spacing.md }}>
+                      <Text style={styles.formLabel}>Reason</Text>
+                      <Text style={{ fontSize: 13, color: colors.onSurface }}>{reviewing.reason}</Text>
+                    </View>
+                  ) : null}
+                  {reviewing.employee_note ? (
+                    <View style={{ marginTop: spacing.sm }}>
+                      <Text style={styles.formLabel}>Note</Text>
+                      <Text style={{ fontSize: 13, color: colors.onSurface }}>{reviewing.employee_note}</Text>
+                    </View>
+                  ) : null}
+
+                  {reviewMode === 'reject' && (
+                    <View style={{ marginTop: spacing.md }}>
+                      <Text style={styles.formLabel}>Rejection reason *</Text>
+                      <TextInput
+                        testID="reject-reason"
+                        value={rejectReason}
+                        onChangeText={setRejectReason}
+                        placeholder="Why is this being rejected?"
+                        placeholderTextColor={colors.onSurfaceTertiary}
+                        multiline
+                        style={[styles.formInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                      />
+                    </View>
+                  )}
+
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                    {reviewMode === 'view' ? (
+                      <>
+                        <TouchableOpacity
+                          onPress={() => setReviewMode('reject')}
+                          testID="btn-reject-mode"
+                          style={{ flex: 1, backgroundColor: '#fff', borderColor: colors.error, borderWidth: 1, paddingVertical: 12, borderRadius: radius.md, alignItems: 'center' }}
+                        >
+                          <Text style={{ color: colors.error, fontWeight: '800' }}>Reject</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={doApprove}
+                          disabled={reviewBusy !== null}
+                          testID="btn-approve"
+                          style={[styles.primaryBtn, { flex: 1, backgroundColor: colors.success, marginTop: 0 }, reviewBusy && { opacity: 0.6 }]}
+                        >
+                          {reviewBusy === 'approve' ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Approve</Text>}
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          onPress={() => { setReviewMode('view'); setRejectReason(''); }}
+                          style={{ flex: 1, backgroundColor: '#F3F3F3', paddingVertical: 12, borderRadius: radius.md, alignItems: 'center' }}
+                        >
+                          <Text style={{ color: colors.onSurfaceSecondary, fontWeight: '800' }}>Back</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={doReject}
+                          disabled={reviewBusy !== null}
+                          testID="btn-reject-confirm"
+                          style={[styles.primaryBtn, { flex: 1, backgroundColor: colors.error, marginTop: 0 }, reviewBusy && { opacity: 0.6 }]}
+                        >
+                          {reviewBusy === 'reject' ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Confirm reject</Text>}
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ============ Direct Edit Modal ============ */}
+      <Modal visible={directOpen} transparent animationType="slide" onRequestClose={() => setDirectOpen(false)}>
+        <Pressable style={styles.modalScrim} onPress={() => setDirectOpen(false)}>
+          <Pressable style={[styles.modalCard, { maxHeight: '92%' }]} onPress={e => e.stopPropagation()}>
+            <ScrollView contentContainerStyle={{ paddingBottom: spacing.md }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Edit attendance</Text>
+
+              <Text style={styles.formLabel}>Employee *</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }} style={{ flexGrow: 0 }}>
+                {beauticians.map(b => {
+                  const sel = dEmpId === b.id;
+                  return (
+                    <TouchableOpacity key={b.id} onPress={() => setDEmpId(b.id)} style={[styles.filterPill, sel && { backgroundColor: brand, borderColor: brand }]} testID={`de-emp-${b.id}`}>
+                      <Text style={[styles.filterPillText, sel && { color: '#fff' }]}>{b.name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={styles.formLabel}>Date *</Text>
+              <TextInput
+                testID="de-date"
+                value={dDate}
+                onChangeText={setDDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={styles.formInput}
+              />
+
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.formLabel}>Clock In (24h)</Text>
+                  <TextInput
+                    testID="de-in"
+                    value={dInHM ? `${String(dInHM.hh).padStart(2, '0')}:${String(dInHM.mm).padStart(2, '0')}` : ''}
+                    onChangeText={(v) => {
+                      const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+                      if (m) setDInHM({ hh: Math.min(23, parseInt(m[1], 10)), mm: Math.min(59, parseInt(m[2], 10)) });
+                      else if (!v.trim()) setDInHM(null);
+                    }}
+                    placeholder="HH:MM"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    keyboardType="numbers-and-punctuation"
+                    maxLength={5}
+                    style={styles.formInput}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.formLabel}>Clock Out (24h)</Text>
+                  <TextInput
+                    testID="de-out"
+                    value={dOutHM ? `${String(dOutHM.hh).padStart(2, '0')}:${String(dOutHM.mm).padStart(2, '0')}` : ''}
+                    onChangeText={(v) => {
+                      const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+                      if (m) setDOutHM({ hh: Math.min(23, parseInt(m[1], 10)), mm: Math.min(59, parseInt(m[2], 10)) });
+                      else if (!v.trim()) setDOutHM(null);
+                    }}
+                    placeholder="HH:MM"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    keyboardType="numbers-and-punctuation"
+                    maxLength={5}
+                    style={styles.formInput}
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.formLabel}>Reason *</Text>
+              <TextInput
+                testID="de-reason"
+                value={dReason}
+                onChangeText={setDReason}
+                placeholder="Manager verified punches"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                multiline
+                style={[styles.formInput, { minHeight: 60, textAlignVertical: 'top' }]}
+              />
+
+              <TouchableOpacity onPress={submitDirect} disabled={dBusy} style={[styles.primaryBtn, { backgroundColor: brand }, dBusy && { opacity: 0.6 }]} testID="de-submit">
+                {dBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Save attendance</Text>}
+              </TouchableOpacity>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }

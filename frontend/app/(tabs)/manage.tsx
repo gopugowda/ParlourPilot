@@ -35,6 +35,7 @@ export default function ManageScreen() {
     // web app, so on mobile we surface this tile for everyone (staff & admins
     // benefit from a personal view of their own leave).
     { icon: 'sunny-outline', label: 'My Leave', hint: 'Balance, request time off, calendar', route: '/my-leave' },
+    { icon: 'time-outline', label: 'My Attendance', hint: 'Last 30 days, request corrections', route: '/my-attendance' },
     { icon: 'cube-outline', label: 'Stock', hint: 'Materials inventory & low-stock alerts', route: '/manage/stock', perm: 'stock' },
     { icon: 'wallet-outline', label: 'Expenses', hint: 'Track daily expenses', route: '/(tabs)/expenses', perm: 'expenses' },
     { icon: 'lock-closed-outline', label: 'Cash Closing', hint: 'End-of-day cash reconciliation', route: '/manage/cash-closing', perm: 'cash_closing' },
