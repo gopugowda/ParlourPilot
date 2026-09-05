@@ -12,6 +12,8 @@ import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
+import { ExportMenu, type ExportAction, ReportEmptyState } from '@/src/components/ReportKit';
+import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
 type StockItem = {
   id: string; name: string; unit: string;
@@ -143,6 +145,56 @@ export default function StockScreen() {
     ...list.map(i => i.category || 'General'),
   ]));
 
+  // ---- Export / Share -------------------------------------------------
+  const { tenant } = useAuth();
+  const [exportOpen, setExportOpen] = useState(false);
+  const stockStatusLabel = (it: StockItem) =>
+    (it.current_qty || 0) <= 0 ? 'Out of stock' : it.low_stock ? 'Low stock' : 'In stock';
+  const exportHeaders = ['Item', 'Category', 'Unit', 'Current Qty', 'Min Qty', 'Unit Cost', 'Value', 'Status', 'Branch'];
+  const buildRows = () => filtered.map(it => [
+    it.name || '',
+    it.category || 'General',
+    it.unit || '',
+    String(it.current_qty ?? 0),
+    String(it.min_qty ?? 0),
+    fmtINR(it.unit_cost || 0),
+    fmtINR((it.current_qty || 0) * (it.unit_cost || 0)),
+    stockStatusLabel(it),
+    it.branch_name || '',
+  ]);
+  const rangeLabel = () => {
+    const parts: string[] = [];
+    if (filters.category) parts.push(filters.category);
+    if (filters.stockStatus) parts.push(filters.stockStatus === 'low' ? 'Low' : 'Out');
+    if (filters.branchId) parts.push(branches.find((b: any) => b.id === filters.branchId)?.name || 'Branch');
+    if (search) parts.push(`"${search}"`);
+    return parts.join(' · ') || 'All stock';
+  };
+  const dateSuffix = () => new Date().toISOString().slice(0, 10);
+  const doExport = async (a: ExportAction) => {
+    const rows = buildRows();
+    if (rows.length === 0) return;
+    if (a === 'csv') {
+      await shareCsv(rowsToCsv(exportHeaders, rows), `stock_${dateSuffix()}.csv`);
+      return;
+    }
+    const filteredValue = filtered.reduce((s, i) => s + (i.current_qty || 0) * (i.unit_cost || 0), 0);
+    const html = buildReportHtml({
+      title: 'Stock Report',
+      subtitle: `${rangeLabel()} · ${rows.length} item${rows.length === 1 ? '' : 's'}`,
+      brand: { name: tenant?.business_name, color: colors.brandPrimary, logo: (tenant as any)?.logo || null },
+      summary: [
+        { label: 'Items', value: String(rows.length) },
+        { label: 'Low', value: String(filtered.filter(i => i.low_stock).length) },
+        { label: 'Value', value: fmtINR(filteredValue) },
+      ],
+      columns: exportHeaders,
+      rows,
+    });
+    if (a === 'pdf') { await sharePdf(html, `stock_${dateSuffix()}.pdf`); return; }
+    await printOrShareHtml(html, `stock_${dateSuffix()}.pdf`);
+  };
+
   return (
     <View style={styles.root} testID="stock-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
@@ -157,6 +209,13 @@ export default function StockScreen() {
           <Text style={styles.headerSub}>{filtered.length} of {list.length} · {lowCount} low</Text>
         </View>
         <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="stock-filter-btn" />
+        <TouchableOpacity
+          testID="stock-menu-btn"
+          onPress={() => setExportOpen(true)}
+          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.brandPrimary} />
+        </TouchableOpacity>
         {isAdmin && (
           <TouchableOpacity testID="add-item-btn" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
             <Ionicons name="add" size={22} color="#fff" />
@@ -204,11 +263,17 @@ export default function StockScreen() {
             </View>
           )}
 
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && list.length > 0 ? (
+            <ReportEmptyState
+              icon="cube-outline"
+              message="No stock items found for the selected filters."
+              onReset={() => { setSearch(''); resetFilters(); }}
+            />
+          ) : filtered.length === 0 ? (
             <View style={styles.empty}>
               <Ionicons name="cube-outline" size={48} color={colors.onSurfaceTertiary} />
-              <Text style={styles.emptyTitle}>{list.length === 0 ? 'No items yet' : 'Nothing here'}</Text>
-              {isAdmin && list.length === 0 && (
+              <Text style={styles.emptyTitle}>No items yet</Text>
+              {isAdmin && (
                 <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
                   <Ionicons name="add" size={18} color="#fff" />
                   <Text style={styles.ctaBtnText}>Add first item</Text>
@@ -396,6 +461,14 @@ export default function StockScreen() {
           </FilterSection>
         )}
       </FilterSheet>
+
+      <ExportMenu
+        visible={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="Export Stock"
+        subtitle={`${rangeLabel()} · ${filtered.length} item${filtered.length === 1 ? '' : 's'}`}
+        onPick={doExport}
+      />
     </View>
   );
 }

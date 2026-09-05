@@ -10,6 +10,10 @@ import * as Haptics from 'expo-haptics';
 import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR, getCurrencySymbol } from '@/src/theme';
+import { useFilterState } from '@/src/hooks/useFilterState';
+import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
+import { ExportMenu, type ExportAction, ReportEmptyState } from '@/src/components/ReportKit';
+import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
 type Gender = 'ladies' | 'men' | 'unisex';
 type Service = {
@@ -57,11 +61,12 @@ const readGender = (s: Service): Gender => {
 
 export default function ServicesScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Service[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Service | null>(null);
   const [name, setName] = useState('');
@@ -76,6 +81,15 @@ export default function ServicesScreen() {
   const [itemCode, setItemCode] = useState('');
   const [itemCodeErr, setItemCodeErr] = useState<string | null>(null);
   const [genderFilter, setGenderFilter] = useState<'all' | Gender>('all');
+
+  // Persistent filters
+  const [fsOpen, setFsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const { filters, setFilters, resetFilters, activeCount } = useFilterState('services', {
+    category: null as string | null,
+    status: null as 'active' | 'inactive' | null,
+    priceType: null as 'fixed' | 'variable' | null,
+  });
 
   const load = async () => {
     try {
@@ -188,6 +202,66 @@ export default function ServicesScreen() {
     try { await api(`/services/${s.id}`, { method: 'DELETE' }); await load(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
   };
 
+  const filtered = list.filter(s => {
+    if (genderFilter !== 'all' && readGender(s) !== genderFilter) return false;
+    if (filters.category && (s.category || 'General') !== filters.category) return false;
+    if (filters.status === 'active' && s.active === false) return false;
+    if (filters.status === 'inactive' && s.active !== false) return false;
+    if (filters.priceType === 'variable' && !s.variable_price) return false;
+    if (filters.priceType === 'fixed' && s.variable_price) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!s.name.toLowerCase().includes(q) && !(s.item_code || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const availableCategories = Array.from(new Set([
+    ...list.map(s => s.category || 'General'),
+    ...categories,
+  ])).sort();
+
+  // ---- Export / Share -------------------------------------------------
+  const exportHeaders = ['Code', 'Name', 'Category', 'Type', 'Price', 'Variable', 'Tax %', 'Status'];
+  const buildExportRows = () => filtered.map(s => [
+    s.item_code || '',
+    s.name || '',
+    s.category || 'General',
+    readGender(s) === 'ladies' ? 'Ladies' : readGender(s) === 'men' ? 'Men' : 'Unisex',
+    fmtINR(s.price || 0),
+    s.variable_price ? 'Yes' : 'No',
+    s.tax_percentage == null ? '' : String(s.tax_percentage),
+    s.active === false ? 'Inactive' : 'Active',
+  ]);
+  const rangeLabel = () => {
+    const parts: string[] = [];
+    if (genderFilter !== 'all') parts.push(genderFilter);
+    if (filters.category) parts.push(filters.category);
+    if (filters.status) parts.push(filters.status);
+    if (filters.priceType) parts.push(filters.priceType);
+    if (search) parts.push(`"${search}"`);
+    return parts.join(' · ') || 'All services';
+  };
+  const dateSuffix = () => new Date().toISOString().slice(0, 10);
+  const doExport = async (a: ExportAction) => {
+    const rows = buildExportRows();
+    if (rows.length === 0) return;
+    if (a === 'csv') { await shareCsv(rowsToCsv(exportHeaders, rows), `services_${dateSuffix()}.csv`); return; }
+    const html = buildReportHtml({
+      title: 'Services',
+      subtitle: `${rangeLabel()} · ${rows.length} record${rows.length === 1 ? '' : 's'}`,
+      brand: { name: tenant?.business_name, color: colors.brandPrimary, logo: (tenant as any)?.logo || null },
+      summary: [
+        { label: 'Total', value: String(rows.length) },
+        { label: 'Active', value: String(filtered.filter(s => s.active !== false).length) },
+      ],
+      columns: exportHeaders,
+      rows,
+    });
+    if (a === 'pdf') { await sharePdf(html, `services_${dateSuffix()}.pdf`); return; }
+    await printOrShareHtml(html, `services_${dateSuffix()}.pdf`);
+  };
+
   return (
     <View style={styles.root} testID="services-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
@@ -199,14 +273,34 @@ export default function ServicesScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Services</Text>
-          <Text style={styles.headerSub}>{list.length} services</Text>
+          <Text style={styles.headerSub}>{filtered.length} of {list.length}</Text>
         </View>
+        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="svc-filter-btn" />
+        <TouchableOpacity
+          testID="svc-menu-btn"
+          onPress={() => setExportOpen(true)}
+          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.brandPrimary} />
+        </TouchableOpacity>
         {isAdmin && (
-          <TouchableOpacity testID="add-service-header" onPress={openAdd} style={styles.headerBtn}>
+          <TouchableOpacity testID="add-service-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
         )}
       </SafeAreaView>
+
+      <View style={styles.searchWrap}>
+        <Ionicons name="search-outline" size={16} color={colors.onSurfaceTertiary} />
+        <TextInput
+          testID="svc-search"
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search services by name or code"
+          placeholderTextColor={colors.onSurfaceTertiary}
+          style={styles.searchInput}
+        />
+      </View>
 
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
@@ -239,9 +333,14 @@ export default function ServicesScreen() {
               )}
             </View>
           )}
-          {list
-            .filter(s => genderFilter === 'all' || readGender(s) === genderFilter)
-            .map(s => {
+          {list.length > 0 && filtered.length === 0 && (
+            <ReportEmptyState
+              icon="pricetags-outline"
+              message="No services found for the selected filters."
+              onReset={() => { setSearch(''); setGenderFilter('all'); resetFilters(); }}
+            />
+          )}
+          {filtered.map(s => {
               const g = readGender(s);
               const gCol = g === 'ladies' ? '#D9337B' : g === 'men' ? '#2E6BE6' : colors.brandPrimary;
               return (
@@ -426,6 +525,45 @@ export default function ServicesScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      <FilterSheet
+        visible={fsOpen}
+        onClose={() => setFsOpen(false)}
+        onClear={resetFilters}
+        title="Filter services"
+        testID="svc-filter-sheet"
+      >
+        <FilterSection label="Category">
+          <FilterChip label="Any" selected={!filters.category} onPress={() => setFilters({ category: null })} testID="svc-fs-cat-any" />
+          {availableCategories.map(c => (
+            <FilterChip
+              key={c}
+              label={c}
+              selected={filters.category === c}
+              onPress={() => setFilters({ category: c })}
+              testID={`svc-fs-cat-${c}`}
+            />
+          ))}
+        </FilterSection>
+        <FilterSection label="Status">
+          <FilterChip label="Any" selected={!filters.status} onPress={() => setFilters({ status: null })} testID="svc-fs-stat-any" />
+          <FilterChip label="Active" selected={filters.status === 'active'} onPress={() => setFilters({ status: 'active' })} testID="svc-fs-stat-active" />
+          <FilterChip label="Inactive" selected={filters.status === 'inactive'} onPress={() => setFilters({ status: 'inactive' })} testID="svc-fs-stat-inactive" />
+        </FilterSection>
+        <FilterSection label="Price type">
+          <FilterChip label="Any" selected={!filters.priceType} onPress={() => setFilters({ priceType: null })} testID="svc-fs-pt-any" />
+          <FilterChip label="Fixed" selected={filters.priceType === 'fixed'} onPress={() => setFilters({ priceType: 'fixed' })} testID="svc-fs-pt-fixed" />
+          <FilterChip label="Variable" selected={filters.priceType === 'variable'} onPress={() => setFilters({ priceType: 'variable' })} testID="svc-fs-pt-variable" />
+        </FilterSection>
+      </FilterSheet>
+
+      <ExportMenu
+        visible={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="Export Services"
+        subtitle={`${rangeLabel()} · ${filtered.length} record${filtered.length === 1 ? '' : 's'}`}
+        onPick={doExport}
+      />
     </View>
   );
 }
@@ -437,6 +575,13 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   headerBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brandPrimary },
+
+  searchWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, borderRadius: radius.sm,
+    height: 42, marginHorizontal: spacing.lg, marginTop: spacing.md,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: colors.onSurface },
 
   row: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,

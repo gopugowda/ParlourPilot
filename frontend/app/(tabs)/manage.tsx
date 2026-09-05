@@ -41,6 +41,7 @@ export default function ManageScreen() {
     // Reports + Staff Performance are OWNER-ONLY (backend returns 403 for admins).
     // The `reports` permission only unlocks dashboard KPIs, not these screens.
     { icon: 'bar-chart-outline', label: 'Reports', hint: 'Sales analytics & insights', route: '/manage/report', ownerOnly: true },
+    { icon: 'people-outline', label: 'Customer Report', hint: 'Per-customer visits & service history', route: '/manage/customer-report', ownerOnly: true },
     { icon: 'trophy-outline', label: 'Staff Performance', hint: 'Payroll, commission, targets, analytics & export', route: '/manage/payroll-report', ownerOnly: true },
     // Branches / Business Settings / Subscription are OWNER-ONLY — Admins can run
     // day-to-day ops but must not restructure the business or see billing.

@@ -13,6 +13,8 @@ import { colors, spacing, radius, shadows, getCurrencySymbol } from '@/src/theme
 import { sanitizePhone, phoneError, parse422, PHONE_MAX } from '@/src/utils/validators';
 import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
+import { ExportMenu, type ExportAction, ReportEmptyState } from '@/src/components/ReportKit';
+import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
 type Member = {
   id: string; name: string; phone: string; joined_at: string; expires_at: string;
@@ -151,6 +153,55 @@ export default function MembersScreen() {
   const activeCount = list.filter(m => m.status === 'active' || m.status === 'expiring_soon').length;
   const expiredCount = list.filter(m => m.status === 'expired').length;
 
+  // -------- Export / Share ----------------------------------------------
+  const [exportOpen, setExportOpen] = useState(false);
+  const statusLabel = (s: Member['status']) =>
+    s === 'active' ? 'Active' : s === 'expiring_soon' ? 'Expiring Soon' : s === 'expired' ? 'Expired' : 'Inactive';
+  const buildRows = () => filtered.map(m => [
+    m.name || '',
+    m.phone || '',
+    m.joined_at || '',
+    m.expires_at || '',
+    statusLabel(m.status),
+    m.days_left == null ? '' : String(m.days_left),
+    m.discount_pct == null ? '' : `${m.discount_pct}%`,
+    m.notes || '',
+  ]);
+  const exportHeaders = ['Name', 'Phone', 'Joined', 'Expires', 'Status', 'Days Left', 'Discount %', 'Notes'];
+  const rangeLabel = () => {
+    const scopes: string[] = [];
+    if (filter !== 'all') scopes.push(filter);
+    if (filters.tierId) scopes.push('tier');
+    if (filters.joinedFrom || filters.joinedTo) scopes.push(`${filters.joinedFrom || '…'} → ${filters.joinedTo || '…'}`);
+    if (search) scopes.push(`"${search}"`);
+    return scopes.join(' · ') || 'All members';
+  };
+  const dateSuffix = () => new Date().toISOString().slice(0, 10);
+  const doExport = async (a: ExportAction) => {
+    const rows = buildRows();
+    const label = rangeLabel();
+    if (rows.length === 0) { setExportOpen(false); return; }
+    if (a === 'csv') {
+      await shareCsv(rowsToCsv(exportHeaders, rows), `members_${dateSuffix()}.csv`);
+      return;
+    }
+    const html = buildReportHtml({
+      title: 'Members',
+      subtitle: `${label} · ${rows.length} record${rows.length === 1 ? '' : 's'}`,
+      brand: { name: tenant?.business_name, color: colors.brandPrimary, logo: (tenant as any)?.logo || null },
+      summary: [
+        { label: 'Total', value: String(rows.length) },
+        { label: 'Active', value: String(activeCount) },
+        { label: 'Expiring', value: String(expiringCount) },
+        { label: 'Expired', value: String(expiredCount) },
+      ],
+      columns: exportHeaders,
+      rows,
+    });
+    if (a === 'pdf') { await sharePdf(html, `members_${dateSuffix()}.pdf`); return; }
+    await printOrShareHtml(html, `members_${dateSuffix()}.pdf`);
+  };
+
   const sendWhatsApp = async (m: Member) => {
     let phoneNum = (m.phone || '').replace(/[^0-9]/g, '');
     if (phoneNum.length === 10) phoneNum = '91' + phoneNum;
@@ -191,9 +242,18 @@ export default function MembersScreen() {
           <Text style={styles.headerSub}>{list.length} · {list.filter(m => m.status === 'active' || m.status === 'expiring_soon').length} active</Text>
         </View>
         <FilterHeaderButton count={filtersActive} onPress={() => setFsOpen(true)} testID="members-filter-btn" />
-        <TouchableOpacity testID="add-member-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
-          <Ionicons name="add" size={20} color="#fff" />
+        <TouchableOpacity
+          testID="members-menu-btn"
+          onPress={() => setExportOpen(true)}
+          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.brandPrimary} />
         </TouchableOpacity>
+        {isAdmin && (
+          <TouchableOpacity testID="add-member-header" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </TouchableOpacity>
+        )}
       </SafeAreaView>
 
       <View style={styles.searchWrap}>
@@ -231,16 +291,21 @@ export default function MembersScreen() {
 
       {loading ? <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} /> : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
-          {filtered.length === 0 && (
+          {filtered.length === 0 && list.length > 0 && (
+            <ReportEmptyState
+              icon="star-outline"
+              message="No members found for the selected filters."
+              onReset={() => {
+                setSearch(''); setFilter('all'); resetFilters();
+              }}
+            />
+          )}
+          {filtered.length === 0 && list.length === 0 && (
             <View style={styles.empty}>
               <Ionicons name="star-outline" size={48} color={colors.onSurfaceTertiary} />
-              <Text style={styles.emptyTitle}>
-                {list.length === 0 ? 'No members yet' : `No ${filter === 'all' ? '' : filter + ' '}members`}
-              </Text>
-              {list.length === 0 && (
-                <Text style={styles.emptySub}>Yearly members get discount on services above minimum price</Text>
-              )}
-              {list.length === 0 && (
+              <Text style={styles.emptyTitle}>No members yet</Text>
+              <Text style={styles.emptySub}>Yearly members get discount on services above minimum price</Text>
+              {isAdmin && (
                 <TouchableOpacity testID="empty-add" style={styles.ctaBtn} onPress={openAdd}>
                   <Ionicons name="add" size={18} color="#fff" />
                   <Text style={styles.ctaBtnText}>Add Member</Text>
@@ -434,6 +499,14 @@ export default function MembersScreen() {
           Sort by Total Spend will land once the backend exposes each member&rsquo;s running total.
         </Text>
       </FilterSheet>
+
+      <ExportMenu
+        visible={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="Export Members"
+        subtitle={`${rangeLabel()} · ${filtered.length} record${filtered.length === 1 ? '' : 's'}`}
+        onPick={doExport}
+      />
     </View>
   );
 }

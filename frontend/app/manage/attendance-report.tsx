@@ -6,8 +6,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { api } from '@/src/api/client';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
 import { pickLogTimestamp, pickLogStaffName, fmtLocalTime } from '@/src/utils/attendance';
+import {
+  DatePresetChips, rangeFromPreset, ReportToolbar, ExportMenu, ReportEmptyState,
+  type DatePreset, type ExportAction,
+} from '@/src/components/ReportKit';
+import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 
 type SummaryRow = {
   staff_name: string; employee_id?: string; total_hours: number; overtime_hours: number; days: number;
@@ -31,12 +37,25 @@ const fmtTime = (iso?: string) => fmtLocalTime(iso || '');
 
 export default function AttendanceReportScreen() {
   const router = useRouter();
+  const { tenant } = useAuth();
   const [from, setFrom] = useState(daysAgoISO(7));
   const [to, setTo] = useState(todayISO());
+  const [preset, setPreset] = useState<DatePreset>('last7');
   const [logDate, setLogDate] = useState(todayISO());
   const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [staffFilter, setStaffFilter] = useState('');
+  const [actionFilter, setActionFilter] = useState<'all' | LogRow['action']>('all');
+  const [exportOpen, setExportOpen] = useState(false);
+
+  const applyPreset = (p: DatePreset) => {
+    setPreset(p);
+    if (p !== 'custom') {
+      const r = rangeFromPreset(p);
+      if (r) { setFrom(r.from); setTo(r.to); setLogDate(r.to); }
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,8 +70,50 @@ export default function AttendanceReportScreen() {
   }, [from, to, logDate]);
   useEffect(() => { load(); }, [load]);
 
-  const totalHours = summary.reduce((a, b) => a + (b.total_hours || 0), 0);
-  const totalOT = summary.reduce((a, b) => a + (b.overtime_hours || 0), 0);
+  const filteredSummary = summary.filter(r =>
+    !staffFilter || (r.staff_name || '').toLowerCase().includes(staffFilter.toLowerCase())
+  );
+  const filteredLogs = logs.filter(l => {
+    const nm = pickLogStaffName(l) || '';
+    if (staffFilter && !nm.toLowerCase().includes(staffFilter.toLowerCase())) return false;
+    if (actionFilter !== 'all' && l.action !== actionFilter) return false;
+    return true;
+  });
+
+  const totalHours = filteredSummary.reduce((a, b) => a + (b.total_hours || 0), 0);
+  const totalOT = filteredSummary.reduce((a, b) => a + (b.overtime_hours || 0), 0);
+
+  // ---- Export ----------------------------------------------------------
+  const dateSuffix = () => `${from}_${to}`;
+  const filterCount = (staffFilter ? 1 : 0) + (actionFilter !== 'all' ? 1 : 0);
+  const doExport = async (a: ExportAction) => {
+    if (a === 'csv') {
+      const summaryCsv = rowsToCsv(
+        ['Staff', 'Employee ID', 'Days', 'Total Hours', 'Overtime Hours'],
+        filteredSummary.map(r => [r.staff_name || '', r.employee_id || '', r.days, (r.total_hours || 0).toFixed(2), (r.overtime_hours || 0).toFixed(2)]),
+      );
+      await shareCsv(summaryCsv, `attendance_summary_${dateSuffix()}.csv`);
+      return;
+    }
+    const html = buildReportHtml({
+      title: 'Attendance Report',
+      subtitle: `${from} → ${to}${staffFilter ? ` · "${staffFilter}"` : ''}`,
+      brand: { name: tenant?.business_name, color: colors.brandPrimary, logo: (tenant as any)?.logo || null },
+      summary: [
+        { label: 'Staff', value: String(filteredSummary.length) },
+        { label: 'Total Hours', value: totalHours.toFixed(1) },
+        { label: 'Overtime', value: totalOT.toFixed(1) },
+      ],
+      columns: ['Staff', 'Employee ID', 'Days', 'Hours', 'Overtime'],
+      rows: filteredSummary.map(r => [
+        r.staff_name || '', r.employee_id || '', r.days,
+        (r.total_hours || 0).toFixed(2), (r.overtime_hours || 0).toFixed(2),
+      ]),
+      totalRow: ['Total', '', filteredSummary.reduce((s, r) => s + (r.days || 0), 0), totalHours.toFixed(2), totalOT.toFixed(2)],
+    });
+    if (a === 'pdf') { await sharePdf(html, `attendance_${dateSuffix()}.pdf`); return; }
+    await printOrShareHtml(html, `attendance_${dateSuffix()}.pdf`);
+  };
 
   return (
     <View style={styles.root} testID="attendance-report">
@@ -64,22 +125,41 @@ export default function AttendanceReportScreen() {
           <Text style={styles.headerTitle}>Attendance Report</Text>
           <Text style={styles.headerSub}>Summary + activity log</Text>
         </View>
+        <ReportToolbar
+          filterCount={filterCount}
+          onOpenFilters={() => { /* handled inline via chips below */ }}
+          onOpenMenu={() => setExportOpen(true)}
+          filterTestID="att-filter-btn"
+          menuTestID="att-menu-btn"
+        />
       </SafeAreaView>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxxl }}>
+        {/* Date preset chips */}
+        <DatePresetChips value={preset} onChange={applyPreset} testID="att-preset" />
+
         {/* Summary range */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Summary (per staff)</Text>
           <View style={styles.dateRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>From</Text>
-              <TextInput testID="range-from" value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+              <TextInput testID="range-from" value={from} onChangeText={(v) => { setFrom(v); setPreset('custom'); }} placeholder="YYYY-MM-DD" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>To</Text>
-              <TextInput testID="range-to" value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+              <TextInput testID="range-to" value={to} onChangeText={(v) => { setTo(v); setPreset('custom'); }} placeholder="YYYY-MM-DD" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
             </View>
           </View>
+          <Text style={styles.label}>Staff search</Text>
+          <TextInput
+            testID="att-staff-search"
+            value={staffFilter}
+            onChangeText={setStaffFilter}
+            placeholder="Filter by staff name"
+            placeholderTextColor={colors.onSurfaceTertiary}
+            style={styles.input}
+          />
           {loading ? <ActivityIndicator color={colors.brandPrimary} /> : (
             <>
               <View style={styles.totalsRow}>
@@ -92,9 +172,15 @@ export default function AttendanceReportScreen() {
                   <Text style={[styles.totalVal, { color: '#B45309' }]}>{totalOT.toFixed(1)}</Text>
                 </View>
               </View>
-              {summary.length === 0 ? (
-                <Text style={styles.empty}>No punches in this range.</Text>
-              ) : summary.map((r, i) => (
+              {filteredSummary.length === 0 ? (
+                <ReportEmptyState
+                  icon="time-outline"
+                  message={summary.length === 0
+                    ? 'No punches in this range.'
+                    : 'No attendance records found for the selected filters.'}
+                  onReset={summary.length > 0 ? () => { setStaffFilter(''); setActionFilter('all'); } : undefined}
+                />
+              ) : filteredSummary.map((r, i) => (
                 <View key={i} style={styles.tableRow} testID={`sum-row-${i}`}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.staffName}>{r.staff_name}</Text>
@@ -113,9 +199,28 @@ export default function AttendanceReportScreen() {
           <Text style={styles.cardTitle}>Activity log</Text>
           <Text style={styles.label}>Date</Text>
           <TextInput testID="log-date" value={logDate} onChangeText={setLogDate} placeholder="YYYY-MM-DD" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }} style={{ flexGrow: 0 }}>
+            {(['all', 'check_in', 'check_out', 'break_start', 'break_end'] as const).map(k => {
+              const selected = actionFilter === k;
+              const lbl = k === 'all' ? 'All' : prettyAction(k as any);
+              return (
+                <TouchableOpacity key={k} onPress={() => setActionFilter(k as any)} style={[styles.actionChip, selected && styles.actionChipActive]}>
+                  <Text style={[styles.actionChipText, selected && styles.actionChipTextActive]}>{lbl}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
           {loading ? <ActivityIndicator color={colors.brandPrimary} style={{ marginTop: spacing.md }} /> : (
-            logs.length === 0 ? <Text style={styles.empty}>No punches on this date.</Text> :
-            logs.map((l, i) => (
+            filteredLogs.length === 0 ? (
+              <ReportEmptyState
+                icon="finger-print-outline"
+                message={logs.length === 0
+                  ? 'No punches on this date.'
+                  : 'No attendance records found for the selected filters.'}
+                onReset={logs.length > 0 ? () => { setStaffFilter(''); setActionFilter('all'); } : undefined}
+              />
+            ) :
+            filteredLogs.map((l, i) => (
               <View key={i} style={styles.logRow} testID={`log-row-${i}`}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.staffName}>{pickLogStaffName(l) || l.staff_id || '—'}</Text>
@@ -136,6 +241,14 @@ export default function AttendanceReportScreen() {
           )}
         </View>
       </ScrollView>
+
+      <ExportMenu
+        visible={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="Export Attendance"
+        subtitle={`${from} → ${to} · ${filteredSummary.length} staff`}
+        onPick={doExport}
+      />
     </View>
   );
 }
@@ -173,4 +286,12 @@ const styles = StyleSheet.create({
   logRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.divider },
   distPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1 },
   distText: { fontSize: 10, fontWeight: '800' },
+  actionChip: {
+    paddingHorizontal: 10, height: 30, borderRadius: radius.pill,
+    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border,
+  },
+  actionChipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  actionChipText: { fontSize: 11, fontWeight: '600', color: colors.onSurfaceSecondary },
+  actionChipTextActive: { color: '#fff' },
 });
