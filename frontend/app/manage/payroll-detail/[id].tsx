@@ -20,6 +20,7 @@ import { api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import { parseTimestamp, fmtLocalTime } from '@/src/utils/attendance';
+import { hm } from '@/src/utils/time';
 
 type AttendanceDay = {
   date: string;
@@ -115,7 +116,7 @@ export default function PayrollDetailScreen() {
             <View style={styles.sumRow}>
               <View style={styles.sumBox}>
                 <Text style={styles.sumLabel}>Hours</Text>
-                <Text style={styles.sumValue}>{totalHours.toFixed(1)}</Text>
+                <Text style={styles.sumValue}>{hm(totalHours)}</Text>
               </View>
               <View style={styles.sumBox}>
                 <Text style={styles.sumLabel}>Revenue</Text>
@@ -144,9 +145,9 @@ export default function PayrollDetailScreen() {
                       </Text>
                     </View>
                     <View style={styles.attHoursCol}>
-                      <Text style={styles.attHours}>{(d.hours || 0).toFixed(1)}h</Text>
+                      <Text style={styles.attHours}>{hm(d.hours)}</Text>
                       {(d.overtime || 0) > 0 && (
-                        <Text style={styles.attOt}>+{d.overtime.toFixed(1)}h OT</Text>
+                        <Text style={styles.attOt}>+{hm(d.overtime)} OT</Text>
                       )}
                     </View>
                   </View>

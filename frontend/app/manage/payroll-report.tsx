@@ -40,6 +40,7 @@ import { colors, spacing, radius, shadows, fmtINR } from '@/src/theme';
 import {
   rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml,
 } from '@/src/utils/exportShare';
+import { hm } from '@/src/utils/time';
 
 type Preset = 'today' | 'week' | 'month' | 'last_month';
 
@@ -553,8 +554,8 @@ export default function PayrollReportScreen() {
       </div>
       <div class="metric">
         <div class="lbl">Total Hours</div>
-        <div class="val">${num(row.total_hours).toFixed(1)}</div>
-        ${num(row.overtime_hours) > 0 ? `<div class="sub">+${num(row.overtime_hours).toFixed(1)}h OT</div>` : ''}
+        <div class="val">${escHtml(hm(num(row.total_hours)))}</div>
+        ${num(row.overtime_hours) > 0 ? `<div class="sub">+${escHtml(hm(num(row.overtime_hours)))} OT</div>` : ''}
       </div>
       <div class="metric">
         <div class="lbl">Services</div>
@@ -986,7 +987,7 @@ function StaffCard({ row, rank, paying, onOpen, onTogglePaid, onSharePayslip }: 
       {/* Compact stats — 3 rows */}
       <View style={styles.statRow}>
         <MiniStat label="Days" value={`${num(row.days_worked)}`} sub={num(row.absent_days) > 0 ? `${num(row.absent_days)} abs` : undefined} />
-        <MiniStat label="Hours" value={num(row.total_hours).toFixed(1)} sub={num(row.overtime_hours) > 0 ? `+${num(row.overtime_hours).toFixed(1)}h OT` : undefined} />
+        <MiniStat label="Hours" value={hm(num(row.total_hours))} sub={num(row.overtime_hours) > 0 ? `+${hm(num(row.overtime_hours))} OT` : undefined} />
         <MiniStat label="Services" value={String(num(row.services))} />
       </View>
       <View style={styles.statRow}>

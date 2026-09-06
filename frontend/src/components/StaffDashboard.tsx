@@ -121,12 +121,12 @@ function computeShiftMs(
   return Math.max(0, total);
 }
 const formatDuration = (ms: number) => {
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  // Xh Ym (rounded to nearest minute) — matches web app + payroll reports.
+  if (!ms || ms <= 0) return '0h 0m';
+  const totalMinutes = Math.round(ms / 60_000);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}h ${m}m`;
 };
 
 // "5s ago" / "2m ago" / "1h ago" — used by the "Last updated" chip.

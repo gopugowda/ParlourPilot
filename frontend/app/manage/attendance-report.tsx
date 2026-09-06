@@ -14,6 +14,7 @@ import {
   type DatePreset, type ExportAction,
 } from '@/src/components/ReportKit';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
+import { hm } from '@/src/utils/time';
 
 type SummaryRow = {
   staff_name: string; employee_id?: string; total_hours: number; overtime_hours: number; days: number;
@@ -101,8 +102,8 @@ export default function AttendanceReportScreen() {
       brand: { name: tenant?.business_name, color: colors.brandPrimary, logo: (tenant as any)?.logo || null },
       summary: [
         { label: 'Staff', value: String(filteredSummary.length) },
-        { label: 'Total Hours', value: totalHours.toFixed(1) },
-        { label: 'Overtime', value: totalOT.toFixed(1) },
+        { label: 'Total Hours', value: hm(totalHours) },
+        { label: 'Overtime', value: hm(totalOT) },
       ],
       columns: ['Staff', 'Employee ID', 'Days', 'Hours', 'Overtime'],
       rows: filteredSummary.map(r => [
@@ -165,12 +166,14 @@ export default function AttendanceReportScreen() {
               <View style={styles.totalsRow}>
                 <View style={styles.totalPill}>
                   <Text style={styles.totalLabel}>Total hours</Text>
-                  <Text style={styles.totalVal}>{totalHours.toFixed(1)}</Text>
+                  <Text style={styles.totalVal}>{hm(totalHours)}</Text>
                 </View>
-                <View style={[styles.totalPill, { backgroundColor: '#FEF3E4', borderColor: '#F59E0B33' }]}>
-                  <Text style={[styles.totalLabel, { color: '#B45309' }]}>Overtime</Text>
-                  <Text style={[styles.totalVal, { color: '#B45309' }]}>{totalOT.toFixed(1)}</Text>
-                </View>
+                {totalOT > 0 && (
+                  <View style={[styles.totalPill, { backgroundColor: '#FEF3E4', borderColor: '#F59E0B33' }]}>
+                    <Text style={[styles.totalLabel, { color: '#B45309' }]}>Overtime</Text>
+                    <Text style={[styles.totalVal, { color: '#B45309' }]}>{hm(totalOT)}</Text>
+                  </View>
+                )}
               </View>
               {filteredSummary.length === 0 ? (
                 <ReportEmptyState
@@ -186,8 +189,12 @@ export default function AttendanceReportScreen() {
                     <Text style={styles.staffName}>{r.staff_name}</Text>
                     {r.employee_id ? <Text style={styles.meta}>{r.employee_id} · {r.days} day(s)</Text> : <Text style={styles.meta}>{r.days} day(s)</Text>}
                   </View>
-                  <Text style={styles.numCell}>{(r.total_hours || 0).toFixed(1)}h</Text>
-                  <Text style={[styles.numCell, { color: '#B45309', fontWeight: '800' }]}>{(r.overtime_hours || 0).toFixed(1)}h</Text>
+                  <Text style={styles.numCell}>{hm(r.total_hours)}</Text>
+                  {(r.overtime_hours || 0) > 0 ? (
+                    <Text style={[styles.numCell, { color: '#B45309', fontWeight: '800' }]}>{hm(r.overtime_hours)}</Text>
+                  ) : (
+                    <Text style={[styles.numCell, { color: colors.onSurfaceTertiary }]}>—</Text>
+                  )}
                 </View>
               ))}
             </>
