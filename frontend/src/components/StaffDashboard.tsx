@@ -275,8 +275,11 @@ export default function StaffDashboard() {
   const doAction = async (action: AttendanceAction) => {
     setBusy(action);
     try {
-      const loc = await getFreshLocation();
-      if (!loc && isGatingActive(config)) {
+      // Respect the admin's geo-fencing toggle: when OFF we don't ask
+      // for GPS permission and post the punch without coordinates.
+      const gated = isGatingActive(config);
+      const loc = gated ? await getFreshLocation() : null;
+      if (gated && !loc) {
         Alert.alert('Location required', "Enable GPS so we can verify you're at the salon before punching.");
         return;
       }
@@ -496,7 +499,10 @@ export default function StaffDashboard() {
             />
           </View>
           {isGatingActive(config) === false && (
-            <Text style={styles.subtleNote}>Geofence is disabled — check-ins won&apos;t be gated.</Text>
+            <View style={styles.gatingOffBadge} testID="gating-off-badge">
+              <Ionicons name="location-outline" size={12} color={colors.onSurfaceSecondary} />
+              <Text style={styles.gatingOffText}>Location gating is currently disabled by Admin.</Text>
+            </View>
           )}
           {isOut && today.logs.length === 0 && (
             <Text style={styles.subtleNote}>Tap Check In when you arrive to start your shift.</Text>
@@ -791,6 +797,8 @@ const styles = StyleSheet.create({
   sectionCount: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   updatedChip: { fontSize: 10, fontWeight: '700', color: colors.onSurfaceTertiary, backgroundColor: colors.surfaceSecondary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, letterSpacing: 0.3, textTransform: 'uppercase' },
   subtleNote: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: spacing.sm },
+  gatingOffBadge: { marginTop: spacing.sm, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  gatingOffText: { fontSize: 10.5, color: colors.onSurfaceSecondary, fontWeight: '600' },
 
   // Shift buttons
   controlRow: { flexDirection: 'row', gap: spacing.sm },

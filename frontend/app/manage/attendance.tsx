@@ -115,9 +115,11 @@ export default function AttendanceScreen() {
   const doAction = async (action: AttendanceAction) => {
     setBusy(action);
     try {
-      const loc = await getFreshLocation();
-      // Backend enforces gating; still, warn early if GPS is denied on gated tenants.
-      if (!loc && isGatingActive(config)) {
+      // Respect the admin's geo-fencing toggle: when OFF we don't ask
+      // for GPS permission at all and post the punch without coords.
+      const gated = isGatingActive(config);
+      const loc = gated ? await getFreshLocation() : null;
+      if (gated && !loc) {
         Alert.alert('Location required', "Enable GPS so we can verify you're at the salon before punching.");
         return;
       }
@@ -203,7 +205,10 @@ export default function AttendanceScreen() {
             </Text>
           </View>
           {isGatingActive(config) === false && (
-            <Text style={styles.subtleNote}>Geofence disabled for this branch — check-ins won&rsquo;t be gated.</Text>
+            <View style={styles.gatingOffBadge} testID="gating-off-badge">
+              <Ionicons name="location-outline" size={12} color={colors.onSurfaceSecondary} />
+              <Text style={styles.gatingOffText}>Location gating is currently disabled by Admin.</Text>
+            </View>
           )}
         </View>
 
@@ -385,6 +390,8 @@ const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5 },
   statusText: { fontSize: 15, fontWeight: '700', color: colors.onSurface },
   subtleNote: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 },
+  gatingOffBadge: { marginTop: 6, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
+  gatingOffText: { fontSize: 10.5, color: colors.onSurfaceSecondary, fontWeight: '600' },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   actionBtn: {
