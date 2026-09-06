@@ -7,16 +7,15 @@
  *   - the staffer has a `work_end` set on their profile,
  *   - "now" is past `work_end` (today, local),
  *   - AND the staffer has drifted beyond the branch's check-out radius
- *     (`check_out_radius_m` — falls back to `auto_logout_radius_m` on
- *     older backends, then to 1000 m as a final safety default),
+ *     (`check_out_radius_m`, with `auto_logout_radius_m` as legacy alias),
  * → automatically POST /attendance/action { check_out, auto: true } and
  *   log out. The `auto: true` flag tells the backend to bypass the
  *   manual check-out gate that would otherwise reject an out-of-radius
  *   punch.
  *
- * Owners/admins and staff with no work_end are exempt. When geo-fencing
- * is OFF or the branch has no coordinates, this hook does NOT auto-log
- * anyone out (there is no radius to compare against).
+ * The BACKEND is the sole source of truth: no radius is ever hard-coded
+ * on the client. When the backend doesn't return a radius, or the toggle
+ * is OFF, this hook does NOT auto-log anyone out.
  */
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
@@ -24,13 +23,6 @@ import {
   getFreshLocation, loadConfig, postAction, haversine, hhmmToDate,
   effectiveCheckOutRadius, isGatingActive,
 } from '@/src/utils/attendance';
-
-/**
- * Safety default when the backend doesn't send a check-out radius.
- * Chosen deliberately generous so we never accidentally auto-log a
- * staffer out during a short break just outside the salon door.
- */
-const AUTO_LOGOUT_FALLBACK_RADIUS_M = 1000;
 
 type Opts = {
   role?: string | null;
@@ -52,22 +44,23 @@ export function useAttendanceAutoLogout({ role, onAutoLogout, intervalMs = 120_0
       // Skip when app is not active (saves battery + false triggers).
       if (AppState.currentState !== 'active') return;
       try {
+        // Ask the backend first — if geo-fencing is OFF for this branch
+        // we do nothing at all (no GPS fix, no distance calc, no punch).
         const cfg = await loadConfig();
         if (!isGatingActive(cfg)) return;
+
         const wEnd = hhmmToDate(cfg.work_end);
         if (!wEnd) return;
         if (Date.now() < wEnd.getTime()) return;   // still within shift
 
+        // Backend-driven check-out radius. Never hard-code a fallback:
+        // if the backend didn't return a radius we treat this as
+        // "unknown" and skip auto-logout.
+        const radius = effectiveCheckOutRadius(cfg);
+        if (typeof radius !== 'number' || radius <= 0) return;
+
         const loc = await getFreshLocation();
         if (!loc || cfg.latitude == null || cfg.longitude == null) return;
-
-        // Prefer the branch-configured check-out radius. If the backend
-        // didn't send one (e.g. old tenant record), fall back to the
-        // documented 1000 m default so auto-logout still works.
-        const configured = effectiveCheckOutRadius(cfg);
-        const radius = typeof configured === 'number' && configured > 0
-          ? configured
-          : AUTO_LOGOUT_FALLBACK_RADIUS_M;
 
         const dist = haversine(loc.coords.latitude, loc.coords.longitude, cfg.latitude, cfg.longitude);
         if (dist <= radius) return;

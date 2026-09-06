@@ -292,7 +292,9 @@ export default function StaffDashboard() {
         await load();
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert('Attendance', res.error || 'Failed to record attendance.');
+        // Backend is the source of truth — show its exact message.
+        const title = res.status === 403 ? 'Location check failed' : 'Attendance';
+        Alert.alert(title, res.error || 'Failed to record attendance.');
       }
     } finally { setBusy(null); }
   };
