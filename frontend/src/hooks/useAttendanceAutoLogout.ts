@@ -6,9 +6,9 @@
  *     `gating_active` true AND branch has coords),
  *   - the staffer has a `work_end` set on their profile,
  *   - "now" is past `work_end` (today, local),
- *   - AND the staffer has drifted beyond `check_out_radius_m`
- *     (`auto_logout_radius_m` is an alias for the same value on old
- *     backends — never hard-code a fallback),
+ *   - AND the staffer has drifted beyond the branch's check-out radius
+ *     (`check_out_radius_m` — falls back to `auto_logout_radius_m` on
+ *     older backends, then to 1000 m as a final safety default),
  * → automatically POST /attendance/action { check_out, auto: true } and
  *   log out. The `auto: true` flag tells the backend to bypass the
  *   manual check-out gate that would otherwise reject an out-of-radius
@@ -24,6 +24,13 @@ import {
   getFreshLocation, loadConfig, postAction, haversine, hhmmToDate,
   effectiveCheckOutRadius, isGatingActive,
 } from '@/src/utils/attendance';
+
+/**
+ * Safety default when the backend doesn't send a check-out radius.
+ * Chosen deliberately generous so we never accidentally auto-log a
+ * staffer out during a short break just outside the salon door.
+ */
+const AUTO_LOGOUT_FALLBACK_RADIUS_M = 1000;
 
 type Opts = {
   role?: string | null;
@@ -54,11 +61,13 @@ export function useAttendanceAutoLogout({ role, onAutoLogout, intervalMs = 120_0
         const loc = await getFreshLocation();
         if (!loc || cfg.latitude == null || cfg.longitude == null) return;
 
-        // Use the check-out radius as the drift threshold.
-        // No hard-coded fallback: if the backend didn't return a radius
-        // we treat this as "unknown" and skip auto-logout.
-        const radius = effectiveCheckOutRadius(cfg);
-        if (typeof radius !== 'number') return;
+        // Prefer the branch-configured check-out radius. If the backend
+        // didn't send one (e.g. old tenant record), fall back to the
+        // documented 1000 m default so auto-logout still works.
+        const configured = effectiveCheckOutRadius(cfg);
+        const radius = typeof configured === 'number' && configured > 0
+          ? configured
+          : AUTO_LOGOUT_FALLBACK_RADIUS_M;
 
         const dist = haversine(loc.coords.latitude, loc.coords.longitude, cfg.latitude, cfg.longitude);
         if (dist <= radius) return;
