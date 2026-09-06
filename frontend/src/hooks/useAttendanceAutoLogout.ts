@@ -2,17 +2,28 @@
  * useAttendanceAutoLogout
  *
  * While a STAFF-role user is logged in, poll GPS every 2 minutes. If:
- *   - the branch has GPS gating active (branch has coords),
+ *   - the branch has geo-fencing enabled (backend `geo_fencing_enabled` /
+ *     `gating_active` true AND branch has coords),
  *   - the staffer has a `work_end` set on their profile,
  *   - "now" is past `work_end` (today, local),
- *   - AND the staffer is > auto_logout_radius_m from the branch,
- * → automatically POST /attendance/action { check_out } and log out.
+ *   - AND the staffer has drifted beyond `check_out_radius_m`
+ *     (`auto_logout_radius_m` is an alias for the same value on old
+ *     backends — never hard-code a fallback),
+ * → automatically POST /attendance/action { check_out, auto: true } and
+ *   log out. The `auto: true` flag tells the backend to bypass the
+ *   manual check-out gate that would otherwise reject an out-of-radius
+ *   punch.
  *
- * Owners/admins and staff with no work_end are exempt.
+ * Owners/admins and staff with no work_end are exempt. When geo-fencing
+ * is OFF or the branch has no coordinates, this hook does NOT auto-log
+ * anyone out (there is no radius to compare against).
  */
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import { getFreshLocation, loadConfig, postAction, haversine, hhmmToDate } from '@/src/utils/attendance';
+import {
+  getFreshLocation, loadConfig, postAction, haversine, hhmmToDate,
+  effectiveCheckOutRadius, isGatingActive,
+} from '@/src/utils/attendance';
 
 type Opts = {
   role?: string | null;
@@ -35,19 +46,26 @@ export function useAttendanceAutoLogout({ role, onAutoLogout, intervalMs = 120_0
       if (AppState.currentState !== 'active') return;
       try {
         const cfg = await loadConfig();
-        if (!cfg.gating_active) return;
+        if (!isGatingActive(cfg)) return;
         const wEnd = hhmmToDate(cfg.work_end);
         if (!wEnd) return;
         if (Date.now() < wEnd.getTime()) return;   // still within shift
 
         const loc = await getFreshLocation();
         if (!loc || cfg.latitude == null || cfg.longitude == null) return;
+
+        // Use the check-out radius as the drift threshold.
+        // No hard-coded fallback: if the backend didn't return a radius
+        // we treat this as "unknown" and skip auto-logout.
+        const radius = effectiveCheckOutRadius(cfg);
+        if (typeof radius !== 'number') return;
+
         const dist = haversine(loc.coords.latitude, loc.coords.longitude, cfg.latitude, cfg.longitude);
-        const radius = cfg.auto_logout_radius_m || 1000;
         if (dist <= radius) return;
 
-        // Trigger auto check-out then logout.
-        await postAction('check_out', loc).catch(() => {});
+        // Trigger auto check-out then logout — `auto: true` tells the
+        // backend to bypass the manual out-of-radius rejection.
+        await postAction('check_out', loc, { auto: true }).catch(() => {});
         stopped.current = true;
         try { onAutoLogout(); } catch {}
       } catch { /* silent — best effort background check */ }

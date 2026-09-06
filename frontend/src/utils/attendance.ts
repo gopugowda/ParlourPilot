@@ -71,13 +71,43 @@ export type AttendanceConfig = {
   branch_name?: string;
   latitude?: number | null;
   longitude?: number | null;
-  check_in_radius_m?: number;      // 100
-  auto_logout_radius_m?: number;   // 1000
+  /**
+   * Owner-configurable per-branch geo-fence.
+   * NEVER hard-code a fallback radius on the client — always read the
+   * backend value. When `geo_fencing_enabled` (aka `gating_active`) is
+   * false, or latitude/longitude are null, distance checks are skipped
+   * entirely.
+   */
+  geo_fencing_enabled?: boolean;
+  check_in_radius_m?: number;
+  check_out_radius_m?: number;
+  /** Alias of `check_out_radius_m` kept for old-client compatibility. */
+  auto_logout_radius_m?: number;
   gating_active?: boolean;
   work_start?: string;             // "HH:MM"
   work_end?: string;               // "HH:MM"
   role?: string;
 };
+
+/** Read the effective check-out radius (works with both new + legacy responses). */
+export function effectiveCheckOutRadius(cfg: AttendanceConfig | null | undefined): number | null {
+  if (!cfg) return null;
+  const v = cfg.check_out_radius_m ?? cfg.auto_logout_radius_m;
+  return typeof v === 'number' ? v : null;
+}
+
+/** Read the effective check-in radius; null when backend didn't send one. */
+export function effectiveCheckInRadius(cfg: AttendanceConfig | null | undefined): number | null {
+  return typeof cfg?.check_in_radius_m === 'number' ? cfg.check_in_radius_m : null;
+}
+
+/** Is geo-fencing actually enforced right now? */
+export function isGatingActive(cfg: AttendanceConfig | null | undefined): boolean {
+  if (!cfg) return false;
+  const flag = cfg.geo_fencing_enabled ?? cfg.gating_active;
+  if (!flag) return false;
+  return typeof cfg.latitude === 'number' && typeof cfg.longitude === 'number';
+}
 
 export type MyTodayEntry = {
   status: 'in' | 'out' | 'break';
@@ -160,15 +190,26 @@ export async function getFreshLocation(): Promise<Location.LocationObject | null
   }
 }
 
-/** Post an attendance action with the freshest GPS. */
+/**
+ * Post an attendance action with the freshest GPS.
+ *
+ * The optional `auto` flag distinguishes the automatic post-work-hours
+ * check-out (which legitimately fires from *outside* the branch radius)
+ * from a manual check-out (which is rejected outside the radius). Pass
+ * `auto: true` ONLY from the background auto-logout watcher.
+ */
 export async function postAction(
   action: AttendanceAction,
   loc: Location.LocationObject | null,
+  opts: { auto?: boolean } = {},
 ): Promise<{ ok: boolean; data?: any; error?: string; status?: number }> {
-  const body: any = { action };
+  const body: any = { action, auto: !!opts.auto };
   if (loc) {
     body.latitude = loc.coords.latitude;
     body.longitude = loc.coords.longitude;
+  } else {
+    body.latitude = null;
+    body.longitude = null;
   }
   try {
     const data = await api('/attendance/action', { method: 'POST', body });

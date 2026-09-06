@@ -14,6 +14,7 @@ import {
   type AttendanceConfig, type MyTodayEntry, type AttendanceAction,
   getFreshLocation, postAction, loadConfig, loadMyToday, fmtLocalTime,
   parseTimestampMs, pickLogTimestamp, pickLogStaffName,
+  effectiveCheckInRadius, effectiveCheckOutRadius, isGatingActive,
 } from '@/src/utils/attendance';
 
 // Auto-refresh interval — keeps mobile in sync when the shift is toggled from web.
@@ -116,11 +117,13 @@ export default function AttendanceScreen() {
     try {
       const loc = await getFreshLocation();
       // Backend enforces gating; still, warn early if GPS is denied on gated tenants.
-      if (!loc && config?.gating_active) {
+      if (!loc && isGatingActive(config)) {
         Alert.alert('Location required', "Enable GPS so we can verify you're at the salon before punching.");
         return;
       }
-      const res = await postAction(action, loc);
+      // Manual punches always send `auto:false`; only the background
+      // auto-logout watcher sends `auto:true`.
+      const res = await postAction(action, loc, { auto: false });
       if (res.ok) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         await refresh();
@@ -158,7 +161,9 @@ export default function AttendanceScreen() {
           </View>
           {config?.branch_name && (
             <Text style={styles.headerSub}>
-              {config.branch_name}{config.gating_active ? ` · Geofence ${config.check_in_radius_m}m` : ' · Geofence off'}
+              {config.branch_name}{isGatingActive(config)
+                ? ` · Fence In ${effectiveCheckInRadius(config) ?? '—'}m / Out ${effectiveCheckOutRadius(config) ?? '—'}m`
+                : ' · Geofence off'}
             </Text>
           )}
         </View>
@@ -197,20 +202,20 @@ export default function AttendanceScreen() {
               {isIn ? 'On the clock' : onBreak ? 'On break' : 'Checked out'}
             </Text>
           </View>
-          {config?.gating_active === false && (
+          {isGatingActive(config) === false && (
             <Text style={styles.subtleNote}>Geofence disabled for this branch — check-ins won&rsquo;t be gated.</Text>
           )}
         </View>
 
-        {/* Geofence mini-map — lets staff SEE if they're inside the fence
-            before tapping "Check In". Renders empty state when the branch
-            doesn't have coordinates configured. */}
+        {/* Geofence mini-map — the ring shown is the CHECK-IN radius,
+            since staff look at the map primarily before punching in.
+            Renders empty state when the branch doesn't have coordinates. */}
         {config && (
           <GeofenceMap
             latitude={config.latitude}
             longitude={config.longitude}
-            radiusM={config.check_in_radius_m}
-            gatingActive={config.gating_active}
+            radiusM={effectiveCheckInRadius(config)}
+            gatingActive={isGatingActive(config)}
             branchName={config.branch_name}
           />
         )}

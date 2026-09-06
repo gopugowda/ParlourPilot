@@ -30,6 +30,7 @@ import {
   getFreshLocation, postAction, loadConfig, loadMyToday,
   parseTimestampMs, fmtLocalTime, fmtLocalDayTime,
   pickLogTimestamp,
+  effectiveCheckInRadius, effectiveCheckOutRadius, isGatingActive,
 } from '@/src/utils/attendance';
 
 // Polling — keep mobile in sync when web toggles the shift or new appointments land.
@@ -275,11 +276,14 @@ export default function StaffDashboard() {
     setBusy(action);
     try {
       const loc = await getFreshLocation();
-      if (!loc && config?.gating_active) {
+      if (!loc && isGatingActive(config)) {
         Alert.alert('Location required', "Enable GPS so we can verify you're at the salon before punching.");
         return;
       }
-      const res = await postAction(action, loc);
+      // Manual punches send `auto:false` — the backend enforces the
+      // correct radius (check_in vs check_out) and rejects with the
+      // friendly detail we display verbatim.
+      const res = await postAction(action, loc, { auto: false });
       if (res.ok) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         await load();
@@ -421,7 +425,9 @@ export default function StaffDashboard() {
                   <Ionicons name="business-outline" size={11} color={brandTextColor} />
                   <Text style={[styles.branchChipText, { color: brandTextColor }]} numberOfLines={1}>
                     {config.branch_name}
-                    {config.gating_active ? ` · Geofence ${config.check_in_radius_m}m` : ' · Geofence off'}
+                    {isGatingActive(config)
+                      ? ` · Fence In ${effectiveCheckInRadius(config) ?? '—'}m / Out ${effectiveCheckOutRadius(config) ?? '—'}m`
+                      : ' · Geofence off'}
                   </Text>
                 </View>
               )}
@@ -433,15 +439,15 @@ export default function StaffDashboard() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Shift Control</Text>
 
-          {/* Geofence mini-map — lets staff see where they are relative to
-              the salon fence before punching in. */}
+          {/* Geofence mini-map — the ring shown is the CHECK-IN radius,
+              since staff look at the map primarily before punching in. */}
           {config && (
             <View style={{ marginBottom: spacing.md }}>
               <GeofenceMap
                 latitude={config.latitude}
                 longitude={config.longitude}
-                radiusM={config.check_in_radius_m}
-                gatingActive={config.gating_active}
+                radiusM={effectiveCheckInRadius(config)}
+                gatingActive={isGatingActive(config)}
                 branchName={config.branch_name}
               />
             </View>
@@ -489,7 +495,7 @@ export default function StaffDashboard() {
               testID="btn-check-out"
             />
           </View>
-          {config?.gating_active === false && (
+          {isGatingActive(config) === false && (
             <Text style={styles.subtleNote}>Geofence is disabled — check-ins won&apos;t be gated.</Text>
           )}
           {isOut && today.logs.length === 0 && (

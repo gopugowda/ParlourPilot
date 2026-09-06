@@ -42,9 +42,11 @@ export default function BranchesScreen() {
   const [taxPct, setTaxPct] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [invoiceFooter, setInvoiceFooter] = useState('');
+  const [geoEnabled, setGeoEnabled] = useState(false);
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
-  const [radiusM, setRadiusM] = useState('');
+  const [checkInRadius, setCheckInRadius] = useState('');
+  const [checkOutRadius, setCheckOutRadius] = useState('');
   const [isHead, setIsHead] = useState(false);
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -65,7 +67,9 @@ export default function BranchesScreen() {
     setEmail(''); setPhone('');
     setTaxEnabled(false); setTaxNumber(''); setTaxPct('');
     setInvoicePrefix(''); setInvoiceFooter('');
-    setLat(''); setLng(''); setRadiusM('');
+    setLat(''); setLng('');
+    setGeoEnabled(false);
+    setCheckInRadius(''); setCheckOutRadius('');
     setIsHead(false); setActive(true);
     setErr(null); setEmailErr(null);
   };
@@ -86,7 +90,13 @@ export default function BranchesScreen() {
     setInvoiceFooter(b.receipt_footer || '');
     setLat(b.latitude != null ? String(b.latitude) : '');
     setLng(b.longitude != null ? String(b.longitude) : '');
-    setRadiusM(b.geofence_radius_m != null ? String(b.geofence_radius_m) : '');
+    // Backend field names:
+    //   geofence_radius_m  → check-in radius (m)
+    //   checkout_radius_m  → check-out radius (m)  (also drives auto-checkout)
+    //   geo_fencing_enabled → master toggle
+    setCheckInRadius(b.geofence_radius_m != null ? String(b.geofence_radius_m) : '');
+    setCheckOutRadius(b.checkout_radius_m != null ? String(b.checkout_radius_m) : '');
+    setGeoEnabled(!!b.geo_fencing_enabled);
     setIsHead(!!b.is_head); setActive(b.active !== false);
     setEditOpen(true);
   };
@@ -152,7 +162,10 @@ export default function BranchesScreen() {
         receipt_footer: invoiceFooter.trim(),
         latitude: lat.trim() ? parseFloat(lat) : null,
         longitude: lng.trim() ? parseFloat(lng) : null,
-        geofence_radius_m: radiusM.trim() ? parseInt(radiusM, 10) : null,
+        // Mirror web app: master toggle + two independent radii.
+        geo_fencing_enabled: geoEnabled,
+        geofence_radius_m: checkInRadius.trim() ? parseInt(checkInRadius, 10) : 100,
+        checkout_radius_m: checkOutRadius.trim() ? parseInt(checkOutRadius, 10) : 1000,
         is_head: isHead,
         active,
       };
@@ -225,7 +238,7 @@ export default function BranchesScreen() {
                 <Text style={styles.rowMeta}>
                   {[b.city, b.state, b.country].filter(Boolean).join(', ') || 'No address set'}
                   {b.invoice_prefix ? ` · ${b.invoice_prefix}` : ''}
-                  {b.latitude != null && b.longitude != null ? ' · 📍 geofence' : ''}
+                  {b.geo_fencing_enabled && b.latitude != null && b.longitude != null ? ' · 📍 geo-fencing on' : ''}
                 </Text>
               </View>
               <TouchableOpacity style={styles.smallBtn} onPress={() => openEdit(b)} testID={`branch-edit-${b.id}`}>
@@ -375,31 +388,66 @@ export default function BranchesScreen() {
                   <TextInput value={invoiceFooter} onChangeText={setInvoiceFooter} style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]} multiline placeholder="Shown under this branch's address on every bill" placeholderTextColor={colors.onSurfaceTertiary} />
                 </View>
 
-                {/* Attendance geofence */}
-                <View style={styles.geoBox}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Ionicons name="location-outline" size={16} color={colors.brandPrimary} />
-                    <Text style={styles.geoTitle}>Attendance geofence</Text>
-                  </View>
-                  <TouchableOpacity onPress={captureMyLocation} disabled={capturingLoc} style={[styles.captureBtn, { opacity: capturingLoc ? 0.6 : 1 }]}>
-                    <Ionicons name="locate" size={14} color="#fff" />
-                    <Text style={styles.captureBtnText}>{capturingLoc ? 'Capturing…' : 'Capture my location'}</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.help}>Staff can only check in within {radiusM || 100}m of these coordinates. Leave blank to disable GPS gating for this branch.</Text>
-                  <View style={{ flexDirection: 'row', gap: spacing.md }}>
-                    <View style={[styles.field, { flex: 1 }]}>
-                      <Text style={styles.label}>Latitude</Text>
-                      <TextInput value={lat} onChangeText={(v) => setLat(v.replace(/[^0-9.\-]/g, ''))} keyboardType="numbers-and-punctuation" style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
+                {/* Attendance geofence — mirrors web app card */}
+                <View style={[styles.geoBox, geoEnabled && styles.geoBoxActive]}>
+                  <View style={styles.geoHeaderRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Ionicons name="location" size={16} color={colors.brandPrimary} />
+                      <Text style={styles.geoTitle}>Attendance geo-fencing</Text>
                     </View>
-                    <View style={[styles.field, { flex: 1 }]}>
-                      <Text style={styles.label}>Longitude</Text>
-                      <TextInput value={lng} onChangeText={(v) => setLng(v.replace(/[^0-9.\-]/g, ''))} keyboardType="numbers-and-punctuation" style={styles.input} placeholderTextColor={colors.onSurfaceTertiary} />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={[styles.geoStateBadge, geoEnabled ? styles.geoStateOn : styles.geoStateOff]}>
+                        {geoEnabled ? 'ON' : 'OFF'}
+                      </Text>
+                      <Switch
+                        value={geoEnabled}
+                        onValueChange={setGeoEnabled}
+                        trackColor={{ true: colors.brandSecondary, false: '#ccc' }}
+                        thumbColor={geoEnabled ? colors.brandPrimary : '#f4f3f4'}
+                      />
                     </View>
                   </View>
-                  <View style={styles.field}>
-                    <Text style={styles.label}>Check-in radius (metres, default 100)</Text>
-                    <TextInput value={radiusM} onChangeText={(v) => setRadiusM(v.replace(/[^0-9]/g, ''))} keyboardType="numeric" style={styles.input} placeholder="100" placeholderTextColor={colors.onSurfaceTertiary} />
-                  </View>
+
+                  {!geoEnabled ? (
+                    <Text style={styles.help}>
+                      Geo-fencing is disabled. Employees can check in and check out from any location.
+                    </Text>
+                  ) : (
+                    <>
+                      <View style={styles.geoTopRow}>
+                        <Text style={[styles.help, { flex: 1 }]}>
+                          Staff can check in within the check-in radius and check out within the check-out radius of these coordinates.
+                        </Text>
+                        <TouchableOpacity onPress={captureMyLocation} disabled={capturingLoc} style={[styles.captureBtn, { opacity: capturingLoc ? 0.6 : 1 }]}>
+                          <Ionicons name="locate" size={14} color={colors.brandPrimary} />
+                          <Text style={styles.captureBtnText}>{capturingLoc ? 'Capturing…' : 'Capture my location'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                        <View style={[styles.field, { flex: 1 }]}>
+                          <Text style={styles.label}>Latitude</Text>
+                          <TextInput value={lat} onChangeText={(v) => setLat(v.replace(/[^0-9.\-]/g, ''))} keyboardType="numbers-and-punctuation" style={styles.input} placeholder="e.g. 12.971599" placeholderTextColor={colors.onSurfaceTertiary} />
+                        </View>
+                        <View style={[styles.field, { flex: 1 }]}>
+                          <Text style={styles.label}>Longitude</Text>
+                          <TextInput value={lng} onChangeText={(v) => setLng(v.replace(/[^0-9.\-]/g, ''))} keyboardType="numbers-and-punctuation" style={styles.input} placeholder="e.g. 77.594566" placeholderTextColor={colors.onSurfaceTertiary} />
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                        <View style={[styles.field, { flex: 1 }]}>
+                          <Text style={styles.label}>Check-in radius (m)</Text>
+                          <TextInput value={checkInRadius} onChangeText={(v) => setCheckInRadius(v.replace(/[^0-9]/g, ''))} keyboardType="numeric" style={styles.input} placeholder="100" placeholderTextColor={colors.onSurfaceTertiary} />
+                        </View>
+                        <View style={[styles.field, { flex: 1 }]}>
+                          <Text style={styles.label}>Check-out radius (m)</Text>
+                          <TextInput value={checkOutRadius} onChangeText={(v) => setCheckOutRadius(v.replace(/[^0-9]/g, ''))} keyboardType="numeric" style={styles.input} placeholder="1000" placeholderTextColor={colors.onSurfaceTertiary} />
+                        </View>
+                      </View>
+                      <Text style={styles.help}>
+                        The check-out radius also controls the automatic post-work-hours check-out distance.
+                      </Text>
+                    </>
+                  )}
                 </View>
 
                 {/* Head + Active */}
@@ -484,8 +532,14 @@ const styles = StyleSheet.create({
   logoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary, borderRadius: radius.sm, paddingVertical: 8, paddingHorizontal: 12 },
   logoBtnText: { fontSize: 12, fontWeight: '700', color: colors.brandPrimary },
 
-  geoBox: { backgroundColor: colors.brandTertiary + '55', borderRadius: radius.md, borderWidth: 1, borderColor: colors.brandTertiary, padding: spacing.md, gap: spacing.md },
+  geoBox: { backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.md },
+  geoBoxActive: { backgroundColor: colors.brandTertiary + '55', borderColor: colors.brandTertiary },
+  geoHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  geoTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  geoStateBadge: { fontSize: 10, fontWeight: '900', letterSpacing: 0.6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, overflow: 'hidden' },
+  geoStateOn: { color: colors.success, backgroundColor: '#E9F1E7' },
+  geoStateOff: { color: colors.onSurfaceTertiary, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   geoTitle: { fontSize: 13, fontWeight: '700', color: colors.onSurface },
-  captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.brandPrimary, paddingVertical: 10, borderRadius: radius.sm, alignSelf: 'flex-start', paddingHorizontal: spacing.md },
-  captureBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.brandSecondary, paddingVertical: 8, borderRadius: radius.pill, paddingHorizontal: 12 },
+  captureBtnText: { color: colors.brandPrimary, fontSize: 12, fontWeight: '700' },
 });
