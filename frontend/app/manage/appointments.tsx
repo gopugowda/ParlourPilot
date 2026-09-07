@@ -15,6 +15,8 @@ import { colors, spacing, radius, shadows, fmtMoney } from '@/src/theme';
 import { sanitizePhone, PHONE_MAX } from '@/src/utils/validators';
 import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
+import { resolveRange, localDateKey, type RangePreset } from '@/src/utils/dateRange';
+import { fmtTime12 } from '@/src/utils/dateTime';
 
 type Appointment = {
   id: string;
@@ -44,13 +46,7 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   no_show: { label: 'No-show', color: colors.error },
 };
 
-const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-
-const fmtTime = (iso: string) => {
-  try { return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }); }
-  catch { return iso; }
-};
+const fmtTime = (iso: string) => fmtTime12(iso);
 const fmtDate = (iso: string) => {
   try { return new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }); }
   catch { return iso; }
@@ -59,7 +55,7 @@ const fmtDate = (iso: string) => {
 export default function AppointmentsScreen() {
   const router = useRouter();
   const { currentBranchId } = useAuth();
-  const [range, setRange] = useState<'today' | 'week' | 'all'>('today');
+  const [range, setRange] = useState<RangePreset>('today');
   const [list, setList] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,14 +77,15 @@ export default function AppointmentsScreen() {
 
   const load = useCallback(async () => {
     try {
+      // Ask the backend for the FULL preset window (local Mon→Sun for
+      // "week", 1st→last for "month", etc.). We keep the server params
+      // as ISO datetimes — the range helper is entirely client-side and
+      // never changes stored data.
       let params: any = {};
-      const now = new Date();
-      if (range === 'today') {
-        params.date_from = startOfDay(now).toISOString();
-        params.date_to = addDays(startOfDay(now), 1).toISOString();
-      } else if (range === 'week') {
-        params.date_from = startOfDay(now).toISOString();
-        params.date_to = addDays(startOfDay(now), 7).toISOString();
+      if (range !== 'all') {
+        const r = resolveRange(range);
+        params.date_from = r.startInclusive.toISOString();
+        params.date_to   = r.endExclusive.toISOString();
       }
       const [apts, bs, srv] = await Promise.all([
         appointmentApi.list(params) as Promise<Appointment[]>,
@@ -113,7 +110,10 @@ export default function AppointmentsScreen() {
     return list.filter(a => {
       if (filters.stylistId && a.beautician_id !== filters.stylistId) return false;
       if (filters.status    && a.status !== filters.status)          return false;
-      const dk = (a.scheduled_start || '').slice(0, 10);
+      // IMPORTANT: derive the LOCAL calendar date of the appointment;
+      // never slice the raw ISO (that would use UTC and be off-by-one
+      // across midnight for anything east of Greenwich).
+      const dk = localDateKey(a.scheduled_start);
       if (filters.dateFrom && dk < filters.dateFrom) return false;
       if (filters.dateTo   && dk > filters.dateTo)   return false;
       return true;
@@ -123,7 +123,7 @@ export default function AppointmentsScreen() {
   const grouped = useMemo(() => {
     const map = new Map<string, Appointment[]>();
     filteredList.forEach(a => {
-      const dkey = a.scheduled_start.slice(0, 10);
+      const dkey = localDateKey(a.scheduled_start);
       if (!map.has(dkey)) map.set(dkey, []);
       map.get(dkey)!.push(a);
     });
@@ -177,10 +177,10 @@ export default function AppointmentsScreen() {
       </SafeAreaView>
 
       <View style={styles.chipRow}>
-        {(['today', 'week', 'all'] as const).map(k => (
+        {(['today', 'week', 'month', 'all'] as const).map(k => (
           <TouchableOpacity key={k} testID={`range-${k}`} style={[styles.chip, range === k && styles.chipActive]} onPress={() => setRange(k)}>
             <Text style={[styles.chipText, range === k && styles.chipTextActive]}>
-              {k === 'today' ? 'Today' : k === 'week' ? 'This Week' : 'All Upcoming'}
+              {k === 'today' ? 'Today' : k === 'week' ? 'This Week' : k === 'month' ? 'This Month' : 'All Upcoming'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -207,7 +207,7 @@ export default function AppointmentsScreen() {
 
           {grouped.map(g => (
             <View key={g.dateKey} style={{ marginBottom: spacing.lg }}>
-              <Text style={styles.groupLabel}>{fmtDate(g.dateKey + 'T00:00:00Z')}</Text>
+              <Text style={styles.groupLabel}>{fmtDate(g.dateKey + 'T00:00:00')}</Text>
               {g.items.map(a => {
                 const meta = STATUS_META[a.status] || STATUS_META.booked;
                 return (

@@ -715,7 +715,7 @@ function RequestForm({ visible, onClose, leaveTypes, onSubmitted }: {
 function fmtDateShort(iso: string): string {
   try {
     const d = new Date(iso);
-    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
   } catch { return iso; }
 }
 

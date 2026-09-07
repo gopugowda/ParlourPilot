@@ -379,7 +379,7 @@ ${tipBlock}
               price: Number(it.total ?? it.price ?? 0),
             }));
             const dt = new Date(bill?.created_at || Date.now()).toLocaleString(undefined, {
-              day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+              day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
             });
             const paymentMode = bill?.payment_mode
               ? paymentLabel(bill.payment_mode)

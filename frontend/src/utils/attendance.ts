@@ -52,16 +52,16 @@ export function parseTimestampMs(iso?: string | number | null): number | null {
   return d ? d.valueOf() : null;
 }
 
-/** Format a backend timestamp as local HH:mm (24h). Returns '—' on failure. */
+/** Format a backend timestamp as local 12-hour clock (e.g. '01:30 PM'). Returns '—' on failure. */
 export function fmtLocalTime(iso?: string | number | null): string {
   const d = parseTimestamp(iso);
-  return d ? d.format('HH:mm') : '—';
+  return d ? d.format('hh:mm A') : '—';
 }
 
-/** Format a backend timestamp as local weekday + short time (used in Upcoming lists). */
+/** Format a backend timestamp as local weekday + short 12-hour time (used in Upcoming lists). */
 export function fmtLocalDayTime(iso?: string | number | null): string {
   const d = parseTimestamp(iso);
-  return d ? d.format('ddd, MMM D · HH:mm') : '—';
+  return d ? d.format('ddd, MMM D · hh:mm A') : '—';
 }
 
 export type AttendanceAction = 'check_in' | 'check_out' | 'break_start' | 'break_end';

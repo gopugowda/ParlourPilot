@@ -382,7 +382,7 @@ export default function PayrollReportScreen() {
       const footerNote = escHtml(t.receipt_footer || 'Thank you.');
       const period = `${data.from} → ${data.to}`;
       const generatedAt = new Date().toLocaleString('en-IN', {
-        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
       });
       const paidBadge = row.paid
         ? `<span class="pill pill-paid">✓ PAID</span>`

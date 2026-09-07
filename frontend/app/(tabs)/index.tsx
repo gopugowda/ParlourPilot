@@ -323,7 +323,7 @@ function OwnerDashboard() {
             {(aptStats?.upcoming || []).length > 0 ? (
               <View style={{ marginTop: spacing.md, gap: 6 }}>
                 {aptStats!.upcoming.slice(0, 3).map((a: any) => {
-                  const t = (() => { try { return new Date(a.scheduled_start).toLocaleString('en-IN', { weekday: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return a.scheduled_start; } })();
+                  const t = (() => { try { return new Date(a.scheduled_start).toLocaleString('en-IN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: true }); } catch { return a.scheduled_start; } })();
                   return (
                     <TouchableOpacity key={a.id} style={styles.upcomingRow} onPress={() => router.push('/manage/appointments' as any)} activeOpacity={0.85}>
                       <Text style={styles.upcomingTime}>{t}</Text>

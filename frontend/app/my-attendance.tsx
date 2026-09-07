@@ -154,7 +154,7 @@ function TimeField({
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const formatHM = (hh: number, mm: number) => {
   const d = new Date(); d.setHours(hh, mm, 0, 0);
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
 // ---------------------------------------------------------------------------

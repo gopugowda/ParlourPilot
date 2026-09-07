@@ -137,7 +137,7 @@ export async function fetchAllSignals(isOwner: boolean): Promise<Notif[]> {
       try { ts = new Date(a.updated_at || a.scheduled_start || now).getTime() || now; } catch { ts = now; }
       let timeStr = '';
       if (a.scheduled_start) {
-        try { timeStr = ` (${new Date(a.scheduled_start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })})`; } catch {}
+        try { timeStr = ` (${new Date(a.scheduled_start).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })})`; } catch {}
       }
       out.push({
         id: `apt_cancel:${a.id || Math.random()}`,

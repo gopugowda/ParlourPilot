@@ -84,11 +84,11 @@ export const localDateToIso = (ymd: string, hh: number, mm: number): string => {
   return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0).toISOString();
 };
 
-/** Format an ISO in the device's local timezone as "9:00 AM". */
+/** Format an ISO in the device's local timezone as "9:00 AM" (12-hour clock). */
 export const fmtLocalTimeISO = (iso: string | null | undefined): string => {
   const d = safeParseISO(iso || '');
   if (!d) return '—';
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
 // ---------- Endpoints -----------------------------------------------------

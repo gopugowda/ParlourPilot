@@ -251,7 +251,7 @@ export default function StaffDashboard() {
     // the actual URL that HTTP requests are using.
     const runtimeUrl = API_BASE_URL || '(unresolved)';
     const lastFetch = earningsUpdatedAt
-      ? `${new Date(earningsUpdatedAt).toLocaleTimeString()} (${Math.round((Date.now() - earningsUpdatedAt) / 1000)}s ago)`
+      ? `${new Date(earningsUpdatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} (${Math.round((Date.now() - earningsUpdatedAt) / 1000)}s ago)`
       : 'never';
     const linkedText = earnings == null ? 'no response yet'
       : earnings.linked ? 'true — profile linked ✓'
