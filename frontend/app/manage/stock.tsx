@@ -357,31 +357,31 @@ export default function StockScreen() {
         <TouchableOpacity testID="back-btn" onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.replace("/(tabs)")} style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: 4 }}>
+        <TouchableOpacity onPress={() => router.replace("/(tabs)")} style={styles.hIcon}>
           <Ionicons name="home-outline" size={20} color="#3A3937" />
         </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Stock</Text>
-          <Text style={styles.headerSub}>{filtered.length} of {list.length} · {lowCount} low</Text>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit>Stock</Text>
+          <Text style={styles.headerSub} numberOfLines={1}>{filtered.length} of {list.length} · {lowCount} low</Text>
         </View>
-        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="stock-filter-btn" />
-        <TouchableOpacity
-          testID="stock-menu-btn"
-          onPress={() => setExportOpen(true)}
-          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}
-        >
-          <Ionicons name="ellipsis-vertical" size={20} color={colors.brandPrimary} />
-        </TouchableOpacity>
         <TouchableOpacity
           testID="scan-product-btn"
           onPress={() => setScannerMode('search')}
-          style={[styles.headerBtn, { marginLeft: spacing.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.brandPrimary }]}
+          style={styles.hIcon}
           accessibilityLabel="Scan product"
         >
           <Ionicons name="barcode-outline" size={20} color={colors.brandPrimary} />
         </TouchableOpacity>
+        <FilterHeaderButton count={activeCount} onPress={() => setFsOpen(true)} testID="stock-filter-btn" />
+        <TouchableOpacity
+          testID="stock-menu-btn"
+          onPress={() => setExportOpen(true)}
+          style={styles.hIcon}
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.brandPrimary} />
+        </TouchableOpacity>
         {isAdmin && (
-          <TouchableOpacity testID="add-item-btn" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
+          <TouchableOpacity testID="add-item-btn" onPress={openAdd} style={[styles.headerBtn, { marginLeft: 2 }]}>
             <Ionicons name="add" size={22} color="#fff" />
           </TouchableOpacity>
         )}
@@ -762,6 +762,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingBottom: spacing.md, backgroundColor: colors.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: colors.border },
   iconBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  hIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 20, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
   headerBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brandPrimary },
