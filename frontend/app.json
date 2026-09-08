@@ -2,7 +2,7 @@
   "expo": {
     "name": "ParlourPilot",
     "slug": "parlourpilot",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/parlourpilot-logo.png",
     "scheme": "parlourpilot",
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.parlourpilot.app",
-      "versionCode": 106,
+      "versionCode": 107,
       "permissions": ["android.permission.CAMERA"],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -57,7 +57,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow ParlourPilot to access your photos so you can pick a salon logo.",
-          "cameraPermission": false,
+          "cameraPermission": "Scan product barcodes and product labels to add stock",
           "microphonePermission": false
         }
       ],
