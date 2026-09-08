@@ -206,6 +206,7 @@ export default function StockScreen() {
 
   // ---- OCR helper — used from inside the Add-item sheet ---------------
   const runOcrForName = async () => {
+    if (ocrBusy) return;                              // debounce
     if (!isOcrAvailable()) {
       Alert.alert(
         'OCR requires a build',
@@ -215,14 +216,38 @@ export default function StockScreen() {
     }
     setOcrBusy(true);
     try {
-      const res = await scanProductNameFromCamera();
-      if (!res) return;
-      if (!res.suggestedName) {
-        Alert.alert('Nothing readable found', 'Try a clearer, brighter shot of the front label.');
-        return;
+      const outcome = await scanProductNameFromCamera();
+      switch (outcome.kind) {
+        case 'success': {
+          setName(outcome.data.suggestedName);       // populate + let user edit
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          break;
+        }
+        case 'canceled':
+          // Silent — user chose to back out.
+          break;
+        case 'permission_denied':
+          Alert.alert(
+            'Camera permission needed',
+            'Allow camera access in Settings so we can scan the product label.',
+          );
+          break;
+        case 'empty':
+          Alert.alert(
+            'No text detected',
+            'Please take a clearer photo of the product label in good light.',
+          );
+          break;
+        case 'unavailable':
+          Alert.alert(
+            'OCR unavailable',
+            'The on-device text recognizer is not available in this build. Please publish a new production build to enable Scan Name.',
+          );
+          break;
+        case 'error':
+          Alert.alert('Could not read the label', outcome.message);
+          break;
       }
-      setName(res.suggestedName);
-      Haptics.selectionAsync();
     } finally {
       setOcrBusy(false);
     }

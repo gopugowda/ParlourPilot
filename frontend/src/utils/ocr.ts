@@ -3,127 +3,167 @@
  * still image using Google MLKit via `@react-native-ml-kit/text-recognition`.
  *
  * IMPORTANT (build):
- *   MLKit is a native module and IS NOT AVAILABLE INSIDE EXPO GO.
- *   Tapping "Scan Product Name" inside Expo Go falls back to a
- *   friendly "OCR unavailable in Expo Go" message instead of
- *   crashing. In an EAS Development Build / production build the
- *   feature works end-to-end.
+ *   MLKit is a native module. In Expo Go the native side is absent
+ *   and calling `recognize()` throws at runtime; the caller receives
+ *   the `'unavailable'` outcome and shows a friendly alert. A dev /
+ *   production build ships the native module and OCR works end-to-end.
  *
  * PRIVACY:
- *   The image is processed locally on the device. Nothing is
- *   uploaded to a server. The image is discarded once OCR returns.
+ *   The image is processed locally on device. Nothing is uploaded.
+ *   The temporary image URI is discarded once OCR returns.
+ *
+ * Design of the return type (discriminated union): earlier revisions
+ * returned `null` for every failure path — success with empty text,
+ * user cancel, MLKit throw, or missing native module — which made it
+ * impossible for the caller to give useful feedback. Now every
+ * outcome is distinguishable.
  */
 import * as ImagePicker from 'expo-image-picker';
-import { Linking } from 'react-native';
+// Static import so Metro resolves the module at bundle time. The
+// native side is loaded lazily when we actually invoke `.recognize()`;
+// if the native module is missing (Expo Go), the call throws and we
+// surface an "unavailable" outcome to the caller.
+import TextRecognition from '@react-native-ml-kit/text-recognition';
 
 export type OcrResult = {
-  /** Everything MLKit returned, joined by newlines. */
+  /** Full text from MLKit (joined blocks if MLKit didn't provide a top-level string). */
   fullText: string;
   /** Individual text blocks (trimmed, empties removed). */
   blocks: string[];
-  /** Our best-guess product name derived from the blocks. */
+  /** Best-guess product name derived from the top of the label. */
   suggestedName: string;
 };
 
-/** True when the underlying native OCR module is available at runtime. */
+export type OcrOutcome =
+  | { kind: 'success'; data: OcrResult }
+  | { kind: 'canceled' }                 // user aborted the camera / crop
+  | { kind: 'permission_denied' }        // camera permission denied
+  | { kind: 'empty' }                    // OCR ran but returned no readable text
+  | { kind: 'unavailable' }              // MLKit native module not linked (Expo Go)
+  | { kind: 'error'; message: string };  // MLKit threw for another reason
+
+/** True IF the JS side of the MLKit module is loaded. The final answer
+ *  (whether the NATIVE side is also linked) only comes when we call
+ *  `.recognize()`. Use it as a hint only. */
 export function isOcrAvailable(): boolean {
-  try {
-    // require() will throw in Expo Go because the native module isn't linked.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('@react-native-ml-kit/text-recognition');
-    return !!mod && (typeof mod.recognize === 'function' || (mod.default && typeof mod.default.recognize === 'function'));
-  } catch {
-    return false;
-  }
+  return !!TextRecognition && typeof (TextRecognition as any).recognize === 'function';
 }
 
 async function ensureCameraPermission(): Promise<boolean> {
   const cur = await ImagePicker.getCameraPermissionsAsync();
   if (cur.granted) return true;
-  if (!cur.canAskAgain) {
-    // The user permanently denied — nothing we can do inline.
-    return false;
-  }
+  if (!cur.canAskAgain) return false;
   const req = await ImagePicker.requestCameraPermissionsAsync();
   return req.granted;
 }
 
 /**
- * Ask the user to capture a photo of the packaging (front label
- * ideally), run MLKit locally, and return the extracted text.
- * Returns `null` when OCR is unavailable, the user cancels, or the
- * scan yields no readable text.
+ * Open the camera → let the user crop → run MLKit on the (possibly
+ * cropped) URI → return a fully-typed outcome.
+ *
+ * `allowsEditing: true` means the URI in `result.assets[0].uri` is
+ * the CROPPED image on both iOS and Android. That's exactly the URI
+ * we hand to MLKit.
  */
-export async function scanProductNameFromCamera(): Promise<OcrResult | null> {
-  if (!isOcrAvailable()) {
-    // Signal to callers so they can surface the "dev build required" hint.
-    return null;
-  }
+export async function scanProductNameFromCamera(): Promise<OcrOutcome> {
+  if (!isOcrAvailable()) return { kind: 'unavailable' };
+
   const granted = await ensureCameraPermission();
-  if (!granted) {
-    // Nudge the user to Settings if they denied twice.
-    try { await Linking.openSettings(); } catch {}
-    return null;
-  }
-  const result = await ImagePicker.launchCameraAsync({
+  if (!granted) return { kind: 'permission_denied' };
+
+  const picked = await ImagePicker.launchCameraAsync({
     mediaTypes: ['images'],
     allowsEditing: true,
-    quality: 0.8,
+    quality: 0.85,
     exif: false,
     base64: false,
   });
-  if (result.canceled || !result.assets?.[0]?.uri) return null;
-  const uri = result.assets[0].uri;
+  if (picked.canceled) return { kind: 'canceled' };
+  const uri = picked.assets?.[0]?.uri;
+  if (!uri) return { kind: 'canceled' };
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('@react-native-ml-kit/text-recognition');
-    const TR = mod.default ?? mod;
-    const recognized = await TR.recognize(uri);
-    const blocks: string[] = Array.isArray(recognized?.blocks)
-      ? recognized.blocks.map((b: any) => String(b?.text || '').trim()).filter(Boolean)
-      : String(recognized?.text || '').split('\n').map((s: string) => s.trim()).filter(Boolean);
+    // MLKit accepts a file:// URI on both platforms.
+    if (__DEV__) console.log('[ocr] recognizing', uri);
+    const raw: any = await TextRecognition.recognize(uri);
+    if (__DEV__) console.log('[ocr] raw', typeof raw?.text, 'blocks=', raw?.blocks?.length);
 
-    const fullText = blocks.join('\n');
-    return { fullText, blocks, suggestedName: buildSuggestedName(blocks) };
-  } catch {
-    return null;
+    // MLKit v2 shape: { text: string, blocks: { text, lines, frame }[] }
+    // Fall back to lines/split when a specific field is missing.
+    const rawBlocks: string[] = Array.isArray(raw?.blocks)
+      ? raw.blocks.flatMap((b: any) => {
+          if (Array.isArray(b?.lines) && b.lines.length) {
+            return b.lines.map((l: any) => String(l?.text || '').trim());
+          }
+          return [String(b?.text || '').trim()];
+        })
+      : String(raw?.text || '').split(/\r?\n/);
+
+    const blocks = rawBlocks.map(s => s.trim()).filter(Boolean);
+    const fullText = String(raw?.text || blocks.join('\n')).trim();
+
+    if (!blocks.length && !fullText) return { kind: 'empty' };
+
+    const suggestedName = buildSuggestedName(blocks);
+    if (!suggestedName) return { kind: 'empty' };
+
+    return { kind: 'success', data: { fullText, blocks, suggestedName } };
+  } catch (e: any) {
+    if (__DEV__) console.warn('[ocr] recognize threw', e?.message || e);
+    // The most common cause in the field is Expo Go / missing native module.
+    const msg = String(e?.message || e || '').toLowerCase();
+    if (msg.includes('null') || msg.includes('native') || msg.includes('undefined is not a function')) {
+      return { kind: 'unavailable' };
+    }
+    return { kind: 'error', message: e?.message || 'OCR failed' };
   }
 }
 
 /**
- * Derive a plausible product name from raw OCR blocks. Heuristics:
- *   • Keep lines with letters (drop pure-numeric lines like "500 ML"
- *     unless we have nothing else).
- *   • Prefer the 2-3 longest lines from the top half of the label.
- *   • Title-case and stitch with single spaces.
- *   • Trim obvious weight/volume suffixes ("500 ML", "250 G") to
- *     avoid duplicating them if the user re-enters unit info.
+ * Turn raw OCR blocks into a plausible product name.
  *
- * NEVER invents information not present in the OCR output.
+ *  1. Preserve packaging order — the name sits near the top of the
+ *     label, so we work from the top down.
+ *  2. Drop lines that are essentially numeric ("500 g", "1 L").
+ *  3. Drop tiny 1-char lines (®, ™, single letters left over from
+ *     stylised logos).
+ *  4. Cap at the first 5 letter-bearing lines so we don't glue the
+ *     product name to the marketing bullets underneath.
+ *  5. Stop early if a line clearly ends the "name" region — a bullet
+ *     like "DERMATOLOGICALLY TESTED" or "PEROXIDE FREE".
+ *  6. Title-case + collapse whitespace.
+ *
+ * Nothing is INVENTED — we only rearrange what MLKit already saw.
  */
 export function buildSuggestedName(blocks: string[]): string {
   if (!blocks || blocks.length === 0) return '';
   const letters = /[A-Za-z]/;
-  const numericOnly = /^[\d\s./ml gkgL%]+$/i;
+  const numericOnly = /^[\d\s./%,-]+(ml|g|kg|l|oz|gm|gms|kgs|ltr|litre)?\s*$/i;
+  const bulletKeywords = /^(dermatologically|peroxide|sulphate|paraben|hydroqui|silicone|cruelty|alcohol|for professional|caution|manufactured|marketed|batch|mfg|exp|use before|net|mrp)/i;
 
-  // Preserve the packaging order — top of the label first.
-  const candidates = blocks
-    .map(b => b.replace(/\s+/g, ' ').trim())
-    .filter(b => b.length >= 2)
-    .filter(b => letters.test(b) && !numericOnly.test(b));
+  const cleaned: string[] = [];
+  for (const raw of blocks) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (!line || line.length < 2) continue;
+    if (!letters.test(line)) continue;
+    if (numericOnly.test(line)) continue;
+    if (bulletKeywords.test(line)) break;              // stop the name region
+    cleaned.push(line);
+    if (cleaned.length >= 5) break;
+  }
 
-  // Take the top 4 lines by document order (name usually sits high).
-  const primary = (candidates.length ? candidates : blocks.slice()).slice(0, 4);
-
-  // Drop trailing size/volume-only tokens if a longer name exists.
-  const cleaned = primary.filter(l => !/^\s*\d+\s*(ml|g|kg|l|oz)?\s*$/i.test(l));
-  const chosen = cleaned.length ? cleaned : primary;
-
+  const chosen = cleaned.length ? cleaned : blocks.slice(0, 3);
   const joined = chosen.join(' ').replace(/\s+/g, ' ').trim();
-  return titleCase(joined);
+  // Strip trailing net-content chunks like "…Cream 500g".
+  const trimmed = joined.replace(/\s+\d+\s*(ml|g|kg|l|oz|gm|gms)\b.*$/i, '').trim();
+  return titleCase(trimmed);
 }
 
 function titleCase(s: string): string {
-  return s.toLowerCase().replace(/\b([a-z])/g, m => m.toUpperCase());
+  return s
+    .toLowerCase()
+    .replace(/\b([a-z])/g, m => m.toUpperCase())
+    // Keep short connectors lowercase mid-string.
+    .replace(/\b(And|With|For|The)\b/g, m => m.toLowerCase())
+    .replace(/^([a-z])/, m => m.toUpperCase());
 }
