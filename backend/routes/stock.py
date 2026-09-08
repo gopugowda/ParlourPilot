@@ -54,6 +54,14 @@ async def list_low_stock(scope: BranchScope = Depends(branch_scope)):
 async def create_stock(body: StockItemIn, scope: BranchScope = Depends(branch_scope_admin)):
     if await db.stock_items.find_one(scope.filter({"name": body.name.strip()})):
         raise HTTPException(status_code=400, detail="Item with this name already exists")
+    # Normalize barcode: trim whitespace + preserve leading zeros (string only).
+    barcode = (body.barcode or "").strip() or None
+    if barcode:
+        # Tenant-scoped uniqueness so two products in the same salon
+        # can't share the same barcode. Different tenants CAN reuse it.
+        clash = await db.stock_items.find_one(scope.filter({"barcode": barcode}), {"_id": 0})
+        if clash:
+            raise HTTPException(status_code=409, detail=f"Barcode already used by '{clash.get('name')}'")
     doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": scope.tenant_id,
@@ -64,6 +72,7 @@ async def create_stock(body: StockItemIn, scope: BranchScope = Depends(branch_sc
         "min_qty": round(float(body.min_qty or 0), 2),
         "unit_cost": round(float(body.unit_cost or 0), 2),
         "notes": body.notes or "",
+        "barcode": barcode,
         "created_at": now_iso(),
     }
     await db.stock_items.insert_one(doc)
@@ -72,6 +81,13 @@ async def create_stock(body: StockItemIn, scope: BranchScope = Depends(branch_sc
 
 @router.put("/stock/{sid}")
 async def update_stock(sid: str, body: StockItemIn, scope: BranchScope = Depends(branch_scope_admin)):
+    barcode = (body.barcode or "").strip() or None
+    if barcode:
+        clash = await db.stock_items.find_one(
+            scope.filter({"barcode": barcode, "id": {"$ne": sid}}), {"_id": 0}
+        )
+        if clash:
+            raise HTTPException(status_code=409, detail=f"Barcode already used by '{clash.get('name')}'")
     result = await db.stock_items.find_one_and_update(
         scope.filter({"id": sid}),
         {"$set": {
@@ -81,12 +97,30 @@ async def update_stock(sid: str, body: StockItemIn, scope: BranchScope = Depends
             "min_qty": round(float(body.min_qty or 0), 2),
             "unit_cost": round(float(body.unit_cost or 0), 2),
             "notes": body.notes or "",
+            "barcode": barcode,
         }},
         return_document=True, projection={"_id": 0},
     )
     if not result:
         raise HTTPException(status_code=404, detail="Not found")
     return result
+
+
+@router.get("/stock/by-barcode/{barcode}")
+async def stock_by_barcode(barcode: str, scope: BranchScope = Depends(branch_scope)):
+    """
+    Mobile barcode-scanner lookup. Tenant-scoped by the existing
+    branch_scope dependency — never searches across other salons.
+    Returns 404 when the barcode is unknown (mobile shows "New product").
+    """
+    bc = (barcode or "").strip()
+    if not bc:
+        raise HTTPException(status_code=400, detail="Barcode required")
+    doc = await db.stock_items.find_one(scope.filter({"barcode": bc}), {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No product with this barcode")
+    doc["low_stock"] = doc.get("current_qty", 0) <= doc.get("min_qty", 0)
+    return doc
 
 
 @router.delete("/stock/{sid}")

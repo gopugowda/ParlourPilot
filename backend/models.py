@@ -189,6 +189,11 @@ class StockItemIn(BaseModel):
     min_qty: float = 0
     unit_cost: float = 0
     notes: Optional[str] = ""
+    # Optional retail/QR barcode captured on Mobile. Stored as string
+    # so leading zeros are preserved. Never mandatory. Never used as
+    # the primary key. Uniqueness (if enforced) is tenant-scoped —
+    # see routes/stock.py.
+    barcode: Optional[str] = None
 
 
 class StockMovementIn(BaseModel):

@@ -13,7 +13,8 @@
       "bundleIdentifier": "com.emergent.saloninvoiceapp.djfiom",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Upload your salon logo to personalize your invoices",
-        "NSLocationWhenInUseUsageDescription": "Verify you're at the salon when punching attendance"
+        "NSLocationWhenInUseUsageDescription": "Verify you're at the salon when punching attendance",
+        "NSCameraUsageDescription": "Scan product barcodes to quickly add stock"
       }
     },
     "android": {
@@ -24,12 +25,12 @@
       "edgeToEdgeEnabled": true,
       "package": "com.parlourpilot.app",
       "versionCode": 104,
+      "permissions": ["android.permission.CAMERA"],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.CAMERA",
         "android.permission.DUMP",
         "android.permission.USE_FINGERPRINT",
         "android.permission.USE_BIOMETRIC"
@@ -58,6 +59,14 @@
           "photosPermission": "Allow ParlourPilot to access your photos so you can pick a salon logo.",
           "cameraPermission": false,
           "microphonePermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan product barcodes to quickly add stock",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       [

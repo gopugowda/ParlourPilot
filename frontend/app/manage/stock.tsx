@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, KeyboardAvoidingView, Platform,
+  Modal, Pressable, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,10 +14,13 @@ import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 import { ExportMenu, type ExportAction, ReportEmptyState } from '@/src/components/ReportKit';
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
+import { BarcodeScanner } from '@/src/components/BarcodeScanner';
+import { isOcrAvailable, scanProductNameFromCamera } from '@/src/utils/ocr';
 
 type StockItem = {
   id: string; name: string; unit: string;
   category?: string;
+  barcode?: string | null;
   branch_id?: string; branch_name?: string;
   current_qty: number; min_qty: number; unit_cost: number;
   low_stock: boolean; notes?: string;
@@ -43,8 +46,17 @@ export default function StockScreen() {
   const [curQty, setCurQty] = useState('0');
   const [minQty, setMinQty] = useState('0');
   const [unitCost, setUnitCost] = useState('0');
+  const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
+
+  // Barcode scanner
+  // 'search'  → find existing item, then either add stock or open new-item form
+  // 'edit'    → filling the barcode field inside the Add/Edit sheet
+  const [scannerMode, setScannerMode] = useState<null | 'search' | 'edit'>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [foundOpen, setFoundOpen] = useState<null | { item: StockItem; qty: string }>(null);
 
   // Persistent filters
   const [fsOpen, setFsOpen] = useState(false);
@@ -69,14 +81,17 @@ export default function StockScreen() {
 
   const openAdd = () => {
     setEditing(null); setName(''); setUnit('piece'); setCategory('General');
-    setCurQty('0'); setMinQty('0'); setUnitCost('0'); setErr(null); setEditOpen(true);
+    setCurQty('0'); setMinQty('0'); setUnitCost('0'); setBarcode('');
+    setErr(null); setEditOpen(true);
   };
   const openEdit = (it: StockItem) => {
     if (!isAdmin) return;
     setEditing(it); setName(it.name); setUnit(it.unit);
     setCategory(it.category || 'General');
     setCurQty(String(it.current_qty)); setMinQty(String(it.min_qty));
-    setUnitCost(String(it.unit_cost)); setErr(null); setEditOpen(true);
+    setUnitCost(String(it.unit_cost));
+    setBarcode(it.barcode || '');
+    setErr(null); setEditOpen(true);
   };
 
   const save = async () => {
@@ -84,7 +99,16 @@ export default function StockScreen() {
     if (!name.trim()) { setErr('Name required'); return; }
     setSaving(true);
     try {
-      const body: any = { name: name.trim(), unit, category: category.trim() || 'General', current_qty: Number(curQty) || 0, min_qty: Number(minQty) || 0, unit_cost: Number(unitCost) || 0 };
+      const body: any = {
+        name: name.trim(),
+        unit,
+        category: category.trim() || 'General',
+        current_qty: Number(curQty) || 0,
+        min_qty: Number(minQty) || 0,
+        unit_cost: Number(unitCost) || 0,
+      };
+      const bc = barcode.trim();
+      if (bc) body.barcode = bc;
       if (editing) await api(`/stock/${editing.id}`, { method: 'PUT', body });
       else await api('/stock', { method: 'POST', body });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -95,6 +119,113 @@ export default function StockScreen() {
 
   const remove = async (it: StockItem) => {
     try { await api(`/stock/${it.id}`, { method: 'DELETE' }); await load(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+  };
+
+  // ---- Barcode scan → find or create ----------------------------------
+  const handleScanned = useCallback(async ({ value }: { value: string; type: string }) => {
+    const mode = scannerMode;
+    setScannerMode(null);
+    if (!value) return;
+
+    // Mode B: filling the barcode field inside the editor.
+    if (mode === 'edit') {
+      setBarcode(value);
+      return;
+    }
+
+    // Mode A: search the current tenant's stock. Look client-side
+    // first (fast, works even if the deployed backend hasn't received
+    // the by-barcode endpoint yet), then fall back to the server.
+    setScanBusy(true);
+    try {
+      let match: StockItem | null =
+        list.find(it => (it.barcode || '').trim() === value) || null;
+
+      if (!match) {
+        try {
+          const found = await api<StockItem>(`/stock/by-barcode/${encodeURIComponent(value)}`);
+          if (found?.id) match = found as StockItem;
+        } catch (e: any) {
+          // 404 → unknown barcode; anything else → surface politely.
+          if (e?.status && e.status !== 404) {
+            Alert.alert('Barcode lookup failed', e.message || 'Please try again.');
+            return;
+          }
+        }
+      }
+
+      if (match) {
+        setFoundOpen({ item: match, qty: '1' });
+        return;
+      }
+
+      // Unknown barcode → prompt for new-product flow.
+      if (!isAdmin) {
+        Alert.alert('Not found', 'This barcode is not registered. Ask an admin to add it.');
+        return;
+      }
+      Alert.alert(
+        'Barcode not registered',
+        `We couldn't find a product for ${value}. Do you want to add it?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Add product',
+            onPress: () => {
+              setEditing(null);
+              setName(''); setUnit('piece'); setCategory('General');
+              setCurQty('0'); setMinQty('0'); setUnitCost('0');
+              setBarcode(value);
+              setErr(null);
+              setEditOpen(true);
+            },
+          },
+        ],
+      );
+    } finally {
+      setScanBusy(false);
+    }
+  }, [scannerMode, list, isAdmin]);
+
+  const confirmFoundStock = async () => {
+    if (!foundOpen) return;
+    const q = Number(foundOpen.qty);
+    if (!(q > 0)) { Alert.alert('Quantity', 'Enter a positive quantity.'); return; }
+    try {
+      await api('/stock/movement', {
+        method: 'POST',
+        body: { item_id: foundOpen.item.id, type: 'purchase', qty: q, unit_cost: foundOpen.item.unit_cost || 0 },
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setFoundOpen(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Failed', e.message || 'Could not save stock.');
+    }
+  };
+
+  // ---- OCR helper — used from inside the Add-item sheet ---------------
+  const runOcrForName = async () => {
+    if (!isOcrAvailable()) {
+      Alert.alert(
+        'OCR requires a build',
+        'Product-name scanning uses on-device text recognition and needs the ParlourPilot production build (Expo Go does not include it). You can still type the name in.',
+      );
+      return;
+    }
+    setOcrBusy(true);
+    try {
+      const res = await scanProductNameFromCamera();
+      if (!res) return;
+      if (!res.suggestedName) {
+        Alert.alert('Nothing readable found', 'Try a clearer, brighter shot of the front label.');
+        return;
+      }
+      setName(res.suggestedName);
+      Haptics.selectionAsync();
+    } finally {
+      setOcrBusy(false);
+    }
   };
 
   const openMovement = (item: StockItem, type: 'purchase' | 'use') => {
@@ -216,6 +347,14 @@ export default function StockScreen() {
         >
           <Ionicons name="ellipsis-vertical" size={20} color={colors.brandPrimary} />
         </TouchableOpacity>
+        <TouchableOpacity
+          testID="scan-product-btn"
+          onPress={() => setScannerMode('search')}
+          style={[styles.headerBtn, { marginLeft: spacing.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.brandPrimary }]}
+          accessibilityLabel="Scan product"
+        >
+          <Ionicons name="barcode-outline" size={20} color={colors.brandPrimary} />
+        </TouchableOpacity>
         {isAdmin && (
           <TouchableOpacity testID="add-item-btn" onPress={openAdd} style={[styles.headerBtn, { marginLeft: spacing.sm }]}>
             <Ionicons name="add" size={22} color="#fff" />
@@ -328,7 +467,53 @@ export default function StockScreen() {
             <Pressable style={styles.sheet} onPress={() => {}}>
               <View style={styles.handle} />
               <Text style={styles.sheetTitle}>{editing ? 'Edit item' : 'Add item'}</Text>
-              <View style={styles.field}><Text style={styles.label}>Name</Text><TextInput testID="s-name" value={name} onChangeText={setName} placeholder="e.g. Shampoo" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
+              {/* Barcode row (optional). Sits at the top so scanned
+                  data lands here immediately after a barcode scan. */}
+              <View style={styles.field}>
+                <Text style={styles.label}>Barcode (optional)</Text>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <TextInput
+                    testID="s-barcode"
+                    value={barcode}
+                    onChangeText={(v) => setBarcode(v.replace(/\s+/g, ''))}
+                    placeholder="Scan or type"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    keyboardType="default"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[styles.input, { flex: 1 }]}
+                  />
+                  <TouchableOpacity
+                    testID="s-scan-bc"
+                    onPress={() => setScannerMode('edit')}
+                    style={styles.pillBtn}
+                  >
+                    <Ionicons name="barcode-outline" size={14} color={colors.brandPrimary} />
+                    <Text style={styles.pillBtnText}>Scan</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.field}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={[styles.label, { flex: 1 }]}>Name</Text>
+                  {!editing && (
+                    <TouchableOpacity
+                      testID="s-ocr-name"
+                      onPress={runOcrForName}
+                      disabled={ocrBusy}
+                      style={styles.pillBtn}
+                    >
+                      {ocrBusy ? (
+                        <ActivityIndicator size="small" color={colors.brandPrimary} />
+                      ) : (
+                        <Ionicons name="scan-outline" size={14} color={colors.brandPrimary} />
+                      )}
+                      <Text style={styles.pillBtnText}>{ocrBusy ? 'Reading…' : 'Scan name'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <TextInput testID="s-name" value={name} onChangeText={setName} placeholder="e.g. Shampoo" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
+              </View>
               <View style={styles.field}>
                 <Text style={styles.label}>Category</Text>
                 <TextInput
@@ -469,6 +654,81 @@ export default function StockScreen() {
         subtitle={`${rangeLabel()} · ${filtered.length} item${filtered.length === 1 ? '' : 's'}`}
         onPick={doExport}
       />
+
+      {/* Barcode scanner modal (used for both search-and-add-stock and
+          filling the barcode field in the editor). */}
+      <BarcodeScanner
+        visible={scannerMode != null}
+        onClose={() => setScannerMode(null)}
+        onScanned={handleScanned}
+        title={scannerMode === 'edit' ? 'Scan barcode' : 'Scan product'}
+        hint={scannerMode === 'edit'
+          ? 'Point the camera at the barcode to fill the field.'
+          : 'We look up the product in your salon\'s stock.'}
+      />
+
+      {scanBusy && (
+        <View style={styles.scanBusy} pointerEvents="none">
+          <ActivityIndicator color={colors.brandPrimary} />
+        </View>
+      )}
+
+      {/* Product-found → Add Stock quick sheet */}
+      <Modal visible={!!foundOpen} transparent animationType="slide" onRequestClose={() => setFoundOpen(null)}>
+        <Pressable style={styles.backdrop} onPress={() => setFoundOpen(null)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <Pressable style={styles.sheet} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={styles.sheetTitle}>Product found</Text>
+              {foundOpen && (
+                <>
+                  <View style={styles.foundCard}>
+                    <View style={[styles.icon, { width: 44, height: 44 }]}>
+                      <Ionicons name="cube" size={20} color={colors.brandPrimary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemName}>{foundOpen.item.name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {foundOpen.item.current_qty} {foundOpen.item.unit} in stock
+                        {foundOpen.item.unit_cost > 0 ? ` · ${fmtINR(foundOpen.item.unit_cost)}/${foundOpen.item.unit}` : ''}
+                      </Text>
+                      {foundOpen.item.barcode ? (
+                        <Text style={styles.itemMeta}>Barcode: {foundOpen.item.barcode}</Text>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Quantity to add ({foundOpen.item.unit})</Text>
+                    <TextInput
+                      testID="found-qty"
+                      value={foundOpen.qty}
+                      onChangeText={(v) => setFoundOpen({ ...foundOpen, qty: v.replace(/[^0-9.]/g, '') })}
+                      keyboardType="numeric"
+                      placeholder="1"
+                      placeholderTextColor={colors.onSurfaceTertiary}
+                      style={styles.input}
+                      autoFocus
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    testID="found-add"
+                    style={styles.saveBtn}
+                    onPress={confirmFoundStock}
+                    disabled={!(Number(foundOpen.qty) > 0)}
+                  >
+                    <Text style={styles.saveBtnText}>Add Stock</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setFoundOpen(null)} style={styles.deleteBtn}>
+                    <Text style={{ color: colors.onSurfaceSecondary, fontWeight: '600' }}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -529,4 +789,11 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
   deleteText: { color: colors.error, fontWeight: '600' },
+
+  pillBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary, alignSelf: 'flex-start' },
+  pillBtnText: { fontSize: 11, fontWeight: '700', color: colors.brandPrimary },
+
+  foundCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+
+  scanBusy: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.6)' },
 });
