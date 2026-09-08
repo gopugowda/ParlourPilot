@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, KeyboardAvoidingView, Platform, Alert,
+  Modal, Pressable, Alert,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -488,10 +489,16 @@ export default function StockScreen() {
       {/* Item Editor */}
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit item' : 'Add item'}</Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>{editing ? 'Edit item' : 'Add item'}</Text>
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xl }}
+            >
               {/* Barcode row (optional). Sits at the top so scanned
                   data lands here immediately after a barcode scan. */}
               <View style={styles.field}>
@@ -596,20 +603,26 @@ export default function StockScreen() {
                   <Text style={styles.deleteText}>Delete Item</Text>
                 </TouchableOpacity>
               )}
-            </Pressable>
-          </KeyboardAvoidingView>
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
 
       {/* Movement Sheet */}
       <Modal visible={!!mvOpen} transparent animationType="slide" onRequestClose={() => setMvOpen(null)}>
         <Pressable style={styles.backdrop} onPress={() => setMvOpen(null)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>
-                {mvOpen?.type === 'purchase' ? 'Purchase Stock' : 'Use Stock'}
-              </Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>
+              {mvOpen?.type === 'purchase' ? 'Purchase Stock' : 'Use Stock'}
+            </Text>
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xl }}
+            >
               {mvOpen && (
                 <>
                   <Text style={styles.mvItem}>{mvOpen.item.name} · Currently {mvOpen.item.current_qty} {mvOpen.item.unit}</Text>
@@ -639,8 +652,8 @@ export default function StockScreen() {
                   </TouchableOpacity>
                 </>
               )}
-            </Pressable>
-          </KeyboardAvoidingView>
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -701,10 +714,16 @@ export default function StockScreen() {
       {/* Product-found → Add Stock quick sheet */}
       <Modal visible={!!foundOpen} transparent animationType="slide" onRequestClose={() => setFoundOpen(null)}>
         <Pressable style={styles.backdrop} onPress={() => setFoundOpen(null)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>Product found</Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Product found</Text>
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xl }}
+            >
               {foundOpen && (
                 <>
                   <View style={styles.foundCard}>
@@ -750,8 +769,8 @@ export default function StockScreen() {
                   </TouchableOpacity>
                 </>
               )}
-            </Pressable>
-          </KeyboardAvoidingView>
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
     </View>

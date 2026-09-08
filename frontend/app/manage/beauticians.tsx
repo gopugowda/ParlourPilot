@@ -8,8 +8,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, Switch, KeyboardAvoidingView, Platform, Alert,
+  Modal, Pressable, Switch, Platform, Alert,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -476,22 +477,20 @@ export default function TeamScreen() {
       {/* ============ Add / Edit sheet ============ */}
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.kav}
-          >
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>
-                {editing ? (editing.is_owner_locked ? 'Edit Owner' : 'Edit Team Member') : 'Add Team Member'}
-              </Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>
+              {editing ? (editing.is_owner_locked ? 'Edit Owner' : 'Edit Team Member') : 'Add Team Member'}
+            </Text>
 
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                style={styles.sheetScroll}
-                contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xxl }}
-                showsVerticalScrollIndicator={true}
-              >
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
+              style={styles.sheetScroll}
+            >
                 <View style={styles.field}>
                   <Text style={styles.label}>Full name *</Text>
                   <TextInput testID="team-name-input" value={name} onChangeText={setName} placeholder="e.g. Preetha P" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} />
@@ -894,15 +893,15 @@ export default function TeamScreen() {
                 )}
 
                 {err && <Text style={styles.err}>{err}</Text>}
-              </ScrollView>
 
               <TouchableOpacity testID="team-save-btn" style={styles.saveBtn} onPress={save} disabled={saving}>
                 {saving ? <ActivityIndicator color="#fff" /> : (
                   <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Add'}</Text>
                 )}
               </TouchableOpacity>
-            </Pressable>
-          </KeyboardAvoidingView>
+
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
 

@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, Switch, KeyboardAvoidingView, Platform,
+  Modal, Pressable, Switch, Platform,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -383,12 +384,18 @@ export default function ServicesScreen() {
 
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              {/* Fixed header (title + Item code) — kept OUTSIDE the ScrollView
-                  so it stays visible even if the sheet's inner content scrolls. */}
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit service' : 'Add service'}</Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            {/* Fixed header (title + Item code) — kept OUTSIDE the ScrollView
+                so it stays visible even if the sheet's inner content scrolls. */}
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>{editing ? 'Edit service' : 'Add service'}</Text>
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
+            >
 
               {/* Item Code — optional, numeric zero-padded string. Blank = auto-assign. */}
               <View style={styles.field}>
@@ -521,8 +528,9 @@ export default function ServicesScreen() {
                   </TouchableOpacity>
                 </View>
               </ScrollView>
-            </Pressable>
-          </KeyboardAvoidingView>
+            
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
 

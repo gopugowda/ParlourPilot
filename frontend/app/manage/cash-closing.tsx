@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Share, Modal, Pressable,
+  Platform, Share, Modal, Pressable,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -153,8 +154,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
         </TouchableOpacity>
       </SafeAreaView>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={80}>
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 180 }} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 180 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
           {/* 3-tile row: Cash sales / QR sales / Total sales (highlighted) — matches web */}
           <View style={styles.tilesRow}>
             <View style={styles.tile} testID="tile-cash">
@@ -270,7 +270,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
               ))}
             </View>
           )}
-        </ScrollView>
+      </KeyboardAwareScrollView>
 
         {/* Sticky footer — Expected + Variance + Close day (web parity) */}
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
@@ -314,9 +314,7 @@ ${notes ? '\nNotes: ' + notes : ''}`;
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
-
-      {/* Date picker modal */}
+            {/* Date picker modal */}
       <Modal visible={datePickerOpen} transparent animationType="fade" onRequestClose={() => setDatePickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setDatePickerOpen(false)}>
           <Pressable style={styles.datePickerSheet} onPress={() => {}}>

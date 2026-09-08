@@ -3,9 +3,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
-  Modal, Pressable, TextInput, KeyboardAvoidingView, Platform, Switch, Alert,
+  Modal, Pressable, TextInput, Platform, Switch, Alert,
   Image as RNImage,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -264,13 +265,18 @@ export default function BranchesScreen() {
       {/* ============ Edit / Add sheet ============ */}
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit branch' : 'Add branch'}</Text>
-              <Text style={styles.sheetSubtitle}>Location details.</Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>{editing ? 'Edit branch' : 'Add branch'}</Text>
+            <Text style={styles.sheetSubtitle}>Location details.</Text>
 
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}
+            >
                 {/* Branch name */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Branch name *</Text>
@@ -464,7 +470,6 @@ export default function BranchesScreen() {
                 </View>
 
                 {err && <Text style={styles.err}>{err}</Text>}
-              </ScrollView>
 
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditOpen(false)}>
@@ -474,8 +479,9 @@ export default function BranchesScreen() {
                   {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save</Text>}
                 </TouchableOpacity>
               </View>
-            </Pressable>
-          </KeyboardAvoidingView>
+
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
     </View>

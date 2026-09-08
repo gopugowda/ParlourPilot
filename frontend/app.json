@@ -2,7 +2,7 @@
   "expo": {
     "name": "ParlourPilot",
     "slug": "parlourpilot",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/parlourpilot-logo.png",
     "scheme": "parlourpilot",
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.parlourpilot.app",
-      "versionCode": 107,
+      "versionCode": 108,
       "permissions": ["android.permission.CAMERA"],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",

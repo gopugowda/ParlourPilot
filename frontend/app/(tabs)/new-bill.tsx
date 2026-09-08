@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal,
-  ActivityIndicator, Pressable, KeyboardAvoidingView, Platform, Switch,
+  ActivityIndicator, Pressable, Platform, Switch,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -310,8 +311,7 @@ export default function NewBillScreen() {
         <Text style={styles.headerSub}>Add services and process payment</Text>
       </SafeAreaView>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={80}>
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 180 }} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 180 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
           {/* Customer */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Customer</Text>
@@ -734,7 +734,7 @@ export default function NewBillScreen() {
           </View>
 
           {err && <Text style={styles.err} testID="bill-error">{err}</Text>}
-        </ScrollView>
+      </KeyboardAwareScrollView>
 
         {/* Sticky footer */}
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 6, 16) }]}>
@@ -761,9 +761,7 @@ export default function NewBillScreen() {
             )}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
-
-      {/* Picker Modal */}
+            {/* Picker Modal */}
       <Modal visible={!!pickerFor} animationType="slide" transparent onRequestClose={() => setPickerFor(null)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setPickerFor(null)}>
           <Pressable style={styles.modalSheet} onPress={() => {}}>
@@ -946,8 +944,7 @@ export default function NewBillScreen() {
         onRequestClose={() => setVariablePrompt(null)}
       >
         <Pressable style={styles.varBackdrop} onPress={() => setVariablePrompt(null)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.varSheet} onPress={() => {}}>
+                      <Pressable style={styles.varSheet} onPress={() => {}}>
               <View style={{ alignItems: 'center', gap: 4 }}>
                 <View style={styles.varIcon}>
                   <Ionicons name="cash-outline" size={22} color={colors.brandPrimary} />
@@ -1019,8 +1016,7 @@ export default function NewBillScreen() {
                 </TouchableOpacity>
               </View>
             </Pressable>
-          </KeyboardAvoidingView>
-        </Pressable>
+                  </Pressable>
       </Modal>
     </View>
   );

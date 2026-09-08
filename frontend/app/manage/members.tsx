@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
-  Modal, Pressable, Switch, KeyboardAvoidingView, Platform, Linking,
+  Modal, Pressable, Switch, Platform, Linking,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -358,10 +359,16 @@ export default function MembersScreen() {
 
       <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.handle} />
-              <Text style={styles.sheetTitle}>{editing ? 'Edit Member' : 'Add Member'}</Text>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>{editing ? 'Edit Member' : 'Add Member'}</Text>
+            <KeyboardAwareScrollView
+              bottomOffset={24}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
+            >
               <View style={styles.field}><Text style={styles.label}>Name</Text><TextInput testID="m-name" value={name} onChangeText={setName} placeholder="Full name" placeholderTextColor={colors.onSurfaceTertiary} style={styles.input} /></View>
               <View style={styles.field}>
                 <Text style={styles.label}>Phone <Text style={{ color: colors.error }}>*</Text></Text>
@@ -448,8 +455,9 @@ export default function MembersScreen() {
                   <Text style={styles.deleteText}>Delete</Text>
                 </TouchableOpacity>
               )}
-            </Pressable>
-          </KeyboardAvoidingView>
+            
+            </KeyboardAwareScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
 

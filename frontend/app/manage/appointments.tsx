@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
-  RefreshControl, Alert, TextInput, Pressable, KeyboardAvoidingView, Platform,
+  RefreshControl, Alert, TextInput, Pressable, Platform,
   useWindowDimensions,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -451,8 +452,7 @@ function AppointmentEditor({
       <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </View>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <View
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'flex-end' }}
         pointerEvents="box-none"
       >
@@ -469,12 +469,13 @@ function AppointmentEditor({
           <View style={styles.handle} />
           <Text style={styles.sheetTitle}>{editing ? 'Edit Booking' : 'New Booking'}</Text>
 
-          <ScrollView
+          <KeyboardAwareScrollView
             style={{ flexGrow: 0, flexShrink: 1 }}
             contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={true}
-            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            bottomOffset={24}
           >
               <LabeledInput label="Customer Name *" value={customerName} onChangeText={setCustomerName} testID="apt-cust-name" />
               <LabeledInput label="Customer Phone" value={customerPhone} onChangeText={(v) => setCustomerPhone(sanitizePhone(v))} keyboardType="number-pad" maxLength={PHONE_MAX} testID="apt-cust-phone" />
@@ -644,7 +645,7 @@ function AppointmentEditor({
               <LabeledInput label="Notes" value={notes} onChangeText={setNotes} multiline placeholder="Any special requests…" />
 
               {err ? <Text style={styles.err}>{err}</Text> : null}
-            </ScrollView>
+            </KeyboardAwareScrollView>
 
             <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.md }}>
               <TouchableOpacity style={styles.ghostBtn} onPress={onClose}>
@@ -654,9 +655,9 @@ function AppointmentEditor({
                 {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Book'}</Text>}
               </TouchableOpacity>
             </View>
+          </View>
         </View>
-      </KeyboardAvoidingView>
-    </View>
+      </View>
   );
 }
 
