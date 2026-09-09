@@ -88,23 +88,41 @@ export async function scanProductNameFromCamera(): Promise<OcrOutcome> {
     const raw: any = await TextRecognition.recognize(uri);
     if (__DEV__) console.log('[ocr] raw', typeof raw?.text, 'blocks=', raw?.blocks?.length);
 
-    // MLKit v2 shape: { text: string, blocks: { text, lines, frame }[] }
-    // Fall back to lines/split when a specific field is missing.
-    const rawBlocks: string[] = Array.isArray(raw?.blocks)
-      ? raw.blocks.flatMap((b: any) => {
-          if (Array.isArray(b?.lines) && b.lines.length) {
-            return b.lines.map((l: any) => String(l?.text || '').trim());
+    // Normalize MLKit output into a flat list of "lines with geometry".
+    // MLKit v2 shape (per @react-native-ml-kit/text-recognition):
+    //   { text: string, blocks: { text, lines: { text, frame }[], frame }[] }
+    //   frame: { top, left, right, bottom, width, height } — units are pixels.
+    const geoLines: GeoLine[] = [];
+    if (Array.isArray(raw?.blocks)) {
+      for (const b of raw.blocks) {
+        if (Array.isArray(b?.lines) && b.lines.length) {
+          for (const l of b.lines) {
+            const t = String(l?.text || '').trim();
+            if (!t) continue;
+            geoLines.push({ text: t, frame: normalizeFrame(l?.frame) });
           }
-          return [String(b?.text || '').trim()];
-        })
-      : String(raw?.text || '').split(/\r?\n/);
+        } else {
+          // Fallback: block without lines[] — split its .text on newlines,
+          // use the block frame for every synthetic "line".
+          const parts = String(b?.text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          const f = normalizeFrame(b?.frame);
+          for (const p of parts) geoLines.push({ text: p, frame: f });
+        }
+      }
+    }
 
-    const blocks = rawBlocks.map(s => s.trim()).filter(Boolean);
+    const blocks = geoLines.map(g => g.text);
     const fullText = String(raw?.text || blocks.join('\n')).trim();
 
     if (!blocks.length && !fullText) return { kind: 'empty' };
 
-    const suggestedName = buildSuggestedName(blocks);
+    // Prefer geometry-aware selection when we have frame data; otherwise
+    // fall back to the previous top-down text-only heuristic.
+    const hasGeo = geoLines.some(g => g.frame && g.frame.height > 0);
+    const suggestedName = hasGeo
+      ? buildSuggestedNameFromGeo(geoLines)
+      : buildSuggestedName(blocks);
+
     if (!suggestedName) return { kind: 'empty' };
 
     return { kind: 'success', data: { fullText, blocks, suggestedName } };
@@ -119,43 +137,136 @@ export async function scanProductNameFromCamera(): Promise<OcrOutcome> {
   }
 }
 
+// -------------------- geometry-aware heuristic -----------------------
+
+type Frame = { top: number; left: number; right: number; bottom: number; width: number; height: number };
+type GeoLine = { text: string; frame: Frame };
+
+function normalizeFrame(f: any): Frame {
+  const top = num(f?.top);
+  const left = num(f?.left);
+  const right = num(f?.right);
+  const bottom = num(f?.bottom);
+  const width = num(f?.width, right - left);
+  const height = num(f?.height, bottom - top);
+  return { top, left, right, bottom, width, height };
+}
+function num(v: any, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Junk-line filter: reject weights, prices, batch/expiry/MRP, URLs,
+ *  regulatory boilerplate, single stylized glyphs, etc. */
+function isJunkLine(raw: string): boolean {
+  const line = raw.trim();
+  if (!line) return true;
+  // Anything without at least one letter (numbers, symbols, single glyphs).
+  if (!/[A-Za-z]/.test(line)) return true;
+  // Extremely short (single letter/glyph left from stylised logos).
+  const letters = line.replace(/[^A-Za-z]/g, '');
+  if (letters.length < 2) return true;
+  // Pure quantity / price lines.
+  if (/^\s*(net\s*(wt|weight|content)|mrp|rs\.?|₹|inr|price|volume)\b/i.test(line)) return true;
+  if (/^\d+(\.\d+)?\s*(ml|g|kg|l|oz|gm|gms|kgs|ltr|litre|litres|liter|liters|fl\s*oz)\b/i.test(line)) return true;
+  // Batch / mfg / exp / caution / manufactured / marketed / for professional use.
+  if (/^(batch|b\.no|mfg|mfd|manufacture|exp|expiry|use\s*before|best\s*before|caution|warning|for\s+professional|marketed|manufactured|imported|packed|licence|licensed|lic\s*no)\b/i.test(line)) return true;
+  // Regulatory / claim bullets.
+  if (/^(dermatologically|clinically|paraben|sulphate|sulfate|silicone|peroxide|hydroquinone|cruelty[\s-]?free|alcohol[\s-]?free|natural|organic|vegan)\b/i.test(line)) return true;
+  // URLs / socials.
+  if (/(https?:|www\.|@|\.com|\.in|\.co)/i.test(line)) return true;
+  // Barcode digits.
+  if (/^\d{6,}$/.test(line)) return true;
+  return false;
+}
+
 /**
- * Turn raw OCR blocks into a plausible product name.
+ * Geometry-aware suggested-name builder.
  *
- *  1. Preserve packaging order — the name sits near the top of the
- *     label, so we work from the top down.
- *  2. Drop lines that are essentially numeric ("500 g", "1 L").
- *  3. Drop tiny 1-char lines (®, ™, single letters left over from
- *     stylised logos).
- *  4. Cap at the first 5 letter-bearing lines so we don't glue the
- *     product name to the marketing bullets underneath.
- *  5. Stop early if a line clearly ends the "name" region — a bullet
- *     like "DERMATOLOGICALLY TESTED" or "PEROXIDE FREE".
- *  6. Title-case + collapse whitespace.
+ * Idea: on any packaged product the BRAND + PRODUCT NAME is printed
+ * in the tallest font on the panel. Every other artefact — taglines,
+ * ingredients, MRP, net-wt — is set noticeably smaller. So instead of
+ * naively taking the first N lines top-down, we:
  *
- * Nothing is INVENTED — we only rearrange what MLKit already saw.
+ *   1. Discard obvious junk lines (weights, MRP, batch, URLs, ...).
+ *   2. Find the tallest surviving line (that's the "hero" font size).
+ *   3. Keep every line whose height is ≥ 65% of the hero — this
+ *      captures 1–3 line brand+name lock-ups printed at similar size.
+ *   4. Sort them in reading order (top → bottom, then left → right).
+ *   5. Title-case + trim trailing "…Cream 500g" tails.
+ *
+ * This directly addresses the two field complaints:
+ *   • "only half the name" — we no longer stop after the first big
+ *     line; we keep every line printed at the hero size.
+ *   • "unwanted extras"    — smaller lines (taglines, ingredients,
+ *     regulatory copy) are excluded by height, not by keyword.
+ */
+export function buildSuggestedNameFromGeo(lines: GeoLine[]): string {
+  const usable = lines.filter(l => !isJunkLine(l.text));
+  if (!usable.length) return '';
+
+  // Hero font-height = tallest non-junk line.
+  const maxH = usable.reduce((m, l) => Math.max(m, l.frame.height || 0), 0);
+  if (maxH <= 0) {
+    // No usable geometry — fall back to plain heuristic.
+    return buildSuggestedName(usable.map(u => u.text));
+  }
+  const threshold = maxH * 0.65;
+
+  const hero = usable.filter(l => (l.frame.height || 0) >= threshold);
+
+  // Reading order: top-first, then left-first on the same visual row.
+  const rowTol = maxH * 0.5;                       // lines within 0.5·hero of each other → same row
+  hero.sort((a, b) => {
+    const dy = a.frame.top - b.frame.top;
+    if (Math.abs(dy) > rowTol) return dy;
+    return a.frame.left - b.frame.left;
+  });
+
+  // Cap at 4 lines — anything more is almost certainly not the name.
+  const chosen = hero.slice(0, 4).map(l => l.text.replace(/\s+/g, ' ').trim());
+  const joined = chosen.join(' ').replace(/\s+/g, ' ').trim();
+  const trimmed = joined
+    // Strip trailing net-content chunks like "…Cream 500g" or "500 ml".
+    .replace(/\s+\d+(\.\d+)?\s*(ml|g|kg|l|oz|gm|gms|kgs|ltr|litre)\b.*$/i, '')
+    // Strip trailing ® / ™ noise.
+    .replace(/[®™©]+/g, '')
+    .trim();
+  return titleCase(trimmed);
+}
+
+/**
+ * Text-only fallback (used when MLKit gave us blocks without geometry).
+ *
+ *  1. Preserve packaging order — the name sits near the top.
+ *  2. Drop junk lines (numeric-only, single glyphs, regulatory copy).
+ *  3. Cap at the first 4 letter-bearing lines.
+ *  4. Stop early on regulatory bullets ("DERMATOLOGICALLY TESTED", ...).
+ *  5. Title-case + collapse whitespace.
  */
 export function buildSuggestedName(blocks: string[]): string {
   if (!blocks || blocks.length === 0) return '';
-  const letters = /[A-Za-z]/;
-  const numericOnly = /^[\d\s./%,-]+(ml|g|kg|l|oz|gm|gms|kgs|ltr|litre)?\s*$/i;
-  const bulletKeywords = /^(dermatologically|peroxide|sulphate|paraben|hydroqui|silicone|cruelty|alcohol|for professional|caution|manufactured|marketed|batch|mfg|exp|use before|net|mrp)/i;
 
   const cleaned: string[] = [];
   for (const raw of blocks) {
     const line = raw.replace(/\s+/g, ' ').trim();
-    if (!line || line.length < 2) continue;
-    if (!letters.test(line)) continue;
-    if (numericOnly.test(line)) continue;
-    if (bulletKeywords.test(line)) break;              // stop the name region
+    if (isJunkLine(line)) {
+      // A junk line encountered mid-list terminates the name region
+      // when it's clearly regulatory / bullet copy — but only after we
+      // already have at least one usable name line.
+      if (cleaned.length) break;
+      continue;
+    }
     cleaned.push(line);
-    if (cleaned.length >= 5) break;
+    if (cleaned.length >= 4) break;
   }
 
   const chosen = cleaned.length ? cleaned : blocks.slice(0, 3);
   const joined = chosen.join(' ').replace(/\s+/g, ' ').trim();
-  // Strip trailing net-content chunks like "…Cream 500g".
-  const trimmed = joined.replace(/\s+\d+\s*(ml|g|kg|l|oz|gm|gms)\b.*$/i, '').trim();
+  const trimmed = joined
+    .replace(/\s+\d+(\.\d+)?\s*(ml|g|kg|l|oz|gm|gms)\b.*$/i, '')
+    .replace(/[®™©]+/g, '')
+    .trim();
   return titleCase(trimmed);
 }
 
