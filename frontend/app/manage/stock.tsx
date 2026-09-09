@@ -54,11 +54,10 @@ export default function StockScreen() {
   const [ocrBusy, setOcrBusy] = useState(false);
 
   // Barcode scanner
-  // 'search'  → find existing item, then either add stock or open new-item form
+  // 'search'  → find existing item, then open the Edit modal
   // 'edit'    → filling the barcode field inside the Add/Edit sheet
   const [scannerMode, setScannerMode] = useState<null | 'search' | 'edit'>(null);
   const [scanBusy, setScanBusy] = useState(false);
-  const [foundOpen, setFoundOpen] = useState<null | { item: StockItem; qty: string }>(null);
 
   // Persistent filters
   const [fsOpen, setFsOpen] = useState(false);
@@ -165,7 +164,16 @@ export default function StockScreen() {
       }
 
       if (match) {
-        setFoundOpen({ item: match, qty: '1' });
+        // Smart-scan: skip the mini quick-sheet and open the full
+        // Edit Item modal with every field pre-populated. Staff only
+        // needs to bump Current Qty and tap Save. The `[bc:…]` marker
+        // travels with `notes` (and canonical `barcode` if the
+        // backend has it) — see save() and openEdit().
+        if (!isAdmin) {
+          Alert.alert('Product found', `${match.name}\n\nCurrent stock: ${match.current_qty} ${match.unit}`);
+          return;
+        }
+        openEdit(match);
         return;
       }
 
@@ -195,24 +203,11 @@ export default function StockScreen() {
     } finally {
       setScanBusy(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scannerMode, list, isAdmin]);
 
-  const confirmFoundStock = async () => {
-    if (!foundOpen) return;
-    const q = Number(foundOpen.qty);
-    if (!(q > 0)) { Alert.alert('Quantity', 'Enter a positive quantity.'); return; }
-    try {
-      await api('/stock/movement', {
-        method: 'POST',
-        body: { item_id: foundOpen.item.id, type: 'purchase', qty: q, unit_cost: foundOpen.item.unit_cost || 0 },
-      });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setFoundOpen(null);
-      await load();
-    } catch (e: any) {
-      Alert.alert('Failed', e.message || 'Could not save stock.');
-    }
-  };
+  const confirmFoundStock = undefined as any;  // deprecated — smart-scan opens Edit modal directly
+  void confirmFoundStock;
 
   // ---- OCR helper — used from inside the Add-item sheet ---------------
   const runOcrForName = async () => {
@@ -720,68 +715,6 @@ export default function StockScreen() {
         </View>
       )}
 
-      {/* Product-found → Add Stock quick sheet */}
-      <Modal visible={!!foundOpen} transparent animationType="slide" onRequestClose={() => setFoundOpen(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setFoundOpen(null)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>Product found</Text>
-            <KeyboardAwareScrollView
-              bottomOffset={24}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xl }}
-            >
-              {foundOpen && (
-                <>
-                  <View style={styles.foundCard}>
-                    <View style={[styles.icon, { width: 44, height: 44 }]}>
-                      <Ionicons name="cube" size={20} color={colors.brandPrimary} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.itemName}>{foundOpen.item.name}</Text>
-                      <Text style={styles.itemMeta}>
-                        {foundOpen.item.current_qty} {foundOpen.item.unit} in stock
-                        {foundOpen.item.unit_cost > 0 ? ` · ${fmtINR(foundOpen.item.unit_cost)}/${foundOpen.item.unit}` : ''}
-                      </Text>
-                      {getBarcode(foundOpen.item) ? (
-                        <Text style={styles.itemMeta}>Barcode: {getBarcode(foundOpen.item)}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-
-                  <View style={styles.field}>
-                    <Text style={styles.label}>Quantity to add ({foundOpen.item.unit})</Text>
-                    <TextInput
-                      testID="found-qty"
-                      value={foundOpen.qty}
-                      onChangeText={(v) => setFoundOpen({ ...foundOpen, qty: v.replace(/[^0-9.]/g, '') })}
-                      keyboardType="numeric"
-                      placeholder="1"
-                      placeholderTextColor={colors.onSurfaceTertiary}
-                      style={styles.input}
-                      autoFocus
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    testID="found-add"
-                    style={styles.saveBtn}
-                    onPress={confirmFoundStock}
-                    disabled={!(Number(foundOpen.qty) > 0)}
-                  >
-                    <Text style={styles.saveBtnText}>Add Stock</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setFoundOpen(null)} style={styles.deleteBtn}>
-                    <Text style={{ color: colors.onSurfaceSecondary, fontWeight: '600' }}>Cancel</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </KeyboardAwareScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
