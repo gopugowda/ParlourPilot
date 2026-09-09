@@ -17,6 +17,7 @@ import { ExportMenu, type ExportAction, ReportEmptyState } from '@/src/component
 import { rowsToCsv, shareCsv, sharePdf, printOrShareHtml, buildReportHtml } from '@/src/utils/exportShare';
 import { BarcodeScanner } from '@/src/components/BarcodeScanner';
 import { isOcrAvailable, scanProductNameFromCamera } from '@/src/utils/ocr';
+import { getBarcode, getVisibleNotes, withBarcodeMarker } from '@/src/utils/barcode';
 
 type StockItem = {
   id: string; name: string; unit: string;
@@ -91,7 +92,9 @@ export default function StockScreen() {
     setCategory(it.category || 'General');
     setCurQty(String(it.current_qty)); setMinQty(String(it.min_qty));
     setUnitCost(String(it.unit_cost));
-    setBarcode(it.barcode || '');
+    // Prefer canonical `barcode`; fall back to `[bc:…]` marker inside notes
+    // so items saved against the pre-deploy backend still show their barcode.
+    setBarcode(getBarcode(it));
     setErr(null); setEditOpen(true);
   };
 
@@ -100,6 +103,8 @@ export default function StockScreen() {
     if (!name.trim()) { setErr('Name required'); return; }
     setSaving(true);
     try {
+      const bc = barcode.trim();
+      const visibleNotes = editing ? getVisibleNotes(editing) : '';
       const body: any = {
         name: name.trim(),
         unit,
@@ -107,8 +112,11 @@ export default function StockScreen() {
         current_qty: Number(curQty) || 0,
         min_qty: Number(minQty) || 0,
         unit_cost: Number(unitCost) || 0,
+        // Persist barcode both ways: canonical field (once backend has
+        // it) AND embedded marker inside `notes` (works today). Both
+        // are strings — leading zeros preserved.
+        notes: withBarcodeMarker(bc, visibleNotes),
       };
-      const bc = barcode.trim();
       if (bc) body.barcode = bc;
       if (editing) await api(`/stock/${editing.id}`, { method: 'PUT', body });
       else await api('/stock', { method: 'POST', body });
@@ -136,11 +144,12 @@ export default function StockScreen() {
 
     // Mode A: search the current tenant's stock. Look client-side
     // first (fast, works even if the deployed backend hasn't received
-    // the by-barcode endpoint yet), then fall back to the server.
+    // the by-barcode endpoint yet — reads the [bc:…] marker embedded
+    // in notes), then fall back to the server.
     setScanBusy(true);
     try {
       let match: StockItem | null =
-        list.find(it => (it.barcode || '').trim() === value) || null;
+        list.find(it => getBarcode(it) === value) || null;
 
       if (!match) {
         try {
@@ -736,8 +745,8 @@ export default function StockScreen() {
                         {foundOpen.item.current_qty} {foundOpen.item.unit} in stock
                         {foundOpen.item.unit_cost > 0 ? ` · ${fmtINR(foundOpen.item.unit_cost)}/${foundOpen.item.unit}` : ''}
                       </Text>
-                      {foundOpen.item.barcode ? (
-                        <Text style={styles.itemMeta}>Barcode: {foundOpen.item.barcode}</Text>
+                      {getBarcode(foundOpen.item) ? (
+                        <Text style={styles.itemMeta}>Barcode: {getBarcode(foundOpen.item)}</Text>
                       ) : null}
                     </View>
                   </View>
