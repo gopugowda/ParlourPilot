@@ -12,10 +12,15 @@ import * as Location from 'expo-location';
 import { Alert, Linking } from 'react-native';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 import { api } from '@/src/api/client';
 
-// Extend dayjs with UTC support so we can safely convert backend UTC → user local time.
+// Extend dayjs with UTC + IANA-timezone support so we can safely convert
+// backend UTC → user local time AND resolve the branch's local "work_end"
+// wall-clock time to an absolute instant regardless of the phone's system
+// timezone / clock offset.
 dayjs.extend(utc);
+dayjs.extend(timezone);
 
 /**
  * Robustly parse a backend timestamp into a dayjs object (local time).
@@ -86,6 +91,14 @@ export type AttendanceConfig = {
   gating_active?: boolean;
   work_start?: string;             // "HH:MM"
   work_end?: string;               // "HH:MM"
+  /**
+   * IANA timezone name for the branch (e.g. "Asia/Kolkata"). Backend now
+   * ships this on `/attendance/config` so the mobile client can resolve
+   * `work_start`/`work_end` (bare "HH:MM" strings) to an absolute instant
+   * in the SALON'S local time — not the phone's. Older backends omit it
+   * and callers must fall back to the phone's local time.
+   */
+  timezone?: string;
   role?: string;
 };
 
@@ -241,10 +254,28 @@ export function haversine(lat1: number, lon1: number, lat2: number, lon2: number
   return R * 2 * Math.asin(Math.sqrt(a));
 }
 
-/** Parse "HH:MM" today to a local Date. */
-export function hhmmToDate(hhmm?: string | null): Date | null {
+/**
+ * Resolve a bare "HH:MM" work-hour string to an absolute Date for
+ * "today at HH:MM in `tz`". When `tz` is missing/invalid, falls back
+ * to the phone's local time (preserves existing behaviour for older
+ * backends that don't expose a branch timezone yet).
+ *
+ * Returning an absolute Date lets callers compare with `Date.now()`
+ * directly — the comparison is timezone-safe because both sides are
+ * UTC millis under the hood.
+ */
+export function hhmmToDate(hhmm?: string | null, tz?: string | null): Date | null {
   if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return null;
   const [h, m] = hhmm.split(':').map(Number);
+  if (tz && typeof tz === 'string') {
+    try {
+      // "today" in the branch's own timezone (never the phone's).
+      const todayInTz = dayjs().tz(tz);
+      const stamp = `${todayInTz.format('YYYY-MM-DD')} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      const d = dayjs.tz(stamp, 'YYYY-MM-DD HH:mm', tz);
+      if (d.isValid()) return d.toDate();
+    } catch { /* fall through to local-time fallback below */ }
+  }
   const d = new Date();
   d.setHours(h, m, 0, 0);
   return d;

@@ -60,7 +60,12 @@ export function useAttendanceAutoLogout({ role, onAutoLogout, intervalMs = 120_0
 
         // ── (1) WORK-HOURS CHECK ────────────────────────────────────
         // Test 1: staff moves away DURING work hours → stay logged in.
-        const wEnd = hhmmToDate(cfg.work_end);
+        // The comparison MUST happen in the salon's local time — a phone
+        // that has drifted / is roaming in another tz would otherwise
+        // fire an auto check-out mid-shift. `cfg.timezone` comes from
+        // /attendance/config; older backends omit it and `hhmmToDate`
+        // safely falls back to the phone's local clock.
+        const wEnd = hhmmToDate(cfg.work_end, cfg.timezone);
         if (!wEnd) return;                          // no shift defined
         if (Date.now() < wEnd.getTime()) return;    // still within shift
 
