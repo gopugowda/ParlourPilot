@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
   TextInput, Alert, RefreshControl, Modal, Pressable, Platform,
+  KeyboardAvoidingView, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -405,53 +406,72 @@ export default function MyAttendanceScreen() {
 
       {/* ============ Request Correction Modal ============ */}
       <Modal visible={!!correctingRow} transparent animationType="slide" onRequestClose={() => setCorrectingRow(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setCorrectingRow(null)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>Request Correction</Text>
-            {correctingRow && (
-              <Text style={styles.sheetSub}>{fmtDay(correctingRow.date)} · {correctingRow.date}</Text>
-            )}
-            <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }}>
-              <View style={{ flexDirection: 'row', gap: spacing.md }}>
-                <TimeField label="Requested Clock In" value={inTime} onChange={setInTime} placeholder="—" testID="corr-in" />
-                <TimeField label="Requested Clock Out" value={outTime} onChange={setOutTime} placeholder="—" testID="corr-out" />
-              </View>
-              <View>
-                <Text style={styles.fieldLabel}>Reason *</Text>
-                <TextInput
-                  testID="corr-reason"
-                  value={reason}
-                  onChangeText={setReason}
-                  placeholder="e.g. Forgot to clock in"
-                  placeholderTextColor={colors.onSurfaceTertiary}
-                  style={styles.textArea}
-                  multiline
-                />
-              </View>
-              <View>
-                <Text style={styles.fieldLabel}>Additional note (optional)</Text>
-                <TextInput
-                  testID="corr-note"
-                  value={note}
-                  onChangeText={setNote}
-                  placeholder="Anything else your manager should know"
-                  placeholderTextColor={colors.onSurfaceTertiary}
-                  style={styles.textArea}
-                  multiline
-                />
-              </View>
-              <TouchableOpacity
-                onPress={submitCorrection}
-                disabled={saving}
-                style={[styles.primaryBtn, saving && { opacity: 0.6 }]}
-                testID="corr-submit"
+        {/*
+          Keyboard handling — the keypad used to slide up over the Reason /
+          Note fields and hide the Submit button. Wrapping the sheet in a
+          KeyboardAvoidingView with `padding` on iOS and `height` on Android
+          shifts the layout so all fields (and the button) stay reachable.
+          The inner ScrollView is what actually lets the user scroll to the
+          Submit button while typing.
+        */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.avoider}
+          keyboardVerticalOffset={0}
+        >
+          <Pressable style={styles.backdrop} onPress={() => { Keyboard.dismiss(); setCorrectingRow(null); }}>
+            <Pressable style={styles.sheet} onPress={() => {}}>
+              <View style={styles.handle} />
+              <Text style={styles.sheetTitle}>Request Correction</Text>
+              {correctingRow && (
+                <Text style={styles.sheetSub}>{fmtDay(correctingRow.date)} · {correctingRow.date}</Text>
+              )}
+              <ScrollView
+                style={{ flexGrow: 0 }}
+                contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xl }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
               >
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Submit request</Text>}
-              </TouchableOpacity>
-            </ScrollView>
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <TimeField label="Requested Clock In" value={inTime} onChange={setInTime} placeholder="—" testID="corr-in" />
+                  <TimeField label="Requested Clock Out" value={outTime} onChange={setOutTime} placeholder="—" testID="corr-out" />
+                </View>
+                <View>
+                  <Text style={styles.fieldLabel}>Reason *</Text>
+                  <TextInput
+                    testID="corr-reason"
+                    value={reason}
+                    onChangeText={setReason}
+                    placeholder="e.g. Forgot to clock in"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    style={styles.textArea}
+                    multiline
+                  />
+                </View>
+                <View>
+                  <Text style={styles.fieldLabel}>Additional note (optional)</Text>
+                  <TextInput
+                    testID="corr-note"
+                    value={note}
+                    onChangeText={setNote}
+                    placeholder="Anything else your manager should know"
+                    placeholderTextColor={colors.onSurfaceTertiary}
+                    style={styles.textArea}
+                    multiline
+                  />
+                </View>
+                <TouchableOpacity
+                  onPress={submitCorrection}
+                  disabled={saving}
+                  style={[styles.primaryBtn, saving && { opacity: 0.6 }]}
+                  testID="corr-submit"
+                >
+                  {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Submit request</Text>}
+                </TouchableOpacity>
+              </ScrollView>
+            </Pressable>
           </Pressable>
-        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -506,6 +526,7 @@ const styles = StyleSheet.create({
   detail: { fontSize: 12, color: colors.onSurfaceSecondary },
 
   // Modal
+  avoider: { flex: 1 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md, maxHeight: '92%', width: '100%', maxWidth: 480, alignSelf: 'center' },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
