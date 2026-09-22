@@ -280,6 +280,23 @@ export const appointmentApi = {
   update: (aid: string, data: any) => api(`/appointments/${aid}`, { method: 'PUT', body: data }),
   remove: (aid: string) => api(`/appointments/${aid}`, { method: 'DELETE' }),
   stats: () => api('/appointments/stats'),
+  /**
+   * Send a booking-confirmation notification for an existing appointment.
+   * Reuses the shared web+mobile backend endpoint — DO NOT build a mobile-
+   * specific notifier. The backend is the single source of truth.
+   *
+   *   channels: ("whatsapp" | "email")[]  — at least one required
+   *
+   * Backend behaviour (existing):
+   *   • Re-fetches the appointment under tenant/branch scope (404 if not found).
+   *   • Returns a `wa.me` URL with status `opened_pending` for WhatsApp —
+   *     the mobile client must open that URL and let the staff tap Send
+   *     manually. We NEVER claim WhatsApp was delivered.
+   *   • For email, actually sends via the shared email infra and returns
+   *     the real result (`sent` / error message).
+   */
+  sendConfirmation: (aid: string, channels: Array<'whatsapp' | 'email'>) =>
+    api(`/appointments/${aid}/send-confirmation`, { method: 'POST', body: { channels } }),
 };
 
 export const platformApi = {

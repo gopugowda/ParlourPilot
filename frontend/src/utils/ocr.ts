@@ -33,7 +33,13 @@ import * as ImagePicker from 'expo-image-picker';
 // react-native-image-crop-picker is the primary capture pipeline; we
 // keep expo-image-picker imported ONLY to reuse its permission helpers
 // (a stable API that already handled the "canAskAgain" flow).
-import ImageCropPicker from 'react-native-image-crop-picker';
+//
+// IMPORTANT: DO NOT static-import `react-native-image-crop-picker` — it
+// calls `TurboModuleRegistry.getEnforcing` at import time which crashes
+// the JS bundle on web / Expo Go before the caller can even see an
+// "unavailable" outcome. We require() it lazily inside the capture
+// function and gracefully return `'unavailable'` when the native side
+// is absent.
 import { preprocessForOcr } from '@/src/utils/imagePreprocess';
 // Static import so Metro resolves the module at bundle time. The
 // native side is loaded lazily when we actually invoke `.recognize()`;
@@ -94,7 +100,20 @@ export async function scanProductNameFromCamera(): Promise<OcrOutcome> {
   //    showCropGuidelines   → 3×3 rule-of-thirds grid for framing labels.
   //    compressImageQuality → 0.95: retain detail for the sharpen pass.
   //    hideBottomControls   → false so Reset / Rotate / Aspect are pinned.
+  //
+  //    Loaded lazily — see the top-of-file note: static-importing this
+  //    module crashes web / Expo Go at bundle-eval time.
   // ------------------------------------------------------------------
+  let ImageCropPicker: any = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+    ImageCropPicker = require('react-native-image-crop-picker').default;
+  } catch {
+    return { kind: 'unavailable' };
+  }
+  if (!ImageCropPicker || typeof ImageCropPicker.openCamera !== 'function') {
+    return { kind: 'unavailable' };
+  }
   let cropped: { path: string; width: number; height: number };
   try {
     const result = await ImageCropPicker.openCamera({

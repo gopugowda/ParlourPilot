@@ -18,6 +18,7 @@ import { useFilterState } from '@/src/hooks/useFilterState';
 import { FilterSheet, FilterHeaderButton, FilterSection, FilterChip } from '@/src/components/FilterSheet';
 import { resolveRange, localDateKey, type RangePreset } from '@/src/utils/dateRange';
 import { fmtTime12 } from '@/src/utils/dateTime';
+import SendConfirmationSheet, { type SendConfirmationAppointment } from '@/src/components/SendConfirmationSheet';
 
 type Appointment = {
   id: string;
@@ -66,6 +67,11 @@ export default function AppointmentsScreen() {
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Appointment | null>(null);
+  // Target of the Send Confirmation sheet. Populated either when a user
+  // taps the send icon on the list, taps "Send Confirmation" inside the
+  // editor, or right after successfully creating a booking (post-booking
+  // flow requested in the notification spec).
+  const [sendFor, setSendFor] = useState<Appointment | null>(null);
 
   // Persistent filters (stylist, status, custom date range).
   const [fsOpen, setFsOpen] = useState(false);
@@ -230,9 +236,26 @@ export default function AppointmentsScreen() {
                         <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
                       </TouchableOpacity>
                       {a.price_estimate ? <Text style={styles.priceText}>{fmtMoney(a.price_estimate)}</Text> : null}
-                      <TouchableOpacity onPress={() => onDelete(a)} style={styles.trashBtn}>
-                        <Ionicons name="trash-outline" size={14} color={colors.error} />
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', gap: 4 }}>
+                        {/*
+                          Quick action — Send Confirmation. Kept as an icon
+                          only (12×12 px hit-slop area is padded on the
+                          parent) to avoid crowding the list; the full
+                          picker still lives inside the editor sheet and
+                          gets its own big button post-save.
+                        */}
+                        <TouchableOpacity
+                          onPress={(e) => { e.stopPropagation(); setSendFor(a); }}
+                          style={styles.iconAction}
+                          testID={`apt-send-${a.id}`}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Ionicons name="paper-plane-outline" size={14} color={colors.brandPrimary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => onDelete(a)} style={styles.trashBtn}>
+                          <Ionicons name="trash-outline" size={14} color={colors.error} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
@@ -245,10 +268,34 @@ export default function AppointmentsScreen() {
       <AppointmentEditor
         visible={editorOpen}
         onClose={() => setEditorOpen(false)}
-        onSaved={async () => { setEditorOpen(false); await load(); }}
+        onSaved={async (result) => {
+          setEditorOpen(false);
+          await load();
+          // Post-booking hook — offer to send the confirmation right after
+          // a NEW appointment is created (spec §7). We NEVER auto-open
+          // WhatsApp: the sheet is presented and the user must choose.
+          if (result?.created) setSendFor(result.created);
+        }}
         editing={editing}
+        onSendConfirmation={(a) => setSendFor(a)}
         beauticians={beauticians}
         services={services}
+      />
+
+      {/* Send-Confirmation sheet — reused by list-row icon, editor button,
+          and post-booking success flow. */}
+      <SendConfirmationSheet
+        visible={!!sendFor}
+        onClose={() => setSendFor(null)}
+        appointment={sendFor
+          ? {
+              id: sendFor.id,
+              customer_name: sendFor.customer_name,
+              customer_phone: sendFor.customer_phone || null,
+              scheduled_start: sendFor.scheduled_start,
+              duration_minutes: sendFor.duration_minutes,
+            } as SendConfirmationAppointment
+          : null}
       />
 
       <FilterSheet
@@ -307,12 +354,20 @@ export default function AppointmentsScreen() {
 
 // ---------------- Editor Modal ----------------
 function AppointmentEditor({
-  visible, onClose, onSaved, editing, beauticians, services,
+  visible, onClose, onSaved, editing, beauticians, services, onSendConfirmation,
 }: {
-  visible: boolean; onClose: () => void; onSaved: () => void;
+  visible: boolean; onClose: () => void;
+  /**
+   * Fired after a successful save. When a NEW appointment was created
+   * we pass `{ created }` so the parent can offer the post-booking
+   * "Send Confirmation" flow (spec §7). Updates emit no payload.
+   */
+  onSaved: (result?: { created?: Appointment }) => void;
   editing: Appointment | null;
   beauticians: Beautician[];
   services: Service[];
+  /** Open the reusable Send-Confirmation sheet for an EXISTING appointment. */
+  onSendConfirmation?: (a: Appointment) => void;
 }) {
   const insets = useSafeAreaInsets();
   const { height: winH } = useWindowDimensions();
@@ -431,10 +486,17 @@ function AppointmentEditor({
         status,
         price_estimate: totalPrice,
       };
-      if (editing) await appointmentApi.update(editing.id, payload);
-      else await appointmentApi.create(payload);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onSaved();
+      if (editing) {
+        await appointmentApi.update(editing.id, payload);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onSaved();
+      } else {
+        // Capture the created appointment so the parent can immediately
+        // offer to send a WhatsApp/Email confirmation (spec §7).
+        const created = await appointmentApi.create(payload) as Appointment;
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onSaved({ created });
+      }
     } catch (e: any) {
       setErr(e.message || 'Failed');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -644,6 +706,27 @@ function AppointmentEditor({
 
               <LabeledInput label="Notes" value={notes} onChangeText={setNotes} multiline placeholder="Any special requests…" />
 
+              {/*
+                Editor-level Send Confirmation button — only meaningful for
+                an existing appointment (spec §3). Post-booking (new
+                appointments) is handled by the parent after `onSaved`.
+              */}
+              {editing && onSendConfirmation ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    onClose();
+                    // Slight delay so the editor unmount doesn't race the
+                    // send-sheet mount on some Android devices.
+                    setTimeout(() => onSendConfirmation(editing), 60);
+                  }}
+                  style={styles.sendConfirmBtn}
+                  testID="apt-editor-send"
+                >
+                  <Ionicons name="paper-plane-outline" size={16} color={colors.brandPrimary} />
+                  <Text style={styles.sendConfirmBtnText}>Send Confirmation</Text>
+                </TouchableOpacity>
+              ) : null}
+
               {err ? <Text style={styles.err}>{err}</Text> : null}
             </KeyboardAwareScrollView>
 
@@ -702,6 +785,9 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
   priceText: { fontSize: 12, color: colors.onSurface, fontWeight: '700' },
   trashBtn: { padding: 4 },
+  // Compact row-level send-confirmation button (spec §8 — only when the
+  // row has room; sits next to the delete icon in the meta column).
+  iconAction: { padding: 4 },
 
   // Editor
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
@@ -757,4 +843,12 @@ const styles = StyleSheet.create({
   ghostBtn: { flex: 1, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
   ghostBtnText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 15 },
   err: { color: colors.error, fontSize: 12, textAlign: 'center' },
+  sendConfirmBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    paddingVertical: 12, paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.brandPrimary,
+    backgroundColor: colors.brandTertiary,
+  },
+  sendConfirmBtnText: { color: colors.brandPrimary, fontWeight: '800', fontSize: 14 },
 });
