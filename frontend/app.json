@@ -84,6 +84,13 @@
         {
           "locationWhenInUsePermission": "Verify you're at the salon when punching attendance"
         }
+      ],
+      [
+        "./plugins/with-image-crop-picker.js",
+        {
+          "photoText": "Attach photos to stock items and expense receipts",
+          "cameraText": "Scan product labels to auto-fill stock"
+        }
       ]
     ],
     "experiments": {

@@ -3,22 +3,38 @@
  * still image using Google MLKit via `@react-native-ml-kit/text-recognition`.
  *
  * IMPORTANT (build):
- *   MLKit is a native module. In Expo Go the native side is absent
- *   and calling `recognize()` throws at runtime; the caller receives
- *   the `'unavailable'` outcome and shows a friendly alert. A dev /
- *   production build ships the native module and OCR works end-to-end.
+ *   MLKit + react-native-image-crop-picker + @shopify/react-native-skia
+ *   are native modules. In Expo Go the native sides are absent and the
+ *   caller receives an `'unavailable'` outcome. A dev / production build
+ *   ships every native module and OCR works end-to-end.
+ *
+ * Capture pipeline (fixes the OS-cropper layout / OCR accuracy issues):
+ *   1. Camera + crop UI comes from `react-native-image-crop-picker`
+ *      (uCrop on Android, TOCropViewController on iOS). Its Crop /
+ *      Rotate / Cancel buttons are pinned to the top+bottom bars so
+ *      they never overlap the image, and the crop handles have safe
+ *      padding around the edges by design.
+ *   2. `preprocessForOcr()` upscales the crop ~1.5× and applies a
+ *      contrast + unsharp-mask filter via Skia. This is a real
+ *      accuracy boost on shiny salon-bottle labels.
+ *   3. MLKit recognises text on the processed image (falls back to the
+ *      raw crop if preprocessing failed for any reason).
  *
  * PRIVACY:
  *   The image is processed locally on device. Nothing is uploaded.
- *   The temporary image URI is discarded once OCR returns.
+ *   The temporary image URIs are left in the OS cache and cleaned by
+ *   the system.
  *
- * Design of the return type (discriminated union): earlier revisions
- * returned `null` for every failure path — success with empty text,
- * user cancel, MLKit throw, or missing native module — which made it
- * impossible for the caller to give useful feedback. Now every
- * outcome is distinguishable.
+ * Design of the return type (discriminated union): every failure path
+ * is distinguishable so the caller (`app/manage/stock.tsx`) can show a
+ * meaningful alert per outcome.
  */
 import * as ImagePicker from 'expo-image-picker';
+// react-native-image-crop-picker is the primary capture pipeline; we
+// keep expo-image-picker imported ONLY to reuse its permission helpers
+// (a stable API that already handled the "canAskAgain" flow).
+import ImageCropPicker from 'react-native-image-crop-picker';
+import { preprocessForOcr } from '@/src/utils/imagePreprocess';
 // Static import so Metro resolves the module at bundle time. The
 // native side is loaded lazily when we actually invoke `.recognize()`;
 // if the native module is missing (Expo Go), the call throws and we
@@ -61,9 +77,10 @@ async function ensureCameraPermission(): Promise<boolean> {
  * Open the camera → let the user crop → run MLKit on the (possibly
  * cropped) URI → return a fully-typed outcome.
  *
- * `allowsEditing: true` means the URI in `result.assets[0].uri` is
- * the CROPPED image on both iOS and Android. That's exactly the URI
- * we hand to MLKit.
+ * The camera + crop UI is provided by `react-native-image-crop-picker`
+ * so we get pinned Crop/Rotate/Cancel controls, safe padding around the
+ * handles, and free-form crop by default — the OS cropper on the older
+ * flow had none of that.
  */
 export async function scanProductNameFromCamera(): Promise<OcrOutcome> {
   if (!isOcrAvailable()) return { kind: 'unavailable' };
@@ -71,21 +88,51 @@ export async function scanProductNameFromCamera(): Promise<OcrOutcome> {
   const granted = await ensureCameraPermission();
   if (!granted) return { kind: 'permission_denied' };
 
-  const picked = await ImagePicker.launchCameraAsync({
-    mediaTypes: ['images'],
-    allowsEditing: true,
-    quality: 0.85,
-    exif: false,
-    base64: false,
-  });
-  if (picked.canceled) return { kind: 'canceled' };
-  const uri = picked.assets?.[0]?.uri;
-  if (!uri) return { kind: 'canceled' };
+  // ------------------------------------------------------------------
+  // 1. Capture + crop via uCrop / TOCropViewController.
+  //    freeStyleCropEnabled → user isn't locked to a fixed aspect ratio.
+  //    showCropGuidelines   → 3×3 rule-of-thirds grid for framing labels.
+  //    compressImageQuality → 0.95: retain detail for the sharpen pass.
+  //    hideBottomControls   → false so Reset / Rotate / Aspect are pinned.
+  // ------------------------------------------------------------------
+  let cropped: { path: string; width: number; height: number };
+  try {
+    const result = await ImageCropPicker.openCamera({
+      mediaType: 'photo',
+      cropping: true,
+      freeStyleCropEnabled: true,
+      showCropGuidelines: true,
+      hideBottomControls: false,
+      cropperToolbarTitle: 'Crop product label',
+      compressImageQuality: 0.95,
+      includeBase64: false,
+      useFrontCamera: false,
+      writeTempFile: true,
+    });
+    cropped = result as any;
+  } catch (e: any) {
+    // The picker rejects with a stringy code we translate to our outcome.
+    const msg = String(e?.message || e?.code || e || '').toLowerCase();
+    if (msg.includes('cancel')) return { kind: 'canceled' };
+    if (msg.includes('permission')) return { kind: 'permission_denied' };
+    if (__DEV__) console.warn('[ocr] crop-picker threw', msg);
+    return { kind: 'error', message: e?.message || 'Could not open camera' };
+  }
+  const rawUri = cropped?.path;
+  if (!rawUri) return { kind: 'canceled' };
+
+  // ------------------------------------------------------------------
+  // 2. Preprocess (upscale + contrast + sharpen) via Skia. If any step
+  //    fails we silently fall back to the raw cropped image so OCR
+  //    always has SOMETHING to work with.
+  // ------------------------------------------------------------------
+  const processed = await preprocessForOcr(rawUri).catch(() => null);
+  const ocrUri = processed || rawUri;
 
   try {
     // MLKit accepts a file:// URI on both platforms.
-    if (__DEV__) console.log('[ocr] recognizing', uri);
-    const raw: any = await TextRecognition.recognize(uri);
+    if (__DEV__) console.log('[ocr] recognizing', ocrUri, 'processed=', !!processed);
+    const raw: any = await TextRecognition.recognize(ocrUri);
     if (__DEV__) console.log('[ocr] raw', typeof raw?.text, 'blocks=', raw?.blocks?.length);
 
     // Normalize MLKit output into a flat list of "lines with geometry".
