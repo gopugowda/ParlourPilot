@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.saloninvoiceapp.djfiom",
+      "bundleIdentifier": "com.parlourpilot.app",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Upload your salon logo to personalize your invoices",
         "NSLocationWhenInUseUsageDescription": "Verify you're at the salon when punching attendance",
