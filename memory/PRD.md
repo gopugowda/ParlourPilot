@@ -43,3 +43,7 @@ Mobile-first multi-tenant SaaS salon/parlour management app built with Expo (Rea
 - Push notifications (only on user request).
 - Native Google Maps.
 - Client-side payroll calculations.
+
+## Refactors (technical only)
+- **Appointments screen split** (Sep 2026): `app/manage/appointments.tsx` shrunk from 855 → 284 lines. Extracted `AppointmentRow`, `AppointmentEditor`, `AppointmentDateTimePicker`, `AppointmentFiltersSheet`, `LabeledInput`, plus shared `types.ts` / `styles.ts` under `src/components/appointments/`. Purely mechanical — no behaviour change.
+
