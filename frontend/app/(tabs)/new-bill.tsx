@@ -71,6 +71,13 @@ export default function NewBillScreen() {
   const [billingDate, setBillingDate] = useState<string>(todayIso);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
+  // Overall bill-level discount (in addition to per-line discounts).
+  // Backend authoritative — see backend contract at /api/bills (POST/PUT):
+  //   overall_discount_type: "percentage" | "fixed" | null
+  //   overall_discount_value: numeric
+  const [overallDiscountType, setOverallDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [overallDiscountValue, setOverallDiscountValue] = useState<string>('');
+
   // Variable price prompt — auto-opens when a variable-priced service is picked.
   const [variablePrompt, setVariablePrompt] = useState<null | {
     index: number; serviceName: string; base: number; suggested: number;
@@ -114,6 +121,23 @@ export default function NewBillScreen() {
         setTipBeauticianId(b.tip_beautician_id); setTipBeauticianName(b.tip_beautician_name || '');
         // Hydrate the billing date (fallback to created_at date part).
         setBillingDate((b.billing_date || (b.created_at || '').slice(0, 10)) || todayIso);
+        // Hydrate overall discount (backward-compatible — missing = no discount).
+        // For percentage bills, prefer `overall_discount_percentage` from the
+        // server response (already normalized). For fixed bills the stored
+        // input value is `overall_discount_value`.
+        const odt = b.overall_discount_type;
+        if (odt === 'percentage') {
+          setOverallDiscountType('percentage');
+          const p = b.overall_discount_percentage ?? b.overall_discount_value ?? 0;
+          setOverallDiscountValue(p ? String(p) : '');
+        } else if (odt === 'fixed') {
+          setOverallDiscountType('fixed');
+          const v = b.overall_discount_value ?? b.overall_discount_amount ?? 0;
+          setOverallDiscountValue(v ? String(v) : '');
+        } else {
+          setOverallDiscountType('percentage');
+          setOverallDiscountValue('');
+        }
       } catch {}
     })();
   }, [editBillId]);
@@ -188,9 +212,29 @@ export default function NewBillScreen() {
     const eff = Math.max(manual, member);
     return s + price * (eff / 100);
   }, 0);
-  const servicesNet = Math.max(0, subtotal - discount);
-  // Per-item tax (applied on line net = price - discount)
-  const taxTotal = items.reduce((s, it) => {
+  // servicesNetPreOverall = subtotal after line-item discounts (matches backend
+  // field of same name in bill response).
+  const servicesNetPreOverall = Math.max(0, subtotal - discount);
+
+  // Preview the overall bill-level discount. Backend is authoritative on save.
+  // We clamp locally for good UX; the real cap is enforced on the server.
+  const overallRaw = Math.max(0, Number(overallDiscountValue) || 0);
+  const overallDiscountAmount = (() => {
+    if (!overallDiscountValue) return 0;
+    if (overallDiscountType === 'percentage') {
+      const pct = Math.min(100, overallRaw);
+      return servicesNetPreOverall * (pct / 100);
+    }
+    // fixed — never exceed the applicable subtotal
+    return Math.min(overallRaw, servicesNetPreOverall);
+  })();
+  const servicesNet = Math.max(0, servicesNetPreOverall - overallDiscountAmount);
+
+  // Per-item tax preview. When an overall discount is applied, each taxable
+  // line's net is proportionally reduced — so total tax scales by the same
+  // ratio. Backend allocates tax proportionally across taxable nets; this
+  // gives the same aggregate result for the on-screen preview.
+  const rawTaxTotal = items.reduce((s, it) => {
     const price = Number(it.price) || 0;
     const manual = Number(it.discount_pct) || 0;
     const member = isMember && price > tenantMinPrice ? memberPctToApply : 0;
@@ -199,6 +243,8 @@ export default function NewBillScreen() {
     const taxPct = Number(it.tax_percentage) || 0;
     return s + lineNet * (taxPct / 100);
   }, 0);
+  const overallScale = servicesNetPreOverall > 0 ? (servicesNet / servicesNetPreOverall) : 1;
+  const taxTotal = rawTaxTotal * overallScale;
   const lineTipTotal = items.reduce((s, it) => s + (Number(it.tip_amount) || 0), 0);
   const tip = Math.max(0, Number(tipAmt) || 0) + lineTipTotal;
   const total = servicesNet + taxTotal + tip;
@@ -211,6 +257,8 @@ export default function NewBillScreen() {
     setTipBeauticianId(undefined); setTipBeauticianName('');
     setMemberInfo(null);
     setBillingDate(todayIso);
+    setOverallDiscountType('percentage');
+    setOverallDiscountValue('');
   };
 
   const onSubmit = async () => {
@@ -220,6 +268,20 @@ export default function NewBillScreen() {
       if (!it.service_name) { setErr('Select service for all rows'); return; }
       if (!it.beautician_name) { setErr('Assign beautician for all rows'); return; }
       if (!(Number(it.price) > 0)) { setErr('Price must be > 0'); return; }
+    }
+    // Overall discount validation. Backend also enforces, but catch obvious
+    // input errors before the round-trip so the user sees them immediately.
+    const overallRawVal = Math.max(0, Number(overallDiscountValue) || 0);
+    if (overallDiscountValue) {
+      if (overallDiscountType === 'percentage') {
+        if (overallRawVal > 100) { setErr('Overall discount % cannot exceed 100'); return; }
+        if (overallRawVal < 0) { setErr('Overall discount cannot be negative'); return; }
+      } else {
+        if (overallRawVal > servicesNetPreOverall + 0.01) {
+          setErr(`Overall discount cannot exceed subtotal of ${fmtINR(servicesNetPreOverall)}`);
+          return;
+        }
+      }
     }
     if (Math.max(0, Number(tipAmt) || 0) > 0 && !tipBeauticianName) { setErr('Choose beautician who received the tip'); return; }
     // Grand total = services_net + tax + ALL tips (spec §4). Split must total grand_total.
@@ -273,6 +335,11 @@ export default function NewBillScreen() {
         tip_beautician_name: (Number(tipAmt) || 0) > 0 ? tipBeauticianName : '',
         // Backdated billing (admin/owner only). Server still forces today for staff.
         ...(isAdmin ? { billing_date: billingDate } : {}),
+        // Overall bill-level discount — new fields, backend authoritative.
+        // If the user did not enter a value we send an explicit null/0 pair so
+        // any previously-saved overall discount is cleared on edit.
+        overall_discount_type: overallDiscountValue ? overallDiscountType : null,
+        overall_discount_value: overallDiscountValue ? overallRawVal : 0,
       };
       const bill: any = editBillId
         ? await api(`/bills/${editBillId}`, { method: 'PUT', body: payload })
@@ -600,6 +667,82 @@ export default function NewBillScreen() {
             )}
           </View>
 
+          {/* Overall Bill Discount — separate from per-line discounts. */}
+          <View style={styles.card}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+              <View style={styles.memberIcon}>
+                <Ionicons name="pricetag-outline" size={16} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle}>Overall Discount (optional)</Text>
+                <Text style={styles.hintText}>Applied to the full bill after per-service discounts.</Text>
+              </View>
+              {!!overallDiscountValue && (
+                <TouchableOpacity
+                  testID="overall-disc-clear"
+                  onPress={() => { Haptics.selectionAsync(); setOverallDiscountValue(''); }}
+                  style={styles.clearBtn}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close-circle" size={16} color={colors.onSurfaceSecondary} />
+                  <Text style={styles.clearBtnText}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }}>
+              {/* Type toggle — % or configured currency. NEVER hard-code the
+                  currency symbol; comes from getCurrencySymbol(). */}
+              <View style={styles.discTypeToggle}>
+                <TouchableOpacity
+                  testID="overall-disc-type-pct"
+                  onPress={() => { Haptics.selectionAsync(); setOverallDiscountType('percentage'); }}
+                  style={[styles.discTypeChip, overallDiscountType === 'percentage' && styles.discTypeChipActive]}
+                >
+                  <Text style={[styles.discTypeText, overallDiscountType === 'percentage' && styles.discTypeTextActive]}>%</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="overall-disc-type-fixed"
+                  onPress={() => { Haptics.selectionAsync(); setOverallDiscountType('fixed'); }}
+                  style={[styles.discTypeChip, overallDiscountType === 'fixed' && styles.discTypeChipActive]}
+                >
+                  <Text style={[styles.discTypeText, overallDiscountType === 'fixed' && styles.discTypeTextActive]}>{getCurrencySymbol()}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.smallField, { flex: 1 }]}>
+                <Text style={styles.smallLabel}>
+                  {overallDiscountType === 'percentage' ? 'Value (%)' : `Value (${getCurrencySymbol()})`}
+                </Text>
+                <TextInput
+                  testID="overall-disc-value"
+                  value={overallDiscountValue}
+                  onChangeText={(v) => {
+                    const clean = v.replace(/[^0-9.]/g, '');
+                    if (overallDiscountType === 'percentage') {
+                      const n = Number(clean);
+                      if (clean === '') setOverallDiscountValue('');
+                      else if (!isNaN(n)) setOverallDiscountValue(String(Math.min(100, n)));
+                    } else {
+                      setOverallDiscountValue(clean);
+                    }
+                  }}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor={colors.onSurfaceTertiary}
+                  style={styles.smallInput}
+                />
+              </View>
+            </View>
+            {overallDiscountAmount > 0 && (
+              <View style={styles.discPreviewRow}>
+                <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                <Text style={styles.discPreviewText} testID="overall-disc-preview">
+                  Discount applied: {fmtINR(overallDiscountAmount)}
+                  {overallDiscountType === 'percentage' && overallDiscountValue ? ` (${overallDiscountValue}%)` : ''}
+                </Text>
+              </View>
+            )}
+          </View>
+
           {/* Tip */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Tip (optional)</Text>
@@ -757,6 +900,12 @@ export default function NewBillScreen() {
             <Text style={styles.footerTotal} testID="bill-total">{fmtINR(total)}</Text>
             <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: 2, flexWrap: 'wrap' }}>
               {discount > 0 && <Text style={styles.footerHint}>Saved {fmtINR(discount)}</Text>}
+              {overallDiscountAmount > 0 && (
+                <Text style={styles.footerHint} testID="footer-overall-disc">
+                  Overall −{fmtINR(overallDiscountAmount)}
+                  {overallDiscountType === 'percentage' && overallDiscountValue ? ` (${overallDiscountValue}%)` : ''}
+                </Text>
+              )}
               {taxTotal > 0 && <Text style={styles.footerHint}>Tax {fmtINR(taxTotal)}</Text>}
               {tip > 0 && <Text style={[styles.footerHint, { color: colors.brandPrimary }]}>Tip {fmtINR(tip)}</Text>}
             </View>
@@ -1097,6 +1246,17 @@ const styles = StyleSheet.create({
   smallField: { backgroundColor: colors.surfaceSecondary, padding: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border },
   smallLabel: { fontSize: 11, color: colors.onSurfaceTertiary, marginBottom: 2 },
   smallInput: { fontSize: 15, color: colors.onSurface, fontWeight: '600', paddingVertical: 4, minHeight: 24 },
+
+  // Overall Discount card
+  clearBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
+  clearBtnText: { fontSize: 12, color: colors.onSurfaceSecondary, fontWeight: '600' },
+  discTypeToggle: { flexDirection: 'row', backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, padding: 2, borderWidth: 1, borderColor: colors.border },
+  discTypeChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.sm, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  discTypeChipActive: { backgroundColor: colors.brandPrimary },
+  discTypeText: { fontSize: 15, fontWeight: '700', color: colors.onSurfaceSecondary },
+  discTypeTextActive: { color: '#fff' },
+  discPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm },
+  discPreviewText: { fontSize: 12, color: colors.success, fontWeight: '600' },
 
   segmentRow: { flexDirection: 'row', gap: spacing.sm },
   segment: {

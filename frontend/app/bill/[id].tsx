@@ -181,7 +181,8 @@ ${tipBlock}
 <div class="box">
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>${CUR}${bill.subtotal.toFixed(2)}</span></div>
-    <div class="row"><span>Discount</span><span>- ${CUR}${bill.discount.toFixed(2)}</span></div>
+    <div class="row"><span>Line Item Discount</span><span>- ${CUR}${bill.discount.toFixed(2)}</span></div>
+    ${(bill.overall_discount_amount || 0) > 0 ? `<div class="row"><span>Overall Discount${bill.overall_discount_type === 'percentage' && (bill.overall_discount_percentage ?? bill.overall_discount_value) ? ` (${bill.overall_discount_percentage ?? bill.overall_discount_value}%)` : ''}</span><span>- ${CUR}${(bill.overall_discount_amount || 0).toFixed(2)}</span></div>` : ''}
     <div class="row"><span>Services Net</span><span>${CUR}${servicesNet.toFixed(2)}</span></div>
     ${showTax ? `<div class="row"><span>Tax (${taxPctDisplay}%)</span><span>+ ${CUR}${taxAmount.toFixed(2)}</span></div>` : ''}
     ${(bill.tip_amount || 0) > 0 ? `<div class="row"><span>Tip</span><span>+ ${CUR}${bill.tip_amount.toFixed(2)}</span></div>` : ''}
@@ -347,7 +348,18 @@ ${tipBlock}
         {/* Totals */}
         <View style={styles.card}>
           <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalVal}>{fmtINR(bill.subtotal)}</Text></View>
-          <View style={styles.totalRow}><Text style={styles.totalLabel}>Discount</Text><Text style={[styles.totalVal, { color: colors.success }]}>- {fmtINR(bill.discount)}</Text></View>
+          <View style={styles.totalRow}><Text style={styles.totalLabel}>Line Item Discount</Text><Text style={[styles.totalVal, { color: colors.success }]}>- {fmtINR(bill.discount)}</Text></View>
+          {(bill.overall_discount_amount || 0) > 0 && (
+            <View style={styles.totalRow} testID="bill-overall-disc-row">
+              <Text style={styles.totalLabel}>
+                Overall Discount
+                {bill.overall_discount_type === 'percentage' && (bill.overall_discount_percentage ?? bill.overall_discount_value)
+                  ? ` (${bill.overall_discount_percentage ?? bill.overall_discount_value}%)`
+                  : ''}
+              </Text>
+              <Text style={[styles.totalVal, { color: colors.success }]}>- {fmtINR(bill.overall_discount_amount)}</Text>
+            </View>
+          )}
           <View style={styles.totalRow}><Text style={styles.totalLabel}>Services Net</Text><Text style={styles.totalVal}>{fmtINR(bill.services_net ?? (bill.grand_total - (bill.tip_amount || 0)))}</Text></View>
           {(bill.tip_amount || 0) > 0 && (
             <View style={styles.totalRow}><Text style={styles.totalLabel}>Tip</Text><Text style={[styles.totalVal, { color: colors.brandPrimary }]}>+ {fmtINR(bill.tip_amount)}</Text></View>
