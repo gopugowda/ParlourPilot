@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Calendar } from 'react-native-calendars';
 import { api } from '@/src/api/client';
@@ -48,6 +48,7 @@ const PAY_ICON: Record<ExpensePaymentToken, any> = {
 
 export default function ExpensesScreen() {
   const { user, tenant } = useAuth();
+  const router = useRouter();
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';
   const [list, setList] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<string[]>(['Material', 'Utilities', 'Rent', 'Salary', 'Salary Advance', 'Maintenance', 'Other']);
@@ -226,9 +227,21 @@ export default function ExpensesScreen() {
     <View style={styles.root} testID="expenses-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
         <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.headerTitle}>Expenses</Text>
-            <Text style={styles.headerSub}>{list.length} entries · {fmtINR(total)}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 }}>
+            <TouchableOpacity
+              testID="expenses-home-btn"
+              onPress={() => router.replace('/(tabs)' as any)}
+              style={styles.headerHomeBtn}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Back to Dashboard"
+            >
+              <Ionicons name="home-outline" size={20} color={colors.onSurface} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle}>Expenses</Text>
+              <Text style={styles.headerSub}>{list.length} entries · {fmtINR(total)}</Text>
+            </View>
           </View>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
@@ -486,85 +499,90 @@ export default function ExpensesScreen() {
               </ScrollView>
             </Pressable>
           </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
 
-      {/* Date picker modal (react-native-calendars) */}
-      <Modal visible={datePickerOpen} transparent animationType="fade" onRequestClose={() => setDatePickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setDatePickerOpen(false)}>
-          <Pressable style={styles.datePickerSheet} onPress={() => {}}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>Pick a date</Text>
-            <Calendar
-              testID="exp-calendar"
-              current={expDate || today}
-              maxDate={today}
-              onDayPress={(d) => {
-                Haptics.selectionAsync();
-                setExpDate(d.dateString);
-                setDatePickerOpen(false);
-              }}
-              markedDates={expDate ? { [expDate]: { selected: true, selectedColor: colors.brandPrimary } } : {}}
-              theme={{
-                backgroundColor: colors.surface,
-                calendarBackground: colors.surface,
-                selectedDayBackgroundColor: colors.brandPrimary,
-                selectedDayTextColor: '#fff',
-                todayTextColor: colors.brandPrimary,
-                dayTextColor: colors.onSurface,
-                monthTextColor: colors.onSurface,
-                arrowColor: colors.brandPrimary,
-              }}
-            />
-            <TouchableOpacity style={styles.datePickerClose} onPress={() => setDatePickerOpen(false)}>
-              <Text style={styles.datePickerCloseText}>Cancel</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Staff picker modal (for Salary Advance) */}
-      <Modal visible={staffPickerOpen} transparent animationType="fade" onRequestClose={() => setStaffPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setStaffPickerOpen(false)}>
-          <Pressable style={styles.datePickerSheet} onPress={() => {}}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>Select staff</Text>
-            <Text style={styles.shareSub}>Advance will be attributed to their monthly earnings.</Text>
-            <ScrollView style={{ maxHeight: 400 }} keyboardShouldPersistTaps="handled">
-              {beauticians.length === 0 ? (
-                <Text style={{ textAlign: 'center', color: colors.onSurfaceTertiary, paddingVertical: spacing.lg }}>
-                  No staff found. Add staff first.
-                </Text>
-              ) : beauticians.map(b => (
-                <TouchableOpacity
-                  key={b.id}
-                  testID={`staff-opt-${b.id}`}
-                  style={[
-                    styles.shareAction,
-                    beauticianId === b.id && { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
-                  ]}
-                  onPress={() => {
+          {/*
+            iOS FIX (sibling-modal invisibility): the Date and Staff pickers
+            USED to be sibling <Modal>s to this editor modal, which on iOS
+            presents them BEHIND this modal → user sees a blank sheet. We
+            now render them as absolute-positioned overlays INSIDE this
+            editor modal so they always sit above the sheet.
+          */}
+          {datePickerOpen && (
+            <Pressable style={styles.overlayBackdrop} onPress={() => setDatePickerOpen(false)}>
+              <Pressable style={styles.datePickerSheet} onPress={() => {}}>
+                <View style={styles.handle} />
+                <Text style={styles.sheetTitle}>Pick a date</Text>
+                <Calendar
+                  testID="exp-calendar"
+                  current={expDate || today}
+                  maxDate={today}
+                  onDayPress={(d) => {
                     Haptics.selectionAsync();
-                    setBeauticianId(b.id);
-                    setBeauticianName(b.name);
-                    setStaffPickerOpen(false);
+                    setExpDate(d.dateString);
+                    setDatePickerOpen(false);
                   }}
-                >
-                  <View style={[styles.shareIcon, { backgroundColor: colors.brandTertiary }]}>
-                    <Ionicons name="person" size={20} color={colors.brandPrimary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.shareTitle}>{b.name}</Text>
-                    {b.role ? <Text style={styles.shareDesc}>{b.role}</Text> : null}
-                  </View>
-                  {beauticianId === b.id && <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />}
+                  markedDates={expDate ? { [expDate]: { selected: true, selectedColor: colors.brandPrimary } } : {}}
+                  theme={{
+                    backgroundColor: colors.surface,
+                    calendarBackground: colors.surface,
+                    selectedDayBackgroundColor: colors.brandPrimary,
+                    selectedDayTextColor: '#fff',
+                    todayTextColor: colors.brandPrimary,
+                    dayTextColor: colors.onSurface,
+                    monthTextColor: colors.onSurface,
+                    arrowColor: colors.brandPrimary,
+                  }}
+                />
+                <TouchableOpacity style={styles.datePickerClose} onPress={() => setDatePickerOpen(false)}>
+                  <Text style={styles.datePickerCloseText}>Cancel</Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TouchableOpacity style={styles.datePickerClose} onPress={() => setStaffPickerOpen(false)}>
-              <Text style={styles.datePickerCloseText}>Cancel</Text>
-            </TouchableOpacity>
-          </Pressable>
+              </Pressable>
+            </Pressable>
+          )}
+
+          {staffPickerOpen && (
+            <Pressable style={styles.overlayBackdrop} onPress={() => setStaffPickerOpen(false)}>
+              <Pressable style={styles.datePickerSheet} onPress={() => {}}>
+                <View style={styles.handle} />
+                <Text style={styles.sheetTitle}>Select staff</Text>
+                <Text style={styles.shareSub}>Advance will be attributed to their monthly earnings.</Text>
+                <ScrollView style={{ maxHeight: 400 }} keyboardShouldPersistTaps="handled">
+                  {beauticians.length === 0 ? (
+                    <Text style={{ textAlign: 'center', color: colors.onSurfaceTertiary, paddingVertical: spacing.lg }}>
+                      No staff found. Add staff first.
+                    </Text>
+                  ) : beauticians.map(b => (
+                    <TouchableOpacity
+                      key={b.id}
+                      testID={`staff-opt-${b.id}`}
+                      style={[
+                        styles.shareAction,
+                        beauticianId === b.id && { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
+                      ]}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setBeauticianId(b.id);
+                        setBeauticianName(b.name);
+                        setStaffPickerOpen(false);
+                      }}
+                    >
+                      <View style={[styles.shareIcon, { backgroundColor: colors.brandTertiary }]}>
+                        <Ionicons name="person" size={20} color={colors.brandPrimary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.shareTitle}>{b.name}</Text>
+                        {b.role ? <Text style={styles.shareDesc}>{b.role}</Text> : null}
+                      </View>
+                      {beauticianId === b.id && <Ionicons name="checkmark-circle" size={20} color={colors.brandPrimary} />}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity style={styles.datePickerClose} onPress={() => setStaffPickerOpen(false)}>
+                  <Text style={styles.datePickerCloseText}>Cancel</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          )}
         </Pressable>
       </Modal>
 
@@ -612,6 +630,7 @@ export default function ExpensesScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md, backgroundColor: colors.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: colors.border },
+  headerHomeBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: spacing.md },
   headerTitle: { fontSize: 22, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
@@ -653,6 +672,12 @@ const styles = StyleSheet.create({
   expAmt: { fontSize: 15, fontWeight: '800', color: colors.error },
 
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  // Same as backdrop but absolutely positioned so it can sit ON TOP of the
+  // editor sheet (still inside the same parent Modal — iOS-safe).
+  overlayBackdrop: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end',
+  },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, maxHeight: '90%' },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, alignSelf: 'center' },
   sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },

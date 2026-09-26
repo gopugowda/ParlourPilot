@@ -149,6 +149,16 @@ export default function HistoryScreen() {
     <View style={styles.root} testID="history-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
         <View style={styles.headerTop}>
+          <TouchableOpacity
+            testID="history-home-btn"
+            onPress={() => router.replace('/(tabs)' as any)}
+            style={styles.headerHomeBtn}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Dashboard"
+          >
+            <Ionicons name="home-outline" size={20} color={colors.onSurface} />
+          </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>{isAdmin ? 'Bill History' : "Today's Bills"}</Text>
             <Text style={styles.headerSub}>{filtered.length} bills · {fmtINR(totalShown)}</Text>
@@ -363,7 +373,8 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md, backgroundColor: colors.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: colors.border },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: spacing.md },
+  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: spacing.md, gap: spacing.sm },
+  headerHomeBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   headerTitle: { fontSize: 22, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
 

@@ -47,3 +47,10 @@ Mobile-first multi-tenant SaaS salon/parlour management app built with Expo (Rea
 ## Refactors (technical only)
 - **Appointments screen split** (Sep 2026): `app/manage/appointments.tsx` shrunk from 855 → 284 lines. Extracted `AppointmentRow`, `AppointmentEditor`, `AppointmentDateTimePicker`, `AppointmentFiltersSheet`, `LabeledInput`, plus shared `types.ts` / `styles.ts` under `src/components/appointments/`. Purely mechanical — no behaviour change.
 
+## iOS Production Fixes (Sep 2026 — physical iPhone 15 testing)
+- **Add Expense → Staff Member dropdown invisible on iOS**: moved the Staff Picker and Date Picker `<Modal>`s from being siblings of the Editor `<Modal>` to nested overlays inside it. Root cause: on iOS a sibling Modal presents *behind* the currently-open Modal. File: `app/(tabs)/expenses.tsx`.
+- **New Bill → Billing date picker blank on iPhone 15**: `<DateTimePicker>` now uses `display="inline"` + `themeVariant="light"` + explicit `textColor`/`accentColor`. Root cause: default spinner text inherited system dark appearance → white text on white sheet. Added a Cancel/Done row. File: `app/(tabs)/new-bill.tsx`.
+- **Add/Edit Team Member sheet missing close control**: added a top-right × close button inside the sheet. File: `app/manage/beauticians.tsx`.
+- **New Bill / Expenses / History tabs missing top nav**: added a subtle `home-outline` button in the header (matches the existing pattern already used in `/manage/beauticians`). Files: `app/(tabs)/new-bill.tsx`, `app/(tabs)/expenses.tsx`, `app/(tabs)/history.tsx`.
+- **Consistency audit**: only `expenses.tsx` had the actual sibling-modal-while-open bug. All other multi-Modal screens (`stock`, `salon-settings`, `hr`, `report`) open their Modals mutually-exclusively, so no fix needed there.
+

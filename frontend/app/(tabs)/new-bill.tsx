@@ -307,8 +307,22 @@ export default function NewBillScreen() {
   return (
     <View style={styles.root} testID="new-bill-screen">
       <SafeAreaView edges={['top']} style={styles.header}>
-        <Text style={styles.headerTitle}>New Bill</Text>
-        <Text style={styles.headerSub}>Add services and process payment</Text>
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            testID="new-bill-home-btn"
+            onPress={() => router.replace('/(tabs)' as any)}
+            style={styles.headerHomeBtn}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Dashboard"
+          >
+            <Ionicons name="home-outline" size={20} color={colors.onSurface} />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>New Bill</Text>
+            <Text style={styles.headerSub}>Add services and process payment</Text>
+          </View>
+        </View>
       </SafeAreaView>
 
       <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 180 }} keyboardShouldPersistTaps="handled" bottomOffset={24}>
@@ -863,23 +877,44 @@ export default function NewBillScreen() {
               <Pressable style={styles.dateSheet} onPress={() => {}}>
                 <View style={styles.handle} />
                 <Text style={styles.dateSheetTitle}>Billing date</Text>
+                {/*
+                  iOS FIX: on iPhone 15 in dark appearance the picker text
+                  rendered near-white on our white sheet → invisible. Force
+                  `themeVariant="light"` + explicit `textColor` so it stays
+                  readable regardless of system appearance. `display="inline"`
+                  gives a modern iOS 14+ calendar which is more accessible
+                  than the compact "spinner" wheel.
+                */}
                 <DateTimePicker
                   testID="billing-date-native"
                   value={new Date(billingDate + 'T00:00:00')}
                   mode="date"
-                  display="spinner"
+                  display="inline"
+                  themeVariant="light"
+                  accentColor={colors.brandPrimary}
+                  textColor={colors.onSurface}
                   maximumDate={new Date(todayIso + 'T00:00:00')}
                   onChange={(_, d) => {
                     if (d) setBillingDate(d.toISOString().slice(0, 10));
                   }}
+                  style={styles.iosDatePicker}
                 />
-                <TouchableOpacity
-                  testID="billing-date-done"
-                  style={styles.dateDone}
-                  onPress={() => { Haptics.selectionAsync(); setDatePickerOpen(false); }}
-                >
-                  <Text style={styles.dateDoneText}>Done</Text>
-                </TouchableOpacity>
+                <View style={styles.dateActionsRow}>
+                  <TouchableOpacity
+                    testID="billing-date-cancel"
+                    style={styles.dateCancel}
+                    onPress={() => setDatePickerOpen(false)}
+                  >
+                    <Text style={styles.dateCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="billing-date-done"
+                    style={[styles.dateDone, { flex: 1 }]}
+                    onPress={() => { Haptics.selectionAsync(); setDatePickerOpen(false); }}
+                  >
+                    <Text style={styles.dateDoneText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
               </Pressable>
             </Pressable>
           </Modal>
@@ -1025,6 +1060,8 @@ export default function NewBillScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md, backgroundColor: colors.surfaceSecondary, borderBottomWidth: 1, borderBottomColor: colors.border },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  headerHomeBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   headerTitle: { fontSize: 22, fontWeight: '800', color: colors.onSurface },
   headerSub: { fontSize: 12, color: colors.onSurfaceTertiary, marginTop: 2 },
 
@@ -1170,6 +1207,11 @@ const styles = StyleSheet.create({
   dateBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   dateSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.lg, gap: spacing.md, maxWidth: 480, width: '100%', alignSelf: 'center' },
   dateSheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
-  dateDone: { paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center', marginTop: spacing.sm },
+  // iOS inline picker: must be tall enough to show the calendar month.
+  iosDatePicker: { alignSelf: 'stretch', height: 360, backgroundColor: colors.surface },
+  dateActionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  dateCancel: { flex: 1, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  dateCancelText: { color: colors.onSurfaceSecondary, fontWeight: '600', fontSize: 14 },
+  dateDone: { paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.brandPrimary, alignItems: 'center' },
   dateDoneText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

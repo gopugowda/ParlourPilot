@@ -479,9 +479,24 @@ export default function TeamScreen() {
         <Pressable style={styles.backdrop} onPress={() => setEditOpen(false)}>
           <Pressable style={styles.sheet} onPress={() => {}}>
             <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>
-              {editing ? (editing.is_owner_locked ? 'Edit Owner' : 'Edit Team Member') : 'Add Team Member'}
-            </Text>
+            {/* Title row with a close (×) button — iOS users otherwise have no
+                way to dismiss this sheet from within the form area. */}
+            <View style={styles.sheetTitleRow}>
+              <View style={{ width: 32 }} />
+              <Text style={styles.sheetTitle}>
+                {editing ? (editing.is_owner_locked ? 'Edit Owner' : 'Edit Team Member') : 'Add Team Member'}
+              </Text>
+              <TouchableOpacity
+                testID="team-editor-close"
+                onPress={() => setEditOpen(false)}
+                hitSlop={10}
+                style={styles.sheetCloseBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <Ionicons name="close" size={20} color={colors.onSurfaceSecondary} />
+              </TouchableOpacity>
+            </View>
 
             <KeyboardAwareScrollView
               bottomOffset={24}
@@ -1098,7 +1113,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dateDoneText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center' },
+  sheetTitle: { fontSize: 18, fontWeight: '700', color: colors.onSurface, textAlign: 'center', flex: 1 },
+  sheetTitleRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
+  sheetCloseBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceTertiary },
   field: { gap: 6 },
   label: { fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: '600' },
   input: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: spacing.md, paddingVertical: 12, borderRadius: radius.sm, fontSize: 14, color: colors.onSurface },
