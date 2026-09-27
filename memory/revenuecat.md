@@ -83,6 +83,32 @@ short-circuits with `{deferred: True}` — the tenant state is NOT overwritten, 
 the next webhook or /sync will retry. This prevents a transient network failure
 from silently downgrading a paying tenant.
 
+### RevenueCat REST API version + key type (verified 2026-06)
+- Backend uses **V1** subscriber lookup exclusively — `GET /v1/subscribers/{app_user_id}`.
+- RC has **no V2 equivalent** for subscriber-object lookup (V2 currently only
+  covers RC Billing + Web SDK).
+- Required key type: **Secret API Key**, prefix `sk_...`, from Dashboard →
+  Project Settings → API Keys → **Secret Keys** section. Public keys
+  authenticate but return empty `subscriber_attributes`.
+- Auth header: `Authorization: Bearer <sk_key>`.
+- `X-Platform: iOS` — optional, only affects `management_url` in the response.
+- `X-Is-Sandbox: true` — **required** for TestFlight/StoreKit-sandbox transactions
+  to appear in the subscriber payload. Env-gated by `REVENUECAT_INCLUDE_SANDBOX`.
+  Default false in production; must be true only for a Sandbox-only deploy.
+- See `/app/memory/revenuecat_test_matrix_report.md` for the full audit and test
+  matrix results.
+
+### Test mode
+For automated backend tests we short-circuit the RC REST call. When
+`REVENUECAT_TEST_MODE=true` is set, `_fetch_subscriber_from_rc()` reads from
+`db.revenuecat_mock_responses` (keyed by `app_user_id`) instead of hitting
+the RevenueCat API. Two hidden endpoints, both requiring `X-Test-Auth:
+$REVENUECAT_TEST_AUTH`, control the mock:
+  - `POST /api/billing/revenuecat/_test/mock` — upsert a mock subscriber
+  - `POST /api/billing/revenuecat/_test/clear` — remove mock + events
+Both endpoints are only mounted when `REVENUECAT_TEST_MODE=true`. Production
+MUST have this env var false or unset.
+
 ### Webhook signature verification
 RevenueCat's standard webhook uses only `Authorization: Bearer <shared_secret>`.
 As of Sep 2026 RevenueCat does NOT publicly document an HMAC signature header,

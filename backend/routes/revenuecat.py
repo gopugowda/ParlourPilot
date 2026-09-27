@@ -43,6 +43,19 @@ REVENUECAT_SECRET_API_KEY = os.getenv("REVENUECAT_SECRET_API_KEY", "").strip()
 REVENUECAT_WEBHOOK_AUTH = os.getenv("REVENUECAT_WEBHOOK_AUTH", "").strip()
 REVENUECAT_REST_BASE = "https://api.revenuecat.com/v1"
 
+# When true, includes `X-Is-Sandbox: true` on the subscriber-lookup call.
+# Required for TestFlight / StoreKit-sandbox transactions to be visible in the
+# subscriber payload. In production this MUST be false. See:
+# https://community.revenuecat.com/sdks-51/v1-api-not-returning-sandbox-data-3773
+REVENUECAT_INCLUDE_SANDBOX = os.getenv("REVENUECAT_INCLUDE_SANDBOX", "false").strip().lower() in ("1", "true", "yes")
+
+# Test-only mock injection. When enabled, `_fetch_subscriber_from_rc` reads a
+# pre-seeded document from `db.revenuecat_mock_responses` instead of hitting
+# the RevenueCat REST API. Toggled by env var so it is IMPOSSIBLE to enable
+# accidentally in production without an explicit deploy.
+REVENUECAT_TEST_MODE = os.getenv("REVENUECAT_TEST_MODE", "false").strip().lower() in ("1", "true", "yes")
+REVENUECAT_TEST_AUTH = os.getenv("REVENUECAT_TEST_AUTH", "").strip()
+
 
 # ---------------------------------------------------------------------------
 # Product → plan mapping (also documented in /app/memory/revenuecat.md)
@@ -220,7 +233,20 @@ async def _apply_subscriber(
 async def _fetch_subscriber_from_rc(app_user_id: str) -> Optional[Dict[str, Any]]:
     """Server-side REST verification. Never trust client-supplied CustomerInfo
     alone — always re-fetch from RevenueCat with our Secret API key.
+
+    In TEST_MODE, reads a pre-seeded doc from `db.revenuecat_mock_responses`
+    keyed by app_user_id. The doc may contain:
+      - `subscriber`: dict → returned as-is
+      - `error`: any truthy value → simulates a REST failure (returns None)
     """
+    if REVENUECAT_TEST_MODE:
+        doc = await db.revenuecat_mock_responses.find_one({"app_user_id": app_user_id})
+        if not doc:
+            return None
+        if doc.get("error"):
+            return None
+        return doc.get("subscriber") or None
+
     if not REVENUECAT_SECRET_API_KEY:
         logger.warning("REVENUECAT_SECRET_API_KEY not configured — skipping REST verify")
         return None
@@ -230,6 +256,10 @@ async def _fetch_subscriber_from_rc(app_user_id: str) -> Optional[Dict[str, Any]
         "Accept": "application/json",
         "X-Platform": "iOS",
     }
+    if REVENUECAT_INCLUDE_SANDBOX:
+        # Required for TestFlight/Sandbox StoreKit transactions to appear in
+        # the subscriber object. See RevenueCat docs / community post above.
+        headers["X-Is-Sandbox"] = "true"
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(url, headers=headers)
@@ -346,3 +376,45 @@ APPLE_ACTIVE_STATUSES = frozenset({
     "in_billing_retry",
     "cancelled_still_active",
 })
+
+
+# ---------------------------------------------------------------------------
+# TEST-ONLY endpoints — mounted only when REVENUECAT_TEST_MODE=1. They allow
+# our backend test suite to inject / clear a mock subscriber payload without
+# touching the real RevenueCat REST API.
+# ---------------------------------------------------------------------------
+if REVENUECAT_TEST_MODE:
+    class _RcMockBody(BaseModel):
+        app_user_id: str
+        subscriber: Optional[Dict[str, Any]] = None
+        error: Optional[bool] = False
+
+    def _require_test_auth(x_test_auth: Optional[str] = Header(default=None)):
+        if not REVENUECAT_TEST_AUTH or x_test_auth != REVENUECAT_TEST_AUTH:
+            raise HTTPException(status_code=401, detail="test auth required")
+
+    @router.post("/billing/revenuecat/_test/mock", include_in_schema=False)
+    async def _rc_test_set_mock(
+        body: _RcMockBody,
+        _: None = Depends(_require_test_auth),
+    ):
+        await db.revenuecat_mock_responses.update_one(
+            {"app_user_id": body.app_user_id},
+            {"$set": {
+                "app_user_id": body.app_user_id,
+                "subscriber": body.subscriber,
+                "error": bool(body.error),
+                "updated_at": now_iso(),
+            }},
+            upsert=True,
+        )
+        return {"ok": True, "test_mode": True}
+
+    @router.post("/billing/revenuecat/_test/clear", include_in_schema=False)
+    async def _rc_test_clear_mock(
+        body: _RcMockBody,
+        _: None = Depends(_require_test_auth),
+    ):
+        await db.revenuecat_mock_responses.delete_many({"app_user_id": body.app_user_id})
+        await db.revenuecat_events.delete_many({"app_user_id": body.app_user_id})
+        return {"ok": True}

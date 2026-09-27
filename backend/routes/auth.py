@@ -263,8 +263,13 @@ async def delete_account(body: DeleteAccountBody, user=Depends(require_admin)):
     tid = user.get("tenant_id")
     uid = user.get("id")
 
-    # 1. Owner-only guard. `require_admin` allows admin+owner; we need owner.
-    if not (user.get("is_owner") is True or user.get("role") == "owner"):
+    # 1. Owner-only guard. `require_admin` allows admin+owner; we need the
+    # actual business owner (earliest-created admin/owner). `is_owner` is
+    # not stored on the user doc — it's computed on-the-fly.
+    is_owner_flag = user.get("is_owner") is True or user.get("role") == "owner"
+    if not is_owner_flag:
+        is_owner_flag = await compute_is_owner(user)
+    if not is_owner_flag:
         raise HTTPException(
             status_code=403,
             detail="Only the business owner can delete the account.",

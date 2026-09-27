@@ -54,3 +54,25 @@ Mobile-first multi-tenant SaaS salon/parlour management app built with Expo (Rea
 - **New Bill / Expenses / History tabs missing top nav**: added a subtle `home-outline` button in the header (matches the existing pattern already used in `/manage/beauticians`). Files: `app/(tabs)/new-bill.tsx`, `app/(tabs)/expenses.tsx`, `app/(tabs)/history.tsx`.
 - **Consistency audit**: only `expenses.tsx` had the actual sibling-modal-while-open bug. All other multi-Modal screens (`stock`, `salon-settings`, `hr`, `report`) open their Modals mutually-exclusively, so no fix needed there.
 
+
+## RevenueCat Backend Test Matrix (Jun 2026)
+- Verified REST API surface: `GET /v1/subscribers/{app_user_id}` remains correct;
+  RC has no V2 equivalent. Key type = **Secret API Key** (`sk_...`) via
+  `Authorization: Bearer`. Added missing `X-Is-Sandbox: true` toggle (env-gated by
+  `REVENUECAT_INCLUDE_SANDBOX`) required for TestFlight visibility.
+- Added test-mode support: env `REVENUECAT_TEST_MODE=true` swaps the RC REST
+  fetch for a Mongo-backed mock (`db.revenuecat_mock_responses`) fed via
+  hidden `/api/billing/revenuecat/_test/mock` endpoint (protected by
+  `X-Test-Auth`). Must remain false in production.
+- New backend test suite `tests/test_iter34_revenuecat.py` — 19/19 passing.
+  Covers INITIAL_PURCHASE, RENEWAL, CANCELLATION, EXPIRATION, BILLING_ISSUE,
+  PRODUCT_CHANGE, UNCANCELLATION, duplicate + out-of-order webhooks, unknown
+  product ID, invalid webhook auth, REST outage, `/sync` verified + timeout,
+  `/subscription/status`, and 4 account-deletion scenarios.
+- Bug fixed during matrix: `/api/auth/delete-account` gated on the never-populated
+  `user.is_owner` field, breaking deletion for every legit owner. Now falls back
+  to `compute_is_owner(user)`.
+- iOS Sandbox/TestFlight device checklist authored at
+  `/app/memory/revenuecat_test_matrix_report.md` — 10 on-device scenarios to
+  run after publishing + generating the iOS build.
+
