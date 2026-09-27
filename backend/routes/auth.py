@@ -289,6 +289,44 @@ async def delete_account(body: DeleteAccountBody, user=Depends(require_admin)):
         # Idempotent — already deleted.
         return {"ok": True, "already_deleted": True, "tenant_id": tid}
 
+    # 3.5. Apple subscription safety net (Apple 5.1.1(v)).
+    # If this tenant currently has an active/grace/retry/cancelled-still-active
+    # Apple subscription, refuse deletion — the mobile UI must first send the
+    # user to Manage Apple Subscription so Apple stops future billing. We
+    # RE-VERIFY server-side (do not trust the client) by re-syncing with
+    # RevenueCat before making the decision.
+    if tenant.get("subscription_provider") == "apple":
+        try:
+            from routes.revenuecat import (
+                _fetch_subscriber_from_rc,
+                _apply_subscriber,
+                APPLE_ACTIVE_STATUSES,
+            )
+            subscriber = await _fetch_subscriber_from_rc(tid) or {}
+            fresh = await _apply_subscriber(tid, subscriber)
+            live_status = fresh.get("apple_subscription_status")
+        except Exception as exc:
+            logger.warning("delete_account: RC re-check failed for %s: %s", tid, exc)
+            live_status = tenant.get("apple_subscription_status")
+            APPLE_ACTIVE_STATUSES = frozenset({
+                "active", "in_grace_period", "in_billing_retry", "cancelled_still_active",
+            })
+        if live_status in APPLE_ACTIVE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "apple_subscription_active",
+                    "message": (
+                        "Your Apple subscription is still active. Deleting your "
+                        "ParlourPilot business does not cancel your Apple "
+                        "subscription. Apple may continue billing you until the "
+                        "subscription is cancelled. Please tap 'Manage Apple "
+                        "Subscription' and cancel it before deleting the account."
+                    ),
+                    "apple_status": live_status,
+                },
+            )
+
     now = now_iso()
 
     # 4. Soft-cancel the subscription (records `cancellation_requested_at` so

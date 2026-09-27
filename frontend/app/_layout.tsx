@@ -10,9 +10,18 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { useIconFonts } from '@/src/hooks/use-icon-fonts';
 import { AuthProvider, useAuth } from '@/src/context/AuthContext';
 import { useAttendanceAutoLogout } from '@/src/hooks/useAttendanceAutoLogout';
+import { initializeRevenueCat, RevenueCatProvider } from '@/src/lib/revenuecat';
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
+
+// Module-scope init. Runs ONCE per app launch, BEFORE any component mounts.
+// Guarded by try/catch — a RevenueCat config error must never crash the app.
+try {
+  initializeRevenueCat();
+} catch (err) {
+  console.warn('[RevenueCat] init skipped:', err);
+}
 
 function AuthGate() {
   const { user, loading, subscriptionExpired, logout } = useAuth();
@@ -77,6 +86,22 @@ function AuthGate() {
   );
 }
 
+function AuthedShell() {
+  // Consumes AuthContext to feed tenant.id into the RevenueCat provider.
+  // Must live INSIDE AuthProvider so useAuth() works.
+  const { user, tenant } = useAuth();
+  // Prefer tenant.id (business-level identity). Fall back to null so the
+  // provider stays unbound until a real tenant is available. NEVER pass
+  // user.id — that would attach a purchase to an operator instead of a
+  // business (per user directive).
+  const tenantId = user?.tenant_id || tenant?.id || null;
+  return (
+    <RevenueCatProvider tenantId={tenantId}>
+      <AuthGate />
+    </RevenueCatProvider>
+  );
+}
+
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
   const { width } = useWindowDimensions();
@@ -94,7 +119,7 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <StatusBar style="auto" />
           <AuthProvider>
-            <AuthGate />
+            <AuthedShell />
           </AuthProvider>
         </SafeAreaProvider>
       </KeyboardProvider>

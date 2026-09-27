@@ -25,9 +25,10 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 
-import { billingApi, tenantApi, paymentsApi } from '@/src/api/client';
+import { billingApi, tenantApi, paymentsApi, api } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows } from '@/src/theme';
+import { useRevenueCat } from '@/src/lib/revenuecat';
 
 const SUPPORT_EMAIL = 'support@parlourpilot.com';
 
@@ -101,8 +102,19 @@ const fmtDate = (iso?: string | null): string => {
 
 const titlecase = (s?: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 
-// Loads Razorpay checkout on web. On native, we fall back to a hosted link.
+// Loads Razorpay checkout on web. On iOS this function is NEVER called —
+// iOS purchases go through RevenueCat/StoreKit (see useRevenueCat).
+// On Android we still allow the existing Razorpay hosted-link fallback,
+// unchanged per user directive.
 async function openRazorpay(order: any, onSuccess: (r: any) => void, onDismiss: () => void) {
+  if (Platform.OS === 'ios') {
+    // Belt-and-braces guard — should be unreachable because the calling
+    // buttons are hidden on iOS. If someone slips through, redirect to the
+    // in-app StoreKit path instead of exposing a Razorpay purchase surface.
+    Alert.alert('Use in-app purchase', 'Please use the Apple in-app subscription options.');
+    onDismiss();
+    return;
+  }
   if (Platform.OS === 'web') {
     const w: any = typeof window !== 'undefined' ? window : null;
     if (!w) return onDismiss();
@@ -140,6 +152,96 @@ async function openRazorpay(order: any, onSuccess: (r: any) => void, onDismiss: 
       { text: 'Cancel', style: 'cancel', onPress: onDismiss },
       { text: 'Open', onPress: () => Linking.openURL('https://parlourpilot.com/app/subscription').catch(() => onDismiss()) },
     ]
+  );
+}
+
+// ------------- iOS IAP subsection ------------------------------------------
+/**
+ * Renders the ParlourPilot In-App Purchase surface on iOS.
+ * - Non-subscribed owners see 4 tier buttons (Starter M/Y, Growth M/Y).
+ * - Subscribed owners see the plan, "Manage Apple Subscription" (opens
+ *   StoreKit sheet), and "Restore Purchases" for safety.
+ * - After every purchase / restore, we POST to /api/billing/revenuecat/sync
+ *   so the backend re-verifies with RevenueCat REST and updates the
+ *   tenant.subscription_provider = "apple" state (see routes/revenuecat.py).
+ */
+function IosSubscriptionActions() {
+  const rc = useRevenueCat();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const onPurchase = useCallback(async (key: keyof typeof rc.packages) => {
+    const pkg = rc.packages[key];
+    if (!pkg) { setMsg('This plan is not available yet. Please try again in a minute.'); return; }
+    setBusy(key); setMsg(null);
+    try {
+      await rc.purchase(pkg);
+      // Ping our backend so tenant.subscription_provider flips to 'apple'
+      // and plan/branch/staff enforcement immediately reflects the purchase.
+      try { await api('/billing/revenuecat/sync', { method: 'POST', body: { trigger: 'purchase' } }); } catch {}
+      setMsg('Subscription active. Thanks!');
+    } catch (e: any) {
+      if (e?.userCancelled) return;
+      setMsg(e?.message || 'Purchase failed');
+    } finally { setBusy(null); }
+  }, [rc]);
+
+  const onRestore = useCallback(async () => {
+    setBusy('restore'); setMsg(null);
+    try {
+      await rc.restore();
+      try { await api('/billing/revenuecat/sync', { method: 'POST', body: { trigger: 'restore' } }); } catch {}
+      setMsg('Restore complete');
+    } catch (e: any) {
+      setMsg(e?.message === 'identity_not_ready' ? 'Please wait, still preparing…' : (e?.message || 'Restore failed'));
+    } finally { setBusy(null); }
+  }, [rc]);
+
+  const onManage = useCallback(async () => {
+    try { await rc.showManageSubscriptions(); } catch (e: any) { setMsg(e?.message || 'Could not open Apple subscription management'); }
+  }, [rc]);
+
+  const label = (k: keyof typeof rc.packages, fallback: string) => {
+    const p = rc.packages[k];
+    return p ? `${fallback} — ${p.product.priceString}` : fallback;
+  };
+
+  return (
+    <View style={{ marginTop: 12, gap: 8 }} testID="ios-iap-card">
+      {rc.identityError && (
+        <Text style={{ color: '#F5B5B5', fontSize: 12 }}>Purchase temporarily unavailable: {rc.identityError}</Text>
+      )}
+      {!rc.isSubscribed ? (
+        <>
+          <Text style={{ color: '#F5D5A0', fontSize: 12, marginBottom: 4 }}>
+            Choose your plan (billed by Apple)
+          </Text>
+          <TouchableOpacity testID="iap-starter-monthly" disabled={busy !== null} onPress={() => onPurchase('starter_monthly')} style={[styles.planActionBtn, styles.planActionPrimary]}>
+            {busy === 'starter_monthly' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.planActionPrimaryText}>{label('starter_monthly', 'Starter — Monthly')}</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity testID="iap-starter-yearly" disabled={busy !== null} onPress={() => onPurchase('starter_yearly')} style={[styles.planActionBtn, styles.planActionGhost]}>
+            <Text style={styles.planActionGhostText}>{label('starter_yearly', 'Starter — Yearly')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity testID="iap-growth-monthly" disabled={busy !== null} onPress={() => onPurchase('growth_monthly')} style={[styles.planActionBtn, styles.planActionAmber]}>
+            {busy === 'growth_monthly' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.planActionAmberText}>{label('growth_monthly', 'Growth — Monthly')}</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity testID="iap-growth-yearly" disabled={busy !== null} onPress={() => onPurchase('growth_yearly')} style={[styles.planActionBtn, styles.planActionGhost]}>
+            <Text style={styles.planActionGhostText}>{label('growth_yearly', 'Growth — Yearly')}</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <>
+          <TouchableOpacity testID="iap-manage-btn" onPress={onManage} style={[styles.planActionBtn, styles.planActionPrimary]}>
+            <Ionicons name="settings-outline" size={14} color="#3D2100" />
+            <Text style={styles.planActionPrimaryText}>Manage Apple Subscription</Text>
+          </TouchableOpacity>
+        </>
+      )}
+      <TouchableOpacity testID="iap-restore-btn" disabled={busy !== null || !rc.identityReady} onPress={onRestore} style={[styles.planActionBtn, styles.planActionGhost]}>
+        {busy === 'restore' ? <ActivityIndicator size="small" color="#F5D5A0" /> : <Text style={styles.planActionGhostText}>Restore Purchases</Text>}
+      </TouchableOpacity>
+      {msg && <Text style={{ color: '#F5D5A0', fontSize: 12 }}>{msg}</Text>}
+    </View>
   );
 }
 
@@ -413,7 +515,13 @@ export default function SubscriptionScreen() {
             </View>
           </View>
 
-          {/* Actions */}
+          {/* Actions
+              NOTE (iOS): the buttons below all trigger the Razorpay hosted
+              checkout flow, which Apple prohibits for digital subscriptions
+              (App Store guideline 3.1.1). On iOS we hide them and render a
+              separate In-App-Purchase card below. Android + Web behaviour is
+              UNCHANGED per user directive. */}
+          {Platform.OS !== 'ios' && (
           <View style={styles.planActions}>
             {isOwner && (
               <TouchableOpacity
@@ -453,6 +561,8 @@ export default function SubscriptionScreen() {
               </TouchableOpacity>
             )}
           </View>
+          )}
+          {Platform.OS === 'ios' && isOwner && <IosSubscriptionActions />}
 
           {/* KPIs */}
           <View style={styles.kpiRow}>
@@ -577,8 +687,11 @@ export default function SubscriptionScreen() {
           )}
         </View>
 
-        {/* ===== Additional Branch add-on (only when addon_eligible === true) ===== */}
-        {showAddon && (
+        {/* ===== Additional Branch add-on (only when addon_eligible === true)
+             NOTE: hidden on iOS — the Additional Branch add-on is currently a
+             Razorpay-only purchase; iOS users manage add-ons on parlourpilot.com
+             via existing web billing. IAP for extra branches will come later. */}
+        {showAddon && Platform.OS !== 'ios' && (
           <View style={styles.card}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
               <View style={styles.addonIconBox}><Ionicons name="add-circle-outline" size={22} color={colors.brandPrimary} /></View>
@@ -594,8 +707,8 @@ export default function SubscriptionScreen() {
           </View>
         )}
 
-        {/* ===== Downgrade action (Growth-only) ===== */}
-        {isOwner && canDowngrade && (
+        {/* ===== Downgrade action (Growth-only) — Razorpay flow, hidden on iOS ===== */}
+        {isOwner && canDowngrade && Platform.OS !== 'ios' && (
           <TouchableOpacity onPress={doDowngrade} disabled={!!busy} style={styles.textLinkBtn} testID="downgrade-btn">
             <Ionicons name="arrow-down-outline" size={14} color={colors.onSurfaceTertiary} />
             <Text style={styles.textLinkBtnText}>Downgrade to Starter at next renewal</Text>

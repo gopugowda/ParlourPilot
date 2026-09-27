@@ -15,6 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { tenantApi, authApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
+import { useRevenueCat } from '@/src/lib/revenuecat';
 import { colors, spacing, radius, shadows, CURRENCY_CHOICES, BRAND_COLOR_PRESETS, contrastText } from '@/src/theme';
 import { emailError, phoneError, sanitizePhone, normalizeEmail, PHONE_MAX } from '@/src/utils/validators';
 
@@ -31,6 +32,7 @@ export default function SalonSettingsScreen() {
   const router = useRouter();
   const { tenant, refreshTenant, user, logout } = useAuth();
   const isOwner = !!(user?.is_owner || user?.role === 'owner');
+  const rc = useRevenueCat();
 
   // ============ Danger zone — Delete Business Account ============
   // Apple 5.1.1(v) requires an in-app deletion path. This is intentionally
@@ -53,13 +55,15 @@ export default function SalonSettingsScreen() {
     }
     setDeleteBusy(true);
     try {
+      // Pre-check: get freshest Apple state before we even ask the backend
+      // to delete. Cheaper than a round-trip if the user just cancelled on
+      // Apple's screen — but the SERVER re-verifies regardless.
+      try { await rc.refresh(); } catch {}
       const res = await authApi.deleteBusinessAccount({
         password: deletePwd,
         confirm_text: deleteConfirm.trim(),
       });
       // Server confirmed deletion — clear local session and route to login.
-      // logout() clears the token from SecureStore/AsyncStorage so the app
-      // cannot auto-re-log-in with a cached credential.
       await logout();
       Alert.alert(
         'Account deleted',
@@ -67,11 +71,23 @@ export default function SalonSettingsScreen() {
         [{ text: 'OK', onPress: () => router.replace('/login' as any) }],
       );
     } catch (e: any) {
-      setDeleteErr(e?.message || 'Deletion failed. Please try again.');
+      // Backend returns 409 { code: 'apple_subscription_active', ... } if the
+      // owner still has an active Apple sub. Surface the "Manage Apple
+      // Subscription" affordance instead of the generic error.
+      const detail = e?.data?.detail || e?.detail;
+      if (detail && typeof detail === 'object' && detail.code === 'apple_subscription_active') {
+        setDeleteErr(detail.message || 'Your Apple subscription is still active. Manage it in Apple to stop future billing before deleting the account.');
+      } else {
+        setDeleteErr(typeof detail === 'string' ? detail : (e?.message || 'Deletion failed. Please try again.'));
+      }
     } finally {
       setDeleteBusy(false);
     }
-  }, [deletePwd, deleteConfirm, logout, router]);
+  }, [deletePwd, deleteConfirm, logout, router, rc]);
+
+  const openAppleManage = useCallback(async () => {
+    try { await rc.showManageSubscriptions(); } catch (e: any) { setDeleteErr(e?.message || 'Could not open Apple subscription management'); }
+  }, [rc]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -645,6 +661,20 @@ export default function SalonSettingsScreen() {
 
             {deleteErr && (
               <Text style={styles.deleteErr} testID="delete-account-err">{deleteErr}</Text>
+            )}
+            {/* If the backend blocked deletion because an Apple subscription
+                is still active, surface a dedicated button to open the
+                StoreKit management sheet. */}
+            {deleteErr && /apple/i.test(deleteErr) && (
+              <TouchableOpacity
+                testID="delete-account-manage-apple"
+                onPress={openAppleManage}
+                style={[styles.deleteCancelBtn, { backgroundColor: '#EAF3FF', borderColor: '#B8D4F9' }]}
+              >
+                <Text style={[styles.deleteCancelText, { color: '#0A66C2' }]}>
+                  Manage Apple Subscription
+                </Text>
+              </TouchableOpacity>
             )}
 
             <View style={styles.deleteActions}>
