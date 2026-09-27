@@ -11,6 +11,7 @@ import { useIconFonts } from '@/src/hooks/use-icon-fonts';
 import { AuthProvider, useAuth } from '@/src/context/AuthContext';
 import { useAttendanceAutoLogout } from '@/src/hooks/useAttendanceAutoLogout';
 import { initializeRevenueCat, RevenueCatProvider } from '@/src/lib/revenuecat';
+import EnvBadge from '@/src/components/EnvBadge';
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -121,6 +122,7 @@ export default function RootLayout() {
           <AuthProvider>
             <AuthedShell />
           </AuthProvider>
+          <EnvBadge />
         </SafeAreaProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>

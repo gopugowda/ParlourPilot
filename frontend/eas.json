@@ -3,13 +3,53 @@
     "version": ">= 3.0.0"
   },
   "build": {
-    "production": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://parlourpilot.com"
+        "EXPO_PUBLIC_APP_ENV": "development",
+        "EXPO_PUBLIC_BACKEND_URL": "https://staff-portal-331.preview.emergentagent.com"
+      },
+      "ios": {
+        "resourceClass": "m-medium"
       },
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "apk"
+      }
+    },
+    "testflight": {
+      "distribution": "internal",
+      "channel": "staging",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_BACKEND_URL": "https://staff-portal-331.preview.emergentagent.com"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
+        "autoIncrement": true
+      },
+      "android": {
+        "buildType": "apk",
+        "autoIncrement": true
+      }
+    },
+    "production": {
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_BACKEND_URL": "https://parlourpilot.com"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
+        "autoIncrement": true
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "autoIncrement": true
       }
     }
+  },
+  "submit": {
+    "production": {}
   }
 }
