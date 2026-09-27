@@ -2,7 +2,7 @@
   "expo": {
     "name": "ParlourPilot",
     "slug": "parlourpilot",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/images/parlourpilot-logo.png",
     "scheme": "parlourpilot",
