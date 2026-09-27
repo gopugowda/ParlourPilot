@@ -2,7 +2,7 @@
 // Company-level ONLY (branch-level fields moved to /manage/branches modal).
 // Sections: Business • Address & contact • Branding • Tax & invoicing • Member pricing
 //           • Automated report emails • Membership Tiers (mobile power-user extra).
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator,
   KeyboardAvoidingView, Platform, Switch, Alert, Image as RNImage, Modal, Pressable,
@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import { tenantApi } from '@/src/api/client';
+import { tenantApi, authApi } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, shadows, CURRENCY_CHOICES, BRAND_COLOR_PRESETS, contrastText } from '@/src/theme';
 import { emailError, phoneError, sanitizePhone, normalizeEmail, PHONE_MAX } from '@/src/utils/validators';
@@ -29,7 +29,49 @@ const NUMBER_FORMATS = [
 
 export default function SalonSettingsScreen() {
   const router = useRouter();
-  const { tenant, refreshTenant } = useAuth();
+  const { tenant, refreshTenant, user, logout } = useAuth();
+  const isOwner = !!(user?.is_owner || user?.role === 'owner');
+
+  // ============ Danger zone — Delete Business Account ============
+  // Apple 5.1.1(v) requires an in-app deletion path. This is intentionally
+  // a THREE-step flow to avoid accidental deletion:
+  //   1. Owner reads the multi-tenant impact copy in the DangerZone card,
+  //   2. taps "Delete Business Account" → password + confirmation modal opens,
+  //   3. types the exact phrase "DELETE MY BUSINESS" AND their password → save.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePwd, setDeletePwd] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
+
+  const performDelete = useCallback(async () => {
+    setDeleteErr(null);
+    if (!deletePwd) { setDeleteErr('Enter your password.'); return; }
+    if (deleteConfirm.trim() !== 'DELETE MY BUSINESS') {
+      setDeleteErr('Type DELETE MY BUSINESS exactly to confirm.');
+      return;
+    }
+    setDeleteBusy(true);
+    try {
+      const res = await authApi.deleteBusinessAccount({
+        password: deletePwd,
+        confirm_text: deleteConfirm.trim(),
+      });
+      // Server confirmed deletion — clear local session and route to login.
+      // logout() clears the token from SecureStore/AsyncStorage so the app
+      // cannot auto-re-log-in with a cached credential.
+      await logout();
+      Alert.alert(
+        'Account deleted',
+        res?.message || 'Your business account has been permanently disabled.',
+        [{ text: 'OK', onPress: () => router.replace('/login' as any) }],
+      );
+    } catch (e: any) {
+      setDeleteErr(e?.message || 'Deletion failed. Please try again.');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [deletePwd, deleteConfirm, logout, router]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -482,8 +524,157 @@ export default function SalonSettingsScreen() {
               </>
             )}
           </TouchableOpacity>
+
+          {/* =========================================================
+              Danger zone — Delete Business Account (Apple 5.1.1(v)).
+              Owner-only. This is a THREE-STEP flow (see performDelete
+              state above). Copy deliberately emphasises the multi-tenant
+              impact so the owner cannot mistake it for "delete my profile".
+              ========================================================= */}
+          {isOwner && (
+            <View style={styles.dangerCard} testID="delete-account-card">
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="warning-outline" size={16} color={colors.error} />
+                <Text style={styles.dangerTitle}>Danger zone</Text>
+              </View>
+              <Text style={styles.dangerSub}>Delete this business account permanently.</Text>
+              <View style={styles.dangerImpactBox}>
+                <Text style={styles.dangerImpactHead}>What this does</Text>
+                <View style={styles.dangerImpactRow}>
+                  <Ionicons name="business-outline" size={14} color={colors.error} />
+                  <Text style={styles.dangerImpactText}>
+                    Disables the entire business account — all branches, services and settings become unusable.
+                  </Text>
+                </View>
+                <View style={styles.dangerImpactRow}>
+                  <Ionicons name="people-outline" size={14} color={colors.error} />
+                  <Text style={styles.dangerImpactText}>
+                    Locks out every staff and owner sign-in belonging to this business.
+                  </Text>
+                </View>
+                <View style={styles.dangerImpactRow}>
+                  <Ionicons name="card-outline" size={14} color={colors.error} />
+                  <Text style={styles.dangerImpactText}>
+                    Cancels the active subscription (no further Razorpay charges).
+                  </Text>
+                </View>
+                <View style={styles.dangerImpactRow}>
+                  <Ionicons name="person-remove-outline" size={14} color={colors.error} />
+                  <Text style={styles.dangerImpactText}>
+                    Erases owner and staff personal contact information (name, email, phone).
+                  </Text>
+                </View>
+                <View style={styles.dangerImpactRow}>
+                  <Ionicons name="receipt-outline" size={14} color={colors.error} />
+                  <Text style={styles.dangerImpactText}>
+                    Keeps only anonymised bill totals for tax/audit compliance — customer names and phone numbers are also erased.
+                  </Text>
+                </View>
+                <View style={styles.dangerImpactRow}>
+                  <Ionicons name="refresh-outline" size={14} color={colors.error} />
+                  <Text style={styles.dangerImpactText}>
+                    This action cannot be undone.
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                testID="delete-account-open"
+                style={styles.dangerBtn}
+                onPress={() => {
+                  setDeletePwd('');
+                  setDeleteConfirm('');
+                  setDeleteErr(null);
+                  setDeleteOpen(true);
+                }}
+              >
+                <Ionicons name="trash-outline" size={16} color="#fff" />
+                <Text style={styles.dangerBtnText}>Delete Business Account</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* ============ Delete Account confirmation modal ============ */}
+      <Modal
+        visible={deleteOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => (deleteBusy ? null : setDeleteOpen(false))}
+      >
+        <Pressable
+          style={styles.backdrop}
+          onPress={() => (deleteBusy ? null : setDeleteOpen(false))}
+        >
+          <Pressable style={styles.deleteSheet} onPress={() => {}}>
+            <View style={styles.handle} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="warning" size={18} color={colors.error} />
+              <Text style={styles.deleteSheetTitle}>Confirm business deletion</Text>
+            </View>
+            <Text style={styles.deleteSheetSub}>
+              Type <Text style={{ fontWeight: '800' }}>DELETE MY BUSINESS</Text> and enter your owner password. This permanently disables the business for every user, cancels the subscription and erases all personal contact information.
+            </Text>
+
+            <View style={styles.deleteField}>
+              <Text style={styles.deleteLabel}>Confirmation phrase</Text>
+              <TextInput
+                testID="delete-account-confirm-input"
+                value={deleteConfirm}
+                onChangeText={setDeleteConfirm}
+                placeholder="DELETE MY BUSINESS"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={styles.deleteInput}
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View style={styles.deleteField}>
+              <Text style={styles.deleteLabel}>Your password</Text>
+              <TextInput
+                testID="delete-account-password-input"
+                value={deletePwd}
+                onChangeText={setDeletePwd}
+                placeholder="••••••••"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                secureTextEntry
+                style={styles.deleteInput}
+              />
+            </View>
+
+            {deleteErr && (
+              <Text style={styles.deleteErr} testID="delete-account-err">{deleteErr}</Text>
+            )}
+
+            <View style={styles.deleteActions}>
+              <TouchableOpacity
+                testID="delete-account-cancel"
+                style={styles.deleteCancelBtn}
+                onPress={() => setDeleteOpen(false)}
+                disabled={deleteBusy}
+              >
+                <Text style={styles.deleteCancelText}>Keep my account</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="delete-account-submit"
+                style={[styles.deleteSubmitBtn, deleteBusy && { opacity: 0.6 }]}
+                onPress={performDelete}
+                disabled={deleteBusy}
+              >
+                {deleteBusy ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="trash-outline" size={16} color="#fff" />
+                    <Text style={styles.deleteSubmitText}>Delete permanently</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Currency picker */}
       <Modal visible={currencyPickerOpen} transparent animationType="fade" onRequestClose={() => setCurrencyPickerOpen(false)}>
@@ -585,4 +776,70 @@ const styles = StyleSheet.create({
   pickerItemActive: { backgroundColor: colors.brandTertiary, borderColor: colors.brandSecondary },
   pickerItemText: { fontSize: 14, fontWeight: '600', color: colors.onSurface },
   pickerItemMeta: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+
+  // Danger zone — Delete Business Account
+  dangerCard: {
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: '#FDEDED',
+    gap: spacing.sm,
+  },
+  dangerTitle: { fontSize: 15, fontWeight: '800', color: colors.error },
+  dangerSub: { fontSize: 12, color: colors.onSurfaceSecondary },
+  dangerImpactBox: {
+    marginTop: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.sm,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F5C2C2',
+    gap: 8,
+  },
+  dangerImpactHead: { fontSize: 12, fontWeight: '800', color: colors.error, marginBottom: 2 },
+  dangerImpactRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  dangerImpactText: { flex: 1, fontSize: 12, color: colors.onSurfaceSecondary, lineHeight: 17 },
+  dangerBtn: {
+    marginTop: spacing.sm,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    backgroundColor: colors.error, paddingVertical: 12, borderRadius: radius.md,
+  },
+  dangerBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  // Delete confirmation sheet
+  handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 8 },
+  deleteSheet: {
+    backgroundColor: colors.surface,
+    padding: spacing.lg,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    width: '100%', maxWidth: 480, alignSelf: 'center',
+    gap: spacing.md,
+  },
+  deleteSheetTitle: { fontSize: 17, fontWeight: '800', color: colors.error },
+  deleteSheetSub: { fontSize: 13, color: colors.onSurfaceSecondary, lineHeight: 18 },
+  deleteField: { gap: 4 },
+  deleteLabel: { fontSize: 11, fontWeight: '700', color: colors.onSurfaceSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  deleteInput: {
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: spacing.md, paddingVertical: 12,
+    borderRadius: radius.sm, fontSize: 14, color: colors.onSurface,
+  },
+  deleteErr: { fontSize: 12, color: colors.error, fontWeight: '600' },
+  deleteActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  deleteCancelBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: radius.md,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  deleteCancelText: { fontWeight: '700', color: colors.onSurfaceSecondary, fontSize: 14 },
+  deleteSubmitBtn: {
+    flex: 1, flexDirection: 'row', gap: 6,
+    paddingVertical: 12, borderRadius: radius.md,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.error,
+  },
+  deleteSubmitText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

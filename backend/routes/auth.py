@@ -220,6 +220,177 @@ async def delete_own_account(user=Depends(get_current_user)):
     return {"ok": True}
 
 
+# --- Account Deletion (Apple 5.1.1(v) compliance) -------------------------
+class DeleteAccountBody(BaseModel):
+    """Payload for the owner-initiated business-account deletion.
+
+    Both fields are required. `password` is verified server-side against the
+    caller's bcrypt hash — a locally-stored session token is NOT accepted as
+    proof of identity. `confirm_text` must equal the literal string
+    ``DELETE MY BUSINESS`` (case-sensitive) so a mis-tap alone can never
+    trigger the flow.
+    """
+    password: str = Field(..., min_length=1)
+    confirm_text: str = Field(..., min_length=1)
+
+
+@router.post("/auth/delete-account")
+async def delete_account(body: DeleteAccountBody, user=Depends(require_admin)):
+    """Permanently disable the caller's business (tenant) and purge the owner's
+    personal information.
+
+    Apple 5.1.1(v): the app must offer an in-app deletion path for accounts
+    created inside the app. Because ParlourPilot accounts are multi-tenant
+    business accounts, this endpoint deletes the entire business — not just
+    one operator's profile — and the mobile UI mirrors that scope in copy.
+
+    Behaviour:
+      1. Verify the caller is the tenant owner (extra guard beyond `require_admin`).
+      2. Verify the caller's password against the stored bcrypt hash.
+      3. Verify `confirm_text == "DELETE MY BUSINESS"`.
+      4. Fire the existing soft-cancel flow on the subscription so Razorpay
+         auto-renew (if any) stops. Cancellation is idempotent.
+      5. Soft-delete the tenant: mark `is_active=false, is_deleted=true, deleted_at=...`.
+      6. Deactivate every user in the tenant (`is_active=false, deleted_at=...`)
+         and NULL out contact PII (name/email/phone/avatar) on the owner and
+         all staff — the account is gone, we don't keep their identities.
+      7. Anonymise customer PII on all historical bills for this tenant
+         (customer_name / phone / email) so we retain only the numeric
+         financial totals required for legal/audit retention.
+      8. Return the deletion summary so the client can display it before
+         clearing its own session.
+    """
+    tid = user.get("tenant_id")
+    uid = user.get("id")
+
+    # 1. Owner-only guard. `require_admin` allows admin+owner; we need owner.
+    if not (user.get("is_owner") is True or user.get("role") == "owner"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the business owner can delete the account.",
+        )
+
+    # 2. Verify password server-side.
+    me = await db.users.find_one({"id": uid})
+    if not me or not verify_password(body.password, me.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    # 3. Explicit confirmation phrase.
+    if body.confirm_text.strip() != "DELETE MY BUSINESS":
+        raise HTTPException(
+            status_code=400,
+            detail="Please type DELETE MY BUSINESS exactly to confirm.",
+        )
+
+    tenant = await load_tenant(tid)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Business not found.")
+    if tenant.get("is_deleted"):
+        # Idempotent — already deleted.
+        return {"ok": True, "already_deleted": True, "tenant_id": tid}
+
+    now = now_iso()
+
+    # 4. Soft-cancel the subscription (records `cancellation_requested_at` so
+    #    scheduled Razorpay/webhook auto-renewals stop). Non-fatal if it fails.
+    try:
+        await db.tenants.update_one(
+            {"id": tid, "cancellation_requested_at": {"$exists": False}},
+            {"$set": {
+                "cancellation_requested_at": now,
+                "cancelled_by": me.get("email") or uid,
+                "cancellation_reason": "account_deleted",
+                "updated_at": now,
+            }},
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("delete_account: cancel failed for %s: %s", tid, exc)
+
+    # 5. Soft-delete the tenant.
+    await db.tenants.update_one(
+        {"id": tid},
+        {"$set": {
+            "is_active": False,
+            "is_deleted": True,
+            "deleted_at": now,
+            "deleted_by": me.get("email") or uid,
+            "business_email": None,
+            "phone_number": None,
+            "owner_name": None,
+            "updated_at": now,
+        }},
+    )
+
+    # 6. Deactivate + purge PII for every user in the tenant.
+    users_result = await db.users.update_many(
+        {"tenant_id": tid},
+        {"$set": {
+            "is_active": False,
+            "deleted_at": now,
+            "name": "Deleted user",
+            "email": f"deleted+{uid}@parlourpilot.invalid",
+            "phone": None,
+            "avatar_url": None,
+            "password_hash": "!",  # locks out any future login attempt
+            "updated_at": now,
+        }},
+    )
+
+    # 7. Anonymise customer PII on historical bills. Numeric totals stay intact.
+    bills_result = await db.bills.update_many(
+        {"tenant_id": tid},
+        {"$set": {
+            "customer_name": "Deleted customer",
+            "customer_phone": None,
+            "customer_email": None,
+        }},
+    )
+    appointments_result = await db.appointments.update_many(
+        {"tenant_id": tid},
+        {"$set": {
+            "customer_name": "Deleted customer",
+            "customer_phone": None,
+            "customer_email": None,
+        }},
+    )
+    try:
+        members_result = await db.members.update_many(
+            {"tenant_id": tid},
+            {"$set": {
+                "name": "Deleted member",
+                "phone": None,
+                "email": None,
+                "is_active": False,
+            }},
+        )
+        members_count = members_result.modified_count
+    except Exception:
+        members_count = 0
+
+    logger.info(
+        "Account deleted: tenant=%s owner=%s users=%s bills=%s appts=%s members=%s",
+        tid, uid, users_result.modified_count, bills_result.modified_count,
+        appointments_result.modified_count, members_count,
+    )
+
+    return {
+        "ok": True,
+        "tenant_id": tid,
+        "summary": {
+            "users_deactivated": users_result.modified_count,
+            "bills_anonymised": bills_result.modified_count,
+            "appointments_anonymised": appointments_result.modified_count,
+            "members_anonymised": members_count,
+        },
+        "message": (
+            "Your business account has been permanently disabled. All owner and "
+            "staff sign-ins are revoked, and personal contact information has "
+            "been erased. Aggregated financial totals are retained only as "
+            "required by tax/audit rules."
+        ),
+    }
+
+
 @router.post("/auth/users/{uid}/reset-password")
 async def admin_reset_password(uid: str, body: PasswordReset, user=Depends(require_admin)):
     tid = tenant_id_of(user)

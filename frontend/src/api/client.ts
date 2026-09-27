@@ -220,6 +220,13 @@ export const authApi = {
   users: () => api('/auth/users'),
   seed: () => api('/seed', { method: 'POST', auth: false }),
   deleteOwnAccount: () => api('/auth/me', { method: 'DELETE' }),
+  // Apple 5.1.1(v) — in-app business-account deletion. Owner-only. See
+  // backend route in routes/auth.py::delete_account for exact behaviour.
+  deleteBusinessAccount: (data: { password: string; confirm_text: string }) =>
+    api<{ ok: boolean; summary?: any; message?: string }>(
+      '/auth/delete-account',
+      { method: 'POST', body: data },
+    ),
 };
 
 export const tenantApi = {
