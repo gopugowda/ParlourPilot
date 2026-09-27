@@ -302,9 +302,14 @@ async def delete_account(body: DeleteAccountBody, user=Depends(require_admin)):
                 _apply_subscriber,
                 APPLE_ACTIVE_STATUSES,
             )
-            subscriber = await _fetch_subscriber_from_rc(tid) or {}
-            fresh = await _apply_subscriber(tid, subscriber)
-            live_status = fresh.get("apple_subscription_status")
+            subscriber = await _fetch_subscriber_from_rc(tid)
+            verified = subscriber is not None
+            fresh = await _apply_subscriber(tid, subscriber or {}, verified=verified)
+            # Fail-closed: if RC REST is unavailable AND we can't verify the
+            # current state, treat the existing DB status as authoritative —
+            # do NOT allow deletion of a possibly-active Apple subscriber
+            # just because a transient RC outage returned nothing.
+            live_status = fresh.get("apple_subscription_status") or tenant.get("apple_subscription_status")
         except Exception as exc:
             logger.warning("delete_account: RC re-check failed for %s: %s", tid, exc)
             live_status = tenant.get("apple_subscription_status")

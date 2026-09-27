@@ -46,10 +46,53 @@ package slots as needed). Package identifiers used by the mobile code:
 Mobile falls back to product-ID matching if these custom lookup keys are absent.
 
 ### Restore/Transfer behavior (CRITICAL for multi-tenant B2B)
-In the RC dashboard → Project settings → Purchase Behavior, set **Restore Behavior**
-to `transfer purchases` NO — recommended value is **keep active purchases on original App User
-IDs; block new purchaser** to prevent one Apple purchase from silently attaching to a
-different ParlourPilot business when they later sign in on the same device.
+**Change (2026-09-27):** the RevenueCat dashboard → Project settings → Purchase Behavior
+"Restore Behavior" MUST be set to **"Transfer if there are no active subscriptions"**
+(NOT "Keep with original App User IDs" as originally proposed).
+
+Rationale:
+- Tenant A owns an active Apple subscription. Tenant B logs in on the same device
+  and taps "Restore". RevenueCat sees Tenant A's subscription is still active → the
+  restore is REFUSED. Tenant B cannot steal it. ✓
+- Tenant A's subscription later expires. The same Apple ID may now be legitimately
+  attached to a different ParlourPilot tenant (e.g. the owner deleted the old
+  business and created a new one, generating a fresh tenant UUID). ✓
+- Prevents cross-tenant subscription theft while still allowing the underlying
+  Apple account to be reused after its previous ParlourPilot binding ends.
+
+### Apple cancellation ≠ immediate expiration
+Apple's `CANCELLATION` webhook event fires the moment the user disables auto-renew,
+but the subscription STAYS ACTIVE until `expires_date`. During this window the
+normalized status is `cancelled_still_active` and account deletion is BLOCKED (the
+user is still Apple-billed for the remaining period, and Apple treats the
+subscription as active).
+
+Only after `expires_date` passes (Apple sends `EXPIRATION` OR our REST re-fetch
+sees `expires_date_ms < now`) does the status become `expired_voluntary` and
+account deletion may proceed.
+
+`APPLE_ACTIVE_STATUSES` (blocks deletion) = `{active, in_grace_period,
+in_billing_retry, cancelled_still_active}`.
+
+### REST-verified state, fail-closed on outage
+Every webhook handler and every /sync call ALWAYS re-fetches the subscriber from
+RevenueCat REST (`GET /v1/subscribers/{app_user_id}` with Secret API key) — the
+webhook payload is only a HINT, never authoritative. If the REST call fails AND
+the webhook body has no embedded snapshot, `_apply_subscriber(..., verified=False)`
+short-circuits with `{deferred: True}` — the tenant state is NOT overwritten, and
+the next webhook or /sync will retry. This prevents a transient network failure
+from silently downgrading a paying tenant.
+
+### Webhook signature verification
+RevenueCat's standard webhook uses only `Authorization: Bearer <shared_secret>`.
+As of Sep 2026 RevenueCat does NOT publicly document an HMAC signature header,
+so `X-RevenueCat-Webhook-Signature` verification is NOT implemented. The Bearer
+shared secret + IP allowlisting (do this in your reverse proxy / Cloudflare
+firewall in front of parlourpilot.com) is the current recommended defense.
+Reference: https://www.revenuecat.com/docs/integrations/webhooks.
+
+If RevenueCat later adds HMAC signature support, add it in `revenuecat_webhook()`
+using `request.body()` (raw bytes) + `hmac.compare_digest`.
 
 ### Webhook
 Configure in RC dashboard → Integrations → Webhooks:

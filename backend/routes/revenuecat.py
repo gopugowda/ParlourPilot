@@ -103,7 +103,12 @@ def _classify_apple_status(subscriber: Dict[str, Any], product_id: str) -> str:
     return "expired_voluntary"
 
 
-async def _apply_subscriber(tenant_id: str, subscriber: Dict[str, Any]) -> Dict[str, Any]:
+async def _apply_subscriber(
+    tenant_id: str,
+    subscriber: Dict[str, Any],
+    *,
+    verified: bool = True,
+) -> Dict[str, Any]:
     """Normalize a RevenueCat subscriber payload into ParlourPilot tenant state
     and persist it.
 
@@ -113,8 +118,26 @@ async def _apply_subscriber(tenant_id: str, subscriber: Dict[str, Any]) -> Dict[
       - If active → mark subscription_provider='apple', set plan/status/end_date.
       - If none active → do NOT clear an existing Razorpay subscription; only
         clear the apple_* fields and mark provider=none if it was 'apple'.
+
+    Safety (fixed per user directive):
+      - If the caller cannot verify the subscriber (RC REST temporarily down
+        AND webhook body lacks an embedded snapshot), we DO NOT overwrite an
+        existing active Apple state — that would let a transient network
+        failure silently downgrade a paying tenant. Callers pass verified=False
+        to opt into this safe path.
     """
     ent = (subscriber or {}).get("entitlements", {}) or {}
+    subs = (subscriber or {}).get("subscriptions", {}) or {}
+
+    # If we couldn't verify AND the payload is essentially empty, refuse to
+    # touch the tenant. Idempotency: the next webhook or /sync will retry.
+    if not verified and not ent and not subs:
+        current = await load_tenant(tenant_id) or {}
+        return {
+            "apple_subscription_status": current.get("apple_subscription_status"),
+            "deferred": True,
+            "reason": "unverified_empty_payload",
+        }
     # Find the currently-active ParlourPilot entitlement (plan_starter or plan_growth).
     now = datetime.now(timezone.utc)
     active_product_id: Optional[str] = None
@@ -261,11 +284,12 @@ async def revenuecat_webhook(
 
     # 4. Verified re-fetch via RC REST API, then normalize into tenant state.
     subscriber = await _fetch_subscriber_from_rc(app_user_id)
+    verified = subscriber is not None
     if subscriber is None:
         # Fallback: use the webhook's own subscriber snapshot if included.
         subscriber = body.get("subscriber") or {}
-    await _apply_subscriber(app_user_id, subscriber)
-    return {"ok": True, "event_type": event_type}
+    await _apply_subscriber(app_user_id, subscriber, verified=verified)
+    return {"ok": True, "event_type": event_type, "verified": verified}
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +306,10 @@ async def revenuecat_sync(_: RcSyncBody, user=Depends(get_current_user)):
     tenant_id = user.get("tenant_id")
     if not tenant_id:
         raise HTTPException(status_code=400, detail="no tenant")
-    subscriber = await _fetch_subscriber_from_rc(tenant_id) or {}
-    updates = await _apply_subscriber(tenant_id, subscriber)
-    return {"ok": True, "state": updates}
+    subscriber = await _fetch_subscriber_from_rc(tenant_id)
+    verified = subscriber is not None
+    updates = await _apply_subscriber(tenant_id, subscriber or {}, verified=verified)
+    return {"ok": True, "verified": verified, "state": updates}
 
 
 # ---------------------------------------------------------------------------

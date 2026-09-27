@@ -216,16 +216,21 @@ function IosSubscriptionActions() {
           <Text style={{ color: '#F5D5A0', fontSize: 12, marginBottom: 4 }}>
             Choose your plan (billed by Apple)
           </Text>
-          <TouchableOpacity testID="iap-starter-monthly" disabled={busy !== null} onPress={() => onPurchase('starter_monthly')} style={[styles.planActionBtn, styles.planActionPrimary]}>
+          {!rc.identityReady && (
+            <Text style={{ color: '#F5D5A0', fontSize: 12, marginBottom: 4 }}>
+              Preparing subscription — please wait…
+            </Text>
+          )}
+          <TouchableOpacity testID="iap-starter-monthly" disabled={busy !== null || !rc.identityReady} onPress={() => onPurchase('starter_monthly')} style={[styles.planActionBtn, styles.planActionPrimary, !rc.identityReady && { opacity: 0.5 }]}>
             {busy === 'starter_monthly' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.planActionPrimaryText}>{label('starter_monthly', 'Starter — Monthly')}</Text>}
           </TouchableOpacity>
-          <TouchableOpacity testID="iap-starter-yearly" disabled={busy !== null} onPress={() => onPurchase('starter_yearly')} style={[styles.planActionBtn, styles.planActionGhost]}>
+          <TouchableOpacity testID="iap-starter-yearly" disabled={busy !== null || !rc.identityReady} onPress={() => onPurchase('starter_yearly')} style={[styles.planActionBtn, styles.planActionGhost, !rc.identityReady && { opacity: 0.5 }]}>
             <Text style={styles.planActionGhostText}>{label('starter_yearly', 'Starter — Yearly')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity testID="iap-growth-monthly" disabled={busy !== null} onPress={() => onPurchase('growth_monthly')} style={[styles.planActionBtn, styles.planActionAmber]}>
+          <TouchableOpacity testID="iap-growth-monthly" disabled={busy !== null || !rc.identityReady} onPress={() => onPurchase('growth_monthly')} style={[styles.planActionBtn, styles.planActionAmber, !rc.identityReady && { opacity: 0.5 }]}>
             {busy === 'growth_monthly' ? <ActivityIndicator size="small" color="#3D2100" /> : <Text style={styles.planActionAmberText}>{label('growth_monthly', 'Growth — Monthly')}</Text>}
           </TouchableOpacity>
-          <TouchableOpacity testID="iap-growth-yearly" disabled={busy !== null} onPress={() => onPurchase('growth_yearly')} style={[styles.planActionBtn, styles.planActionGhost]}>
+          <TouchableOpacity testID="iap-growth-yearly" disabled={busy !== null || !rc.identityReady} onPress={() => onPurchase('growth_yearly')} style={[styles.planActionBtn, styles.planActionGhost, !rc.identityReady && { opacity: 0.5 }]}>
             <Text style={styles.planActionGhostText}>{label('growth_yearly', 'Growth — Yearly')}</Text>
           </TouchableOpacity>
         </>
